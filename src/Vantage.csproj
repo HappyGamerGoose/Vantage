@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Auto-import a local-only props file with signing inputs. The file is
+    gitignored; if it isn't present MSBuild falls back to env vars (see below).
+  -->
+  <Import Project="$(MSBuildThisFileDirectory).vantage.signing.props"
+          Condition="Exists('$(MSBuildThisFileDirectory).vantage.signing.props')" />
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
+    <RootNamespace>Vantage</RootNamespace>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>true</WinUISDKReferences>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <!--
+      Signing inputs are intentionally NOT committed to the repo.
+      The thumbprint and password are per-developer secrets; the .pfx / .cer
+      files are gitignored. To produce a signed .msix you must provide them
+      yourself via one of:
+
+      (1) Environment variables:
+            VANTAGE_CERT_PFX         path to a .pfx  (default: Vantage_DevCert.pfx)
+            VANTAGE_CERT_THUMBPRINT  cert SHA-1 thumbprint
+            VANTAGE_CERT_PASSWORD    password for the .pfx
+
+      (2) A local props file (auto-imported when present):
+            copy ".vantage.signing.props.example" -> ".vantage.signing.props"
+            and fill in the three values there.
+
+      Both files stay outside the repo. See README.md.
+    -->
+    <PackageCertificateKeyFile Condition="'$(PackageCertificateKeyFile)' == ''">$(VANTAGE_CERT_PFX)</PackageCertificateKeyFile>
+    <PackageCertificateThumbprint>$(VANTAGE_CERT_THUMBPRINT)</PackageCertificateThumbprint>
+    <PackageCertificatePassword>$(VANTAGE_CERT_PASSWORD)</PackageCertificatePassword>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
+    <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
+    <AppxBundle>Never</AppxBundle>
+    <AppxBundlePlatforms />
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- App icon and store logos come from Package.appxmanifest references and don't
+         need to be in the .csproj Content list for packaged MSIX builds. -->
+  </ItemGroup>
+
+  <!--
+    Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+    Tools extension to be activated for this project.
+  -->
+  <ItemGroup>
+    <ProjectCapability Include="Msix" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <PackageReference Include="System.Management" Version="9.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+  </PropertyGroup>
+
+  <!-- Publish properties: MSIX packaging only. The unpackaged EXE flow is gone. -->
+  <PropertyGroup>
+    <PublishReadyToRun>False</PublishReadyToRun>
+    <PublishTrimmed>False</PublishTrimmed>
+  </PropertyGroup>
+
+  <Target Name="CopyWinUICompiledResourcesToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+    <ItemGroup>
+      <WinUICompiledResource Include="$(OutDir)*.xbf" />
+      <WinUICompiledResource Include="$(OutDir)*.pri" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(WinUICompiledResource)"
+      DestinationFolder="$(PublishDir)"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>

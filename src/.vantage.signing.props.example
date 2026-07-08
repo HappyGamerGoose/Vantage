@@ -1,0 +1,17 @@
+<Project>
+  <!--
+    SAMPLE — copy to ".vantage.signing.props" (which is gitignored) and fill
+    in the three values below with your own dev-cert details.
+
+    The values produced by `dotnet publish` will then match the .pfx file
+    alongside this project. See the project README for the build steps.
+  -->
+  <PropertyGroup>
+    <!-- Path to the .pfx relative to the project root. -->
+    <VANTAGE_CERT_PFX>Vantage_DevCert.pfx</VANTAGE_CERT_PFX>
+    <!-- SHA-1 thumbprint of the dev cert. -->
+    <VANTAGE_CERT_THUMBPRINT>REPLACE_ME_WITH_YOUR_THUMBPRINT</VANTAGE_CERT_THUMBPRINT>
+    <!-- Password used when exporting the .pfx. -->
+    <VANTAGE_CERT_PASSWORD>REPLACE_ME_WITH_YOUR_PASSWORD</VANTAGE_CERT_PASSWORD>
+  </PropertyGroup>
+</Project>
