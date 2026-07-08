@@ -101,4 +101,9 @@ releases/               built artifacts land here (gitignored except for .gitkee
 
 README.md               this file
 .gitignore              per-folder ignores for bin/obj/AppPackages/releases
+LICENSE                 MIT license terms
 ```
+
+## License
+
+[MIT](LICENSE) — use it, fork it, ship it; just keep the copyright line.
