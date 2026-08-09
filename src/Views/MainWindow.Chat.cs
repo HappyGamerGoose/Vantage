@@ -21,6 +21,18 @@ namespace Vantage;
 
 public sealed partial class MainWindow
 {
+    private void SuggestionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string suggestion }) return;
+
+        const string actPrefix = "[act]";
+        InputBox.Text = suggestion.StartsWith(actPrefix, StringComparison.OrdinalIgnoreCase)
+            ? suggestion[actPrefix.Length..]
+            : suggestion;
+        InputBox.SelectionStart = InputBox.Text.Length;
+        InputBox.Focus(FocusState.Keyboard);
+    }
+
     private async void SendButton_Click(object sender, RoutedEventArgs e)
     {
         await SendCurrentMessageAsync();
@@ -71,9 +83,15 @@ public sealed partial class MainWindow
         }
 
         if (_activeConversation is null) await CreateConversationAsync();
-        if (_activeConversation is null) return;
+        var conversation = _activeConversation;
+        if (conversation is null) return;
+
+        // Vantage is computer-use-first: every submitted task enters the
+        // unrestricted desktop-aware agent path.
+        const bool allowDesktopControl = true;
 
         StopResponse();
+        var requestVersion = _responseRequestVersion;
 
         var userMessage = new ChatMessage
         {
@@ -83,35 +101,66 @@ public sealed partial class MainWindow
             CreatedAt = DateTimeOffset.Now
         };
 
-        _activeConversation.Messages.Add(userMessage);
-        ApplyTitleFromMessage(_activeConversation, userMessage);
-        _activeConversation.Touch();
-        MoveConversationToTop(_activeConversation);
+        conversation.Messages.Add(userMessage);
+        ApplyTitleFromMessage(conversation, userMessage);
+        conversation.Touch();
+        MoveConversationToTop(conversation);
         RefreshSearchAndConversations();
-        ActivateConversation(_activeConversation);
+        ActivateConversation(conversation);
 
         InputBox.Text = string.Empty;
         MessagesList.ScrollIntoView(userMessage);
+        _responseConversation = conversation;
         await PersistAsync();
 
-        _ = BeginAssistantDraftAsync(_activeConversation, userMessage);
-    }
-
-    private async Task BeginAssistantDraftAsync(Conversation conversation, ChatMessage userMessage)
-    {
-        // Desktop automation is the default execution path for every
-        // chat submission. We fall back to a plain "saved locally" reply
-        // only when no Anthropic-compatible provider has an API key.
-
-        var (activeProvider, blockedReason) = await PickActiveProviderAsync();
-        if (activeProvider is null)
+        if (requestVersion != _responseRequestVersion)
         {
-            await EmitPlainReplyAsync(conversation, blockedReason ?? "no provider selected");
+            if (ReferenceEquals(_responseConversation, conversation))
+            {
+                _responseConversation = null;
+            }
             return;
         }
 
-        _responseCts = new CancellationTokenSource();
-        var token = _responseCts.Token;
+        _ = BeginAssistantDraftAsync(
+            conversation,
+            userMessage,
+            requestVersion,
+            allowDesktopControl);
+    }
+
+    private async Task BeginAssistantDraftAsync(
+        Conversation conversation,
+        ChatMessage userMessage,
+        long requestVersion,
+        bool allowDesktopControl)
+    {
+        // Chat is the default. Screen capture and input are entered only
+        // when the user explicitly enabled Act for this message.
+
+        var (activeProvider, blockedReason) = await PickActiveProviderAsync(
+            requiresVision: allowDesktopControl);
+        if (requestVersion != _responseRequestVersion) return;
+
+        if (activeProvider is null)
+        {
+            await EmitPlainReplyAsync(
+                conversation,
+                blockedReason ?? "no provider selected",
+                requestVersion);
+            return;
+        }
+
+
+        if (!allowDesktopControl)
+        {
+            await BeginChatReplyAsync(conversation, activeProvider, requestVersion);
+            return;
+        }
+
+        var responseCts = new CancellationTokenSource();
+        _responseCts = responseCts;
+        var token = responseCts.Token;
         SetResponding(true);
 
         var assistantMessage = new ChatMessage { Role = "assistant", CreatedAt = DateTimeOffset.Now };
@@ -119,8 +168,9 @@ public sealed partial class MainWindow
         conversation.Touch();
         ActivateConversation(conversation);
 
-        _agentRunCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var panicTask = RunPanicMonitorAsync(_agentRunCts.Token);
+        var agentRunCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        _agentRunCts = agentRunCts;
+        var panicTask = RunPanicMonitorAsync(agentRunCts.Token);
 
         try
         {
@@ -128,19 +178,29 @@ public sealed partial class MainWindow
             var agentS3 = new AgentS3(
                 activeProvider,
                 monitor,
-                new MainWindowAgentHooks(this, assistantMessage),
-                maxSteps: 500,
+                new MainWindowAgentHooks(this, conversation, assistantMessage),
                 enableReflection: true,
                 temperature: 0.0);
 
-            await agentS3.RunAsync(
+            var result = await agentS3.RunAsync(
                 conversation.Messages.LastOrDefault(m => m.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Text ?? "",
-                _agentRunCts.Token);
+                agentRunCts.Token);
+
+            // RunAsync returns normally for a graceful fatal abort
+            // (e.g. consecutive empty LLM responses). The catch
+            // blocks below only fire on actual exceptions, so a
+            // silent FailedFatal would leave the assistant bubble
+            // empty. Surface the failure here so the user always
+            // sees WHY the agent stopped.
+            if (result.Outcome == ActionOutcome.FailedFatal
+                && string.IsNullOrWhiteSpace(assistantMessage.Text))
+            {
+                assistantMessage.AppendText($"\n\n[Agent aborted] {result.Description}");
+            }
         }
         catch (OperationCanceledException)
         {
-            assistantMessage.AppendText(
-                string.IsNullOrWhiteSpace(assistantMessage.Text) ? "\n\nStopped." : "\n\nStopped.");
+            assistantMessage.AppendText("\n\nStopped.");
         }
         catch (Exception ex)
         {
@@ -148,17 +208,104 @@ public sealed partial class MainWindow
         }
         finally
         {
-            _agentRunCts.Cancel();
+            agentRunCts.Cancel();
             try { await panicTask; } catch { /* expected on abort */ }
-            _agentRunCts.Dispose();
-            _agentRunCts = null;
+            agentRunCts.Dispose();
+            if (ReferenceEquals(_agentRunCts, agentRunCts))
+            {
+                _agentRunCts = null;
+            }
 
             conversation.Touch();
-            SetResponding(false);
-            _responseCts?.Dispose();
-            _responseCts = null;
+            if (ReferenceEquals(_responseCts, responseCts))
+            {
+                SetResponding(false);
+                _responseCts = null;
+                _responseConversation = null;
+            }
+            responseCts.Dispose();
             RefreshSearchAndConversations();
             await PersistAsync();
+            RestoreComposerFocus();
+        }
+    }
+
+    private async Task BeginChatReplyAsync(
+        Conversation conversation,
+        Provider activeProvider,
+        long requestVersion)
+    {
+        var responseCts = new CancellationTokenSource();
+        _responseCts = responseCts;
+        var token = responseCts.Token;
+        SetResponding(true);
+        RunStatusText.Text = "Thinking";
+
+        var assistantMessage = new ChatMessage
+        {
+            Role = "assistant",
+            CreatedAt = DateTimeOffset.Now,
+        };
+        conversation.Messages.Add(assistantMessage);
+        conversation.Touch();
+        ActivateConversation(conversation);
+
+        try
+        {
+            var engine = LMMEngine.Create(activeProvider);
+            var agent = new LmmAgent(engine,
+                "You are Vantage, a calm, concise Windows assistant. " +
+                "You are in Chat mode: you cannot see the user's screen and must not operate the PC. " +
+                "Answer questions and help plan normally. If the user asks you to perform an action on the PC, " +
+                "briefly ask them to enable Act for that instruction. Never claim an action was performed in Chat mode.");
+
+            var history = conversation.Messages
+                .Where(m => !ReferenceEquals(m, assistantMessage)
+                    && !m.IsAgentRun
+                    && !string.IsNullOrWhiteSpace(m.Text))
+                .TakeLast(24);
+            foreach (var message in history)
+            {
+                token.ThrowIfCancellationRequested();
+                var role = message.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
+                    ? "user"
+                    : "assistant";
+                agent.AddTextMessage(message.Text, role);
+            }
+
+            var reply = await CommonUtils.CallLlmSafeAsync(
+                agent,
+                temperature: 0.2,
+                maxNewTokens: 4096,
+                ct: token);
+            token.ThrowIfCancellationRequested();
+            assistantMessage.Text = string.IsNullOrWhiteSpace(reply)
+                ? "The provider returned an empty response."
+                : reply.Trim();
+        }
+        catch (OperationCanceledException)
+        {
+            if (string.IsNullOrWhiteSpace(assistantMessage.Text))
+                assistantMessage.Text = "Stopped.";
+        }
+        catch (Exception ex)
+        {
+            assistantMessage.IsError = true;
+            assistantMessage.Text = $"[Provider error] {ex.Message}";
+        }
+        finally
+        {
+            conversation.Touch();
+            if (ReferenceEquals(_responseCts, responseCts))
+            {
+                SetResponding(false);
+                _responseCts = null;
+                _responseConversation = null;
+            }
+            responseCts.Dispose();
+            RefreshSearchAndConversations();
+            await PersistAsync();
+            RestoreComposerFocus();
         }
     }
 
@@ -167,10 +314,16 @@ public sealed partial class MainWindow
     /// Keeps the original "saved locally" tone so the chat surface still
     /// produces a useful response when the agent loop can't be entered.
     /// </summary>
-    private async Task EmitPlainReplyAsync(Conversation conversation, string text)
+    private async Task EmitPlainReplyAsync(
+        Conversation conversation,
+        string text,
+        long requestVersion)
     {
-        _responseCts = new CancellationTokenSource();
-        var token = _responseCts.Token;
+        if (requestVersion != _responseRequestVersion) return;
+
+        var responseCts = new CancellationTokenSource();
+        _responseCts = responseCts;
+        var token = responseCts.Token;
         SetResponding(true);
 
         var assistantMessage = new ChatMessage { Role = "assistant", CreatedAt = DateTimeOffset.Now };
@@ -196,12 +349,29 @@ public sealed partial class MainWindow
         finally
         {
             conversation.Touch();
-            SetResponding(false);
-            _responseCts?.Dispose();
-            _responseCts = null;
+            if (ReferenceEquals(_responseCts, responseCts))
+            {
+                SetResponding(false);
+                _responseCts = null;
+                _responseConversation = null;
+            }
+            responseCts.Dispose();
             RefreshSearchAndConversations();
             await PersistAsync();
+            RestoreComposerFocus();
         }
+    }
+
+    private void RestoreComposerFocus()
+    {
+        // Collection refreshes can hand focus to the sidebar search box.
+        // Queue this behind the current layout pass so Enter-to-send remains
+        // a continuous keyboard workflow after Chat, Act, Stop, or failure.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (InputBox.IsEnabled && InputBox.Visibility == Visibility.Visible)
+                InputBox.Focus(FocusState.Keyboard);
+        });
     }
 
     private static IEnumerable<string> ChunkMessage(string text)
@@ -214,6 +384,9 @@ public sealed partial class MainWindow
 
     private void StopResponse()
     {
+        _responseRequestVersion++;
+        _responseConversation = null;
+
         // Echo into the model-agnostic bring-to-front path too, so the
         // window snaps back the instant the user mashes Stop / Esc —
         // we don't have to wait for the cancellation to fully unwind
@@ -267,7 +440,7 @@ public sealed partial class MainWindow
     /// provider is suitable (no active+keyed providers, or the active
     /// choice has a hard vision-cap rejection).
     /// </summary>
-    private async Task<(Provider? Provider, string? BlockedReason)> PickActiveProviderAsync()
+    private async Task<(Provider? Provider, string? BlockedReason)> PickActiveProviderAsync(bool requiresVision)
     {
         var candidates = _providers
             .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.ApiKey))
@@ -275,7 +448,7 @@ public sealed partial class MainWindow
         if (candidates.Count == 0)
         {
             return (null, "No active AI provider with an API key configured yet; please enable " +
-                         "and configure a provider in the AI Providers screen to run desktop commands.");
+                         "and configure a provider in the AI Providers screen.");
         }
 
         // Honour the user's explicit composer selection when it's still enabled.
@@ -284,6 +457,10 @@ public sealed partial class MainWindow
             && candidates.Any(p => p.Id == selectedChoice.Provider.Id))
         {
             activeProvider = selectedChoice.Provider;
+        }
+        else if (!requiresVision)
+        {
+            activeProvider = candidates[0];
         }
         else
         {
@@ -301,6 +478,8 @@ public sealed partial class MainWindow
             }
             activeProvider ??= candidates[0];
         }
+
+        if (!requiresVision) return (activeProvider, null);
 
         // Hard-reject if the active provider is known text-only. Force
         // override (Auto-detection on text-only providers is allowed but

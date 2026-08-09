@@ -250,7 +250,7 @@ public static class CommonUtils
                 {
                     LogDiagnostic("llm-daily-quota",
                         $"model={rlex.ModelHint} retry_after={rlex.RetryAfterSeconds:F0}s ({rlex.RetryAfterSeconds/60:F1}min)");
-                    throw rlex;
+                    throw;
                 }
                 // Generic 429 with no body hint — we don't know if the wait
                 // is seconds or minutes, and the default fallback of 5s
@@ -261,7 +261,7 @@ public static class CommonUtils
                 {
                     LogDiagnostic("llm-unknown-429-fast-fail",
                         $"model={rlex.ModelHint} attempt={attempt} msg={Truncate(rlex.Message, 160)}");
-                    throw rlex;
+                    throw;
                 }
                 if (attempt >= maxRetries) throw;
                 // TPM (per-minute) waits are short — honor them, capped at 60s.

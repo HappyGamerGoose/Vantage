@@ -90,7 +90,10 @@ public sealed partial class MainWindow
     private void ActivateConversation(Conversation? conversation)
     {
         _activeConversation = conversation;
-        ConversationTitleBlock.Text = conversation?.Title ?? "Vantage";
+        ConversationTitleBlock.Text = conversation?.Title ?? "New chat";
+        ConversationSubtitleBlock.Text = conversation is null
+            ? "Chat or act on your PC"
+            : $"{conversation.Messages.Count} {(conversation.Messages.Count == 1 ? "message" : "messages")}  •  stored locally";
         MessagesList.ItemsSource = conversation?.Messages;
         EmptyState.Visibility = conversation is null || conversation.Messages.Count == 0
             ? Visibility.Visible
@@ -104,9 +107,10 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void NewChatButton_Click(object sender, RoutedEventArgs e)
+    private void NewChatButton_Click(object sender, RoutedEventArgs e)
     {
-        await CreateConversationAsync();
+        StopResponse();
+        ActivateConversation(null);
         ShowPage("chat");
         InputBox.Focus(FocusState.Programmatic);
     }
@@ -183,7 +187,11 @@ public sealed partial class MainWindow
         var index = Conversations.IndexOf(conversation);
         if (index < 0) return;
 
-        if (conversation == _activeConversation) StopResponse();
+        if (conversation == _activeConversation
+            || ReferenceEquals(conversation, _responseConversation))
+        {
+            StopResponse();
+        }
 
         Conversations.Remove(conversation);
 
@@ -232,10 +240,12 @@ public sealed partial class MainWindow
         if (currentIndex > 0) Conversations.Move(currentIndex, 0);
     }
 
-    private async void NewChatAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    private void NewChatAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
-        await CreateConversationAsync();
+        StopResponse();
+        ActivateConversation(null);
+        ShowPage("chat");
         InputBox.Focus(FocusState.Programmatic);
     }
 }

@@ -73,16 +73,20 @@ public static class ActionVerifier
         ["left_click_xy"]     = ClickVerify(focusRegionCheck: true),
         ["right_click_xy"]    = ClickVerify(focusRegionCheck: true),
         ["double_click_xy"]   = ClickVerify(focusRegionCheck: true),
+        ["click_element"]     = ClickVerify(focusRegionCheck: true),
+        ["click_window_xy"]   = ClickVerify(focusRegionCheck: true),
 
         ["highlight_text_span"] = ClickVerify(focusRegionCheck: true),
 
         // ── drag family ───────────────────────────────────────────
         ["drag"]              = DragVerify(),
         ["drag_xy"]           = DragVerify(),
+        ["drag_window"]       = DragVerify(),
 
         // ── scroll family ─────────────────────────────────────────
         ["scroll"]            = ScrollVerify(),
         ["scroll_xy"]         = ScrollVerify(),
+        ["scroll_window"]     = ScrollVerify(),
 
         // ── keyboard / typing ────────────────────────────────────
         ["type"]              = TypeVerify(),
@@ -90,6 +94,9 @@ public static class ActionVerifier
         ["press_key"]         = KeyVerify(),
         ["key"]               = KeyVerify(),
         ["hotkey"]            = KeyVerify(),
+        ["press_window_key"]  = KeyVerify(),
+        ["type_window_text"]  = TypeVerify(),
+        ["set_value"]         = TypeVerify(),
 
         // ── cursor ────────────────────────────────────────────────
         ["move"]              = MoveVerify(),
@@ -101,6 +108,7 @@ public static class ActionVerifier
         ["launch_path"]       = LaunchAppVerify(),
         ["focus_window"]      = FocusWindowVerify(),
         ["focus_app"]         = FocusWindowVerify(),
+        ["activate_window"]   = FocusWindowVerify(),
         ["resize_app"]        = ResizeAppVerify(),
         ["close_window"]      = CloseWindowVerify(),
         ["close_app"]         = CloseWindowVerify(),
@@ -108,6 +116,8 @@ public static class ActionVerifier
 
         // ── read-only / observation ───────────────────────────────
         ["list_apps"]         = ObservationVerify(),
+        ["list_windows"]      = ObservationVerify(),
+        ["get_window_state"]  = ObservationVerify(),
         ["list_processes"]    = ObservationVerify(),
         ["displays"]          = ObservationVerify(),
         ["frontmost_app"]     = ObservationVerify(),
@@ -149,13 +159,12 @@ public static class ActionVerifier
         // pre: target coordinates must be within a display
         if (TryReadCoords(args, out var x, out var y))
         {
-            var displays = WindowsAppManager.GetDisplays();
-            if (!displays.Any(d =>
-                x >= d.OriginX && x < d.OriginX + d.Width &&
-                y >= d.OriginY && y < d.OriginY + d.Height))
+            var monitor = WindowsAutomationService.GetPrimaryMonitor();
+            if (x < 0 || x >= monitor.LogicalWidth
+                || y < 0 || y >= monitor.LogicalHeight)
             {
                 return new VerificationResult(false, "click",
-                    $"target ({x},{y}) is outside every display",
+                    $"target ({x},{y}) is outside the captured primary display",
                     new Dictionary<string, string> { ["x"] = x.ToString(), ["y"] = y.ToString() });
             }
         }
@@ -218,10 +227,8 @@ public static class ActionVerifier
         if (screenDiff.IsSignificant(0.005))
             return new VerificationResult(true, "scroll",
                 $"content scrolled ({screenDiff.TotalChangeRatio:P2} changed samples)");
-        // For wheel events, some apps don't render any visible change if
-        // they're already at the edge. Pass with soft signal.
-        return new VerificationResult(true, "scroll",
-            "no visible content shift — page may be at scroll edge");
+        return new VerificationResult(false, "scroll",
+            "no visible content shift — page may be at its edge or the wrong pane has focus");
     };
 
     private static Func<JsonElement, WorldSnapshot, WorldSnapshot, WorldDiff, ScreenshotDiff, VerificationResult>
@@ -292,9 +299,10 @@ public static class ActionVerifier
             return new VerificationResult(true, "launch_app",
                 "no app name in action; passing — dispatcher will report errors");
 
+        var processHint = Path.GetFileNameWithoutExtension(name);
         var running = WindowsAppManager.ListRunningApps();
         var byName = running.Any(a =>
-            a.Name.Contains(name, StringComparison.OrdinalIgnoreCase)
+            a.Name.Contains(processHint, StringComparison.OrdinalIgnoreCase)
             || a.Title.Contains(name, StringComparison.OrdinalIgnoreCase));
         if (byName)
             return new VerificationResult(true, "launch_app",
@@ -369,9 +377,9 @@ public static class ActionVerifier
         if (string.IsNullOrEmpty(name))
             return new VerificationResult(true, "kill_process", "no name in args");
 
-        var running = WindowsAppManager.ListRunningApps();
-        var stillThere = running.Any(a =>
-            a.Name.Contains(name!, StringComparison.OrdinalIgnoreCase));
+        var processName = Path.GetFileNameWithoutExtension(name);
+        var stillThere = WindowsAppManager.ListProcesses(processName).Any(p =>
+            p.Name.Equals(processName, StringComparison.OrdinalIgnoreCase));
         return stillThere
             ? new VerificationResult(false, "kill_process",
                 $"process '{name}' still running after kill")

@@ -29,12 +29,16 @@ public sealed partial class MainWindow : Window
     private readonly LocalHistoryStore _historyStore = new();
     private readonly ProviderStore _providerStore = new();
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+    private CancellationTokenSource? _autoSaveCts;
+    private CancellationTokenSource? _providerSaveCts;
     private readonly ObservableCollection<Provider> _providers = new();
     private readonly VisionCapability _visionCapability = new();
     private readonly List<ModelChoice> _modelChoices = new();
     private Conversation? _activeConversation;
+    private Conversation? _responseConversation;
     private CancellationTokenSource? _responseCts;
     private CancellationTokenSource? _agentRunCts;
+    private long _responseRequestVersion;
     private bool _loaded;
     private const string SelectedModelSettingKey = "SelectedModel";
 
@@ -43,6 +47,19 @@ public sealed partial class MainWindow : Window
         App.LogStartup("MainWindow constructor starting");
         InitializeComponent();
         App.LogStartup("MainWindow XAML initialized");
+
+        try
+        {
+            ExtendsContentIntoTitleBar = true;
+            SetTitleBar(AppTitleBar);
+            AppWindow.TitleBar.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Tall;
+            App.LogStartup("Extended Mica titlebar initialized");
+        }
+        catch (Exception ex)
+        {
+            App.LogStartup($"Extended titlebar skipped: {ex.Message}");
+        }
+
         AddKeyboardAccelerators();
         App.LogStartup("Keyboard accelerators set");
         ApplyCurrentTheme();
@@ -50,8 +67,11 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            SystemBackdrop = null;
-            App.LogStartup("Backdrop: solid (Mica disabled for crisp rendering)");
+            SystemBackdrop = new MicaBackdrop
+            {
+                Kind = Microsoft.UI.Composition.SystemBackdrops.MicaKind.BaseAlt,
+            };
+            App.LogStartup("Backdrop: Mica BaseAlt");
         }
         catch (Exception ex)
         {
@@ -91,46 +111,6 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            if (AppWindow.TitleBar is { } tb)
-            {
-                tb.ExtendsContentIntoTitleBar = true;
-                tb.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Standard;
-
-                // Restyle the system title-bar buttons (close / minimize /
-                // maximize) so they blend into the flat app palette instead
-                // of using Windows' default light chrome that clashes with
-                // the dark UI. Resting state is fully transparent, hover is
-                // a barely-there tint (16/255 black), pressed is a more
-                // visible tint (38/255 black). Foreground picks up the
-                // PrimaryTextBrush color so the glyphs read cleanly; the
-                // inactive state uses MutedTextBrush so disabled-style
-                // dimming doesn't visually compete with the active icons.
-                var fgRest     = Windows.UI.Color.FromArgb(0xFF, 0x10, 0x1A, 0x24);
-                var fgHover    = Windows.UI.Color.FromArgb(0xFF, 0x10, 0x1A, 0x24);
-                var fgPressed  = Windows.UI.Color.FromArgb(0xFF, 0x10, 0x1A, 0x24);
-                var fgInactive = Windows.UI.Color.FromArgb(0xFF, 0x94, 0xA0, 0xA6);
-                var bgRest     = Microsoft.UI.Colors.Transparent;
-                var bgHover    = Windows.UI.Color.FromArgb(0x16, 0x07, 0x14, 0x1A);
-                var bgPressed  = Windows.UI.Color.FromArgb(0x26, 0x07, 0x14, 0x1A);
-                var bgInactive = Microsoft.UI.Colors.Transparent;
-
-                tb.ButtonBackgroundColor        = bgRest;
-                tb.ButtonForegroundColor        = fgRest;
-                tb.ButtonHoverBackgroundColor   = bgHover;
-                tb.ButtonHoverForegroundColor   = fgHover;
-                tb.ButtonPressedBackgroundColor = bgPressed;
-                tb.ButtonPressedForegroundColor = fgPressed;
-                tb.ButtonInactiveBackgroundColor = bgInactive;
-                tb.ButtonInactiveForegroundColor = fgInactive;
-            }
-        }
-        catch (Exception ex)
-        {
-            App.LogStartup($"Title bar extend skipped: {ex.Message}");
-        }
-
-        try
-        {
             var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
             bool launchMaximized = true;
             if (localSettings.Values.TryGetValue("LaunchMaximized", out var val) && val is bool b)
@@ -153,6 +133,11 @@ public sealed partial class MainWindow : Window
         }
 
         _providers.CollectionChanged += OnProvidersChanged;
+        // Conversations safety net: any add/remove/move on the
+        // collection that doesn't go through a code path that awaits
+        // PersistAsync would otherwise live only in memory until the
+        // next close. OnConversationsChanged catches that case.
+        Conversations.CollectionChanged += OnConversationsChanged;
     }
 
     public ObservableCollection<Conversation> Conversations { get; } = new();
@@ -179,14 +164,39 @@ public sealed partial class MainWindow : Window
         ConversationList.ItemsSource = FilteredConversations;
         SearchResultsList.ItemsSource = SearchResults;
         LoadSettings();
+        UpdateAboutVersionText();
         LoadProviders();
         RenderProviderCards();
         UpdateSidebarVisibility();
         UpdateComposerFocus();
 
         await LoadConversationsAsync();
-        InputBox.Focus(FocusState.Programmatic);
 
-        ShowPage("providers");
+        // Refresh the sidebar so the past-conversations list is
+        // visible on first launch. LoadConversationsAsync adds the
+        // history to `Conversations`, but the sidebar binds to
+        // `FilteredConversations`, which is normally repopulated
+        // by RefreshSearchAndConversations on user actions
+        // (create / rename / delete / send). On a cold start
+        // there's no user action yet, so the sidebar would render
+        // empty until the user creates a new conversation —
+        // exactly the "past conversations do not load" bug the
+        // user just hit. Calling it here fills the list with the
+        // loaded history before we show the chat surface.
+        RefreshSearchAndConversations();
+
+        // Always land on the fresh empty state, not the most recent
+        // conversation. Resume-by-default is hostile: the user
+        // opens the app wanting a fresh start and finds themselves
+        // staring at the tail end of a session that ended hours ago.
+        // The sidebar is right there — clicking a past conversation
+        // is a single tap. ActivateConversation(null) shows the
+        // EmptyState ("Type below to start.") and clears the
+        // sidebar selection. Matches the README's flow: "The first
+        // conversation is created when you send your first prompt."
+        ActivateConversation(null);
+        ShowPage("chat");
+
+        RestoreComposerFocus();
     }
 }

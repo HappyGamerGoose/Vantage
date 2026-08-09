@@ -62,8 +62,26 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
     private string _statusText = "Initializing…";
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
 
+    /// <summary>Compact trust/evidence line inspired by operator consoles.</summary>
+    private string _evidenceSummary = "Direct desktop control · screenshots stay bounded";
+    public string EvidenceSummary { get => _evidenceSummary; set => Set(ref _evidenceSummary, value); }
+
     /// <summary>Elapsed time clock — refreshed by the tick timer.</summary>
-    public string ElapsedLabel => FormatElapsed(DateTimeOffset.UtcNow - _startedAt);
+    public string ElapsedLabel
+    {
+        get
+        {
+            // For a finished run restored from a snapshot, the
+            // duration is frozen to FinalDurationMs so the displayed
+            // time doesn't drift forward on every app launch. For a
+            // live run, FinalDurationMs is null and we compute from
+            // wall-clock against _startedAt.
+            var elapsed = _finalDurationMs.HasValue
+                ? TimeSpan.FromMilliseconds(_finalDurationMs.Value)
+                : DateTimeOffset.UtcNow - _startedAt;
+            return FormatElapsed(elapsed);
+        }
+    }
 
     /// <summary>True once the run has ended.</summary>
     private bool _isFinished;
@@ -74,7 +92,14 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
         {
             if (Set(ref _isFinished, value))
             {
-                if (value) _tickTimer?.Stop();
+                if (value)
+                {
+                    _finalDurationMs ??= Math.Max(
+                        0,
+                        (long)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds);
+                    _tickTimer?.Stop();
+                    OnPropertyChanged(nameof(ElapsedLabel));
+                }
                 else _tickTimer?.Start();
                 OnPropertyChanged(nameof(IsFinishedVisibility));
                 OnPropertyChanged(nameof(ProgressPercent));
@@ -100,6 +125,22 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
     {
         get => _stepsCompleted;
         set { if (Set(ref _stepsCompleted, value)) { OnPropertyChanged(nameof(ProgressPercent)); OnPropertyChanged(nameof(ProgressIndeterminate)); } }
+    }
+
+    /// <summary>
+    /// Total run duration in milliseconds, captured when the run
+    /// finishes. For a live run this stays null and ElapsedLabel
+    /// computes "now - StartedAt" so the clock ticks; for a run
+    /// restored from a snapshot, the value is populated and the
+    /// ElapsedLabel is frozen to that duration (so the user sees
+    /// the same "47s" they saw at the moment the run ended, not a
+    /// duration that drifts upward forever on every relaunch).
+    /// </summary>
+    private long? _finalDurationMs;
+    public long? FinalDurationMs
+    {
+        get => _finalDurationMs;
+        set { if (Set(ref _finalDurationMs, value)) OnPropertyChanged(nameof(ElapsedLabel)); }
     }
 
     /// <summary>
@@ -165,6 +206,7 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
             .GroupBy(p => p.Counter!.Value)
             .Select(g => new CounterRow
             {
+                Kind  = g.Key,
                 Glyph = CounterGlyph(g.Key),
                 Label = CounterLabel(g.Key),
                 Count = g.Count(),
@@ -217,6 +259,107 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
         if (t.TotalSeconds < 60) return $"{(int)t.TotalSeconds}s";
         if (t.TotalMinutes < 60) return $"{(int)t.TotalMinutes}m {t.Seconds}s";
         return $"{(int)t.TotalHours}h {t.Minutes}m";
+    }
+
+    /// <summary>
+    /// Capture the view model's current state as a serializable
+    /// snapshot. Called from the chat-history save path so a future
+    /// load can rebuild the visualization. The live tick timer is
+    /// deliberately not captured — a restored view model gets a
+    /// fresh (stopped) tick timer because the run is by definition
+    /// over.
+    /// </summary>
+    public AgentRunSnapshot CreateSnapshot() => new()
+    {
+        HeaderTitle    = _headerTitle,
+        StatusText     = _statusText,
+        EvidenceSummary = _evidenceSummary,
+        IsFinished     = _isFinished,
+        TerminationLabel = _terminationLabel,
+        TerminationKind  = _terminationKind,
+        StepsCompleted  = _stepsCompleted,
+        StartedAt      = _startedAt,
+        FinalDurationMs = _finalDurationMs ?? (long)(DateTimeOffset.UtcNow - _startedAt).TotalMilliseconds,
+        Phases = Phases.Select(p => new PhaseSnapshot
+        {
+            Index      = p.Index,
+            Kind       = p.Kind,
+            Counter    = p.Counter,
+            Status     = p.Status,
+            Title      = p.Title,
+            Subtitle   = p.Subtitle,
+            StartedAt  = p.StartedAt,
+            FinishedAt = p.FinishedAt,
+        }).ToList(),
+        Counters = Counters.Select(c => new CounterSnapshot
+        {
+            Kind  = c.Kind,
+            Count = c.Count,
+        }).ToList(),
+    };
+
+    /// <summary>
+    /// Rebuild a finished-run view model from a persisted snapshot.
+    /// The rebuilt VM is "frozen": IsFinished is true, the tick timer
+    /// is created but immediately stopped (no clock drift), and
+    /// FinalDurationMs is set so the ElapsedLabel renders the
+    /// original duration rather than "now - StartedAt". The Kind
+    /// enum stored on each counter is run through the same
+    /// CounterGlyph / CounterLabel helpers used at runtime, so a
+    /// future glyph-mapping change automatically applies to old
+    /// snapshots.
+    /// </summary>
+    public static AgentRunViewModel FromSnapshot(AgentRunSnapshot snap, Action<Action> marshal)
+    {
+        var vm = new AgentRunViewModel(marshal)
+        {
+            HeaderTitle      = snap.HeaderTitle,
+            StatusText       = snap.StatusText,
+            EvidenceSummary  = string.IsNullOrWhiteSpace(snap.EvidenceSummary)
+                ? "Direct desktop control · screenshots stay bounded"
+                : snap.EvidenceSummary,
+            IsFinished       = snap.IsFinished,
+            TerminationLabel = snap.TerminationLabel,
+            TerminationKind  = snap.TerminationKind,
+            StepsCompleted   = snap.StepsCompleted,
+            FinalDurationMs  = snap.FinalDurationMs,
+        };
+        // _startedAt is a private field (no public setter — it's
+        // captured once per run, never mutated at runtime), so we
+        // assign it directly here. The restored view model only
+        // uses it for diagnostics / display, since ElapsedLabel is
+        // frozen to FinalDurationMs.
+        vm._startedAt = snap.StartedAt;
+        // A restored run is by definition over — the tick timer
+        // created in the constructor starts running, stop it
+        // immediately so ElapsedLabel stays frozen.
+        vm._tickTimer?.Stop();
+
+        foreach (var ps in snap.Phases)
+        {
+            vm.Phases.Add(new PhaseRecord
+            {
+                Index     = ps.Index,
+                Kind      = ps.Kind,
+                Counter   = ps.Counter,
+                Status    = ps.Status,
+                Title     = ps.Title,
+                Subtitle  = ps.Subtitle,
+                StartedAt = ps.StartedAt,
+                FinishedAt = ps.FinishedAt,
+            });
+        }
+        foreach (var cs in snap.Counters)
+        {
+            vm.Counters.Add(new CounterRow
+            {
+                Kind  = cs.Kind,
+                Glyph = CounterGlyph(cs.Kind),
+                Label = CounterLabel(cs.Kind),
+                Count = cs.Count,
+            });
+        }
+        return vm;
     }
 }
 
@@ -301,12 +444,18 @@ public sealed class PhaseRecord : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
 }
 
-public sealed class CounterRow : INotifyPropertyChanged
+public sealed class CounterRow
 {
+    /// <summary>The kind this counter aggregates. Needed for snapshot round-trip.</summary>
+    public PhaseKind Kind { get; init; }
+
+    /// <summary>Segoe Fluent glyph for the counter pill.</summary>
     public string Glyph { get; init; } = "\uE91F";
+
+    /// <summary>Short label for the counter pill ("click" / "key" / "wait" / …).</summary>
     public string Label { get; init; } = "";
+
     public int Count { get; init; }
-    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public enum PhaseKind

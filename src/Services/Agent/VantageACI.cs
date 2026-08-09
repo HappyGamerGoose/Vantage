@@ -18,15 +18,12 @@ using Vantage.Models;
 
 namespace Vantage.Services.Agent;
 
-public enum ActionOutcome { Success, Failed, Done, FailedFatal }
-
-public sealed record ActionResult(ActionOutcome Outcome, string Description);
-
 public sealed class VantageACI
 {
     private readonly LMMEngine _groundingEngine;
     private readonly WindowsAutomationService.MonitorGeometry _monitor;
     private readonly LmmAgent _groundingAgent;
+    private readonly ComputerUseSession _computerUse = new();
     private byte[]? _screenshotJpeg;
     private int _screenshotWidth;
     private int _screenshotHeight;
@@ -41,7 +38,10 @@ public sealed class VantageACI
     private long _groundingMs;
     public long LastGroundingMs => _groundingMs;
 
-    public VantageACI(LMMEngine engine, WindowsAutomationService.MonitorGeometry monitor, string platform = "windows")
+    public VantageACI(
+        LMMEngine engine,
+        WindowsAutomationService.MonitorGeometry monitor,
+        string platform = "windows")
     {
         _groundingEngine = engine;
         _monitor = monitor;
@@ -71,6 +71,11 @@ public sealed class VantageACI
         if (_screenshotJpeg is null || _screenshotJpeg.Length == 0)
             return new ActionResult(ActionOutcome.Failed, "no screenshot assigned; cannot ground description to coordinates");
 
+        // Window observations are point-in-time capabilities. Any legacy
+        // desktop-wide action makes the cached tree/coordinates stale.
+        if (!ComputerUseSession.IsScopedAction(action.Action))
+            _computerUse.Invalidate();
+
         // Wrap dispatch in a try/catch so a failure deep in the Windows
         // automation stack (SetCursorPos returning FALSE, SendInput
         // blocked by a sandbox, etc.) surfaces as a normal Failed
@@ -86,26 +91,57 @@ public sealed class VantageACI
             {
                 // ── UI-input actions (sent to the grounding layer or click_xy) ──
                 "click"            => await DoClickAsync(action, ct),
-                "click_xy"         => DoClickAt(action),
+                "click_xy"         => await DoClickAtAsync(action, ct),
                 "type"             => await DoTypeAsync(action, ct),
-                "type_text"        => DoTypeText(action),
+                "type_text"        => await DoTypeTextAsync(action, ct),
                 "key"              => DoKey(action),
                 "press_key"        => DoPressKey(action),
                 "scroll"           => await DoScrollAsync(action, ct),
                 "scroll_xy"        => DoScrollAt(action),
                 "drag"             => await DoDragAsync(action, ct),
-                "drag_xy"          => DoDragAt(action),
+                "drag_xy"          => await DoDragAtAsync(action, ct),
                 "move_mouse"       => DoMoveMouse(action),
                 "highlight_text_span" => await DoHighlightSpanAsync(action, ct),
 
+                // Window-bound computer-use actions. IDs and element indexes
+                // must come from list_windows/get_window_state and are never
+                // reconstructed from titles or guessed coordinates.
+                "list_windows"      => DoListWindows(),
+                "get_window_state"  => DoGetWindowState(action),
+                "activate_window"   => _computerUse.ActivateWindow(action.GetString("window_id")),
+                "click_element"     => await _computerUse.ClickElementAsync(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetInt("element_index"), action.GetString("button") ?? "left",
+                    action.GetInt("click_count") ?? 1, ct),
+                "click_window_xy"   => await _computerUse.ClickWindowAsync(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetInt("x"), action.GetInt("y"),
+                    action.GetString("button") ?? "left", action.GetInt("click_count") ?? 1, ct),
+                "scroll_window"     => _computerUse.ScrollWindow(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetInt("x"), action.GetInt("y"), action.GetInt("scroll_y")),
+                "drag_window"       => await _computerUse.DragWindowAsync(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetInt("from_x"), action.GetInt("from_y"),
+                    action.GetInt("to_x"), action.GetInt("to_y"), ct),
+                "set_value"         => _computerUse.SetValue(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetInt("element_index"), action.GetString("value") ?? string.Empty),
+                "type_window_text"  => await _computerUse.TypeTextAsync(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetString("text") ?? string.Empty, action.GetInt("delay_ms") ?? 0, ct),
+                "press_window_key"  => _computerUse.PressKey(
+                    action.GetString("window_id"), action.GetString("observation_id"),
+                    action.GetString("combo") ?? string.Empty),
+
                 // ── App lifecycle + shell ──
-                "launch_app"       => DoLaunchApp(action),
-                "focus_app"        => DoFocusApp(action),
+                "launch_app"       => await DoLaunchAppAsync(action, ct),
+                "focus_app"        => await DoFocusAppAsync(action, ct),
                 "resize_app"       => DoResizeApp(action),
                 "close_app"        => DoCloseApp(action),
-                "wait_for_app"     => DoWaitForApp(action),
+                "wait_for_app"     => await DoWaitForAppAsync(action, ct),
                 "kill_process"     => DoKillProcess(action),
-                "run_powershell"   => DoRunPowerShell(action),
+                "run_powershell"   => await DoRunPowerShellAsync(action, ct),
 
                 // ── Observation / data-collection tools ──
                 "list_apps"        => DoListApps(),
@@ -117,12 +153,12 @@ public sealed class VantageACI
 
                 // ── Cheap no-ops / metadata signals ──
                 "screenshot"       => new ActionResult(ActionOutcome.Success, "screenshot refresh"),
-                "wait"             => DoWait(action),
+                "wait"             => await DoWaitAsync(action, ct),
                 "save_to_knowledge"=> HandleSaveToKnowledge(action),
 
                 // ── Vantage-specific clipboard write is async (uses SetClipboardText
                 //     which marshals across processes); other clipboard ops are sync. ──
-                "vantage_set_clipboard" => await HandleSetClipboardAsync(action),
+                "vantage_set_clipboard" => await HandleSetClipboardAsync(action, ct),
 
                 // ── Lifecycle terminators ──
                 "done" => new ActionResult(ActionOutcome.Done, "agent signaled done"),
@@ -150,22 +186,22 @@ public sealed class VantageACI
     private ActionResult HandleSaveToKnowledge(AgentAction action)
     {
         var facts = action.GetStringList("text");
-        Notes.AddRange(facts);
+        foreach (var fact in facts) AddNote(fact);
         return new ActionResult(ActionOutcome.Success, $"saved {facts.Count} fact(s) to knowledge bank");
     }
 
     private ActionResult HandleGetClipboard()
     {
         var text = WindowsAutomationService.GetClipboardText() ?? "<empty>";
-        Notes.Add($"clipboard_at_{DateTimeOffset.UtcNow.Ticks}: {text}");
+        AddNote($"clipboard_at_{DateTimeOffset.UtcNow.Ticks}: {text}");
         return new ActionResult(ActionOutcome.Success,
             $"clipboard text ({text.Length} chars)");
     }
 
-    private async Task<ActionResult> HandleSetClipboardAsync(AgentAction action)
+    private static async Task<ActionResult> HandleSetClipboardAsync(AgentAction action, CancellationToken ct)
     {
         var text = action.GetString("text") ?? string.Empty;
-        var ok = await Task.Run(() => WindowsAutomationService.SetClipboardText(text));
+        var ok = await Task.Run(() => WindowsAutomationService.SetClipboardText(text), ct);
         return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
             ok ? $"clipboard set ({text.Length} chars)" : "clipboard set failed");
     }
@@ -189,6 +225,7 @@ public sealed class VantageACI
         if (fast is { } hit)
         {
             return await DoClickDispatch(action, hit.x, hit.y,
+                ct,
                 description: $"window-center '{hit.title}' matched \"{description}\"");
         }
 
@@ -198,6 +235,7 @@ public sealed class VantageACI
         var coords = await GroundAsync(description, ct);
         if (coords is null) return new ActionResult(ActionOutcome.Failed, $"could not locate '{description}' on screen");
         return await DoClickDispatch(action, coords.Value.x, coords.Value.y,
+            ct,
             description: $"\"{description}\"");
     }
 
@@ -207,18 +245,29 @@ public sealed class VantageACI
     /// shown back to the model in success / failure messages, so the
     /// model can tell which path ran and why.
     /// </summary>
-    private static async Task<ActionResult> DoClickDispatch(AgentAction action, int x, int y, string description)
+    private static async Task<ActionResult> DoClickDispatch(
+        AgentAction action,
+        int x,
+        int y,
+        CancellationToken ct,
+        string description)
     {
-        var numClicks = action.GetInt("num_clicks") ?? 1;
-        var button    = action.GetString("button") ?? "left";
+        var numClicks = Math.Clamp(action.GetInt("num_clicks") ?? 1, 1, 3);
+        var button = (action.GetString("button") ?? "left").ToLowerInvariant();
+        if (button is not ("left" or "right" or "middle"))
+            return new ActionResult(ActionOutcome.Failed, $"unsupported mouse button '{button}'");
         var holdKeys  = action.GetStringList("hold_keys");
-
-        foreach (var key in holdKeys)
-            WindowsAutomationService.KeyDown(MapVirtualKey(key));
-
+        var holdVirtualKeys = holdKeys.Select(MapVirtualKey).ToList();
+        var pressedVirtualKeys = new List<Windows.System.VirtualKey>();
         var failures = new List<string>();
         try
         {
+            foreach (var key in holdVirtualKeys)
+            {
+                WindowsAutomationService.KeyDown(key);
+                pressedVirtualKeys.Add(key);
+            }
+
             for (var i = 0; i < numClicks; i++)
             {
                 try
@@ -238,13 +287,13 @@ public sealed class VantageACI
                     // agent loop recover — never bubble out.
                     failures.Add($"click #{i + 1}: {ex.Message}");
                 }
-                if (i < numClicks - 1) await Task.Delay(80);
+                if (i < numClicks - 1) await Task.Delay(80, ct);
             }
         }
         finally
         {
-            foreach (var key in holdKeys.AsEnumerable().Reverse())
-                WindowsAutomationService.KeyUp(MapVirtualKey(key));
+            foreach (var key in pressedVirtualKeys.AsEnumerable().Reverse())
+                WindowsAutomationService.KeyUp(key);
         }
 
         if (failures.Count > 0)
@@ -297,20 +346,31 @@ public sealed class VantageACI
             await Task.Delay(120, ct);
         }
 
+        if (CheckForegroundTarget(action, "type") is { } targetFailure)
+            return targetFailure;
+
         if (overwrite)
         {
             WindowsAutomationService.KeyDown(Windows.System.VirtualKey.Control);
-            WindowsAutomationService.SendKey(Windows.System.VirtualKey.A);
-            WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Control);
+            try
+            {
+                WindowsAutomationService.SendKey(Windows.System.VirtualKey.A);
+            }
+            finally
+            {
+                WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Control);
+            }
             WindowsAutomationService.SendKey(Windows.System.VirtualKey.Back);
             await Task.Delay(60, ct);
         }
 
-        if (text.Length > 0) WindowsAutomationService.Type(text);
+        var typed = text.Length > 0
+            ? await WindowsAutomationService.TypeAsync(text, ct)
+            : 0;
 
         if (enter) WindowsAutomationService.SendKey(Windows.System.VirtualKey.Enter);
 
-        return new ActionResult(ActionOutcome.Success, $"typed {text.Length} chars");
+        return new ActionResult(ActionOutcome.Success, $"typed {typed} character(s)");
     }
 
     private ActionResult DoKey(AgentAction action)
@@ -325,9 +385,21 @@ public sealed class VantageACI
 
         var leaf = MapVirtualKey(keys[^1]);
 
-        foreach (var m in modifiers) WindowsAutomationService.KeyDown(m);
-        WindowsAutomationService.SendKey(leaf);
-        foreach (var m in modifiers.AsEnumerable().Reverse()) WindowsAutomationService.KeyUp(m);
+        var pressedModifiers = new List<Windows.System.VirtualKey>();
+        try
+        {
+            foreach (var modifier in modifiers)
+            {
+                WindowsAutomationService.KeyDown(modifier);
+                pressedModifiers.Add(modifier);
+            }
+            WindowsAutomationService.SendKey(leaf);
+        }
+        finally
+        {
+            foreach (var modifier in pressedModifiers.AsEnumerable().Reverse())
+                WindowsAutomationService.KeyUp(modifier);
+        }
 
         return new ActionResult(ActionOutcome.Success, $"pressed {string.Join("+", keys)}");
     }
@@ -342,7 +414,17 @@ public sealed class VantageACI
         var coords = await GroundAsync(description, ct);
         if (coords is null) return new ActionResult(ActionOutcome.Failed, $"could not locate '{description}' for scroll");
 
-        WindowsAutomationService.Scroll(clicks, coords.Value.x, coords.Value.y);
+        var wheelDelta = Math.Clamp(clicks, -20, 20) * 120;
+        var shift = action.GetBool("shift", false);
+        if (shift) WindowsAutomationService.KeyDown(Windows.System.VirtualKey.Shift);
+        try
+        {
+            WindowsAutomationService.Scroll(wheelDelta, coords.Value.x, coords.Value.y);
+        }
+        finally
+        {
+            if (shift) WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Shift);
+        }
         return new ActionResult(ActionOutcome.Success, $"scrolled {clicks} at ({coords.Value.x}, {coords.Value.y})");
     }
 
@@ -357,23 +439,38 @@ public sealed class VantageACI
         var end   = await GroundAsync(endDesc, ct);
         if (start is null || end is null) return new ActionResult(ActionOutcome.Failed, "drag start or end could not be located");
 
-        // WindowsAutomationService doesn't have a drag helper; emulate
-        // with MoveMouse → LeftClick hold → MoveMouse → release.
-        WindowsAutomationService.MoveMouse(start.Value.x, start.Value.y);
-        await Task.Delay(60, ct);
-        WindowsAutomationService.LeftClick(start.Value.x, start.Value.y);
-        // Hold the button by issuing another left-down without up; we use
-        // raw SendInput via a tiny pyautogui-style helper.
-        HoldLeftButtonDuringDrag(start.Value.x, start.Value.y, end.Value.x, end.Value.y);
+        var holdKeys = action.GetStringList("hold_keys");
+        var holdVirtualKeys = holdKeys.Select(MapVirtualKey).ToList();
+        var pressedVirtualKeys = new List<Windows.System.VirtualKey>();
+        try
+        {
+            foreach (var key in holdVirtualKeys)
+            {
+                WindowsAutomationService.KeyDown(key);
+                pressedVirtualKeys.Add(key);
+            }
+            await WindowsAutomationService.DragAsync(
+                start.Value.x,
+                start.Value.y,
+                end.Value.x,
+                end.Value.y,
+                WindowsAutomationService.MouseButton.Left,
+                ct);
+        }
+        finally
+        {
+            foreach (var key in pressedVirtualKeys.AsEnumerable().Reverse())
+                WindowsAutomationService.KeyUp(key);
+        }
         return new ActionResult(ActionOutcome.Success,
             $"dragged from ({start.Value.x},{start.Value.y}) to ({end.Value.x},{end.Value.y})");
     }
 
-    private ActionResult DoWait(AgentAction action)
+    private static async Task<ActionResult> DoWaitAsync(AgentAction action, CancellationToken ct)
     {
         var seconds = action.GetInt("seconds") ?? 1;
         if (seconds < 0 || seconds > 30) seconds = Math.Clamp(seconds, 0, 30);
-        Thread.Sleep(seconds * 1000);
+        await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
         return new ActionResult(ActionOutcome.Success, $"waited {seconds}s");
     }
 
@@ -388,32 +485,23 @@ public sealed class VantageACI
         var endCoords = await GroundAsync($"the end of the text: {endPhrase}", ct);
         if (startCoords is null || endCoords is null) return new ActionResult(ActionOutcome.Failed, "phrase endpoints not found");
 
-        HoldLeftButtonDuringDrag(startCoords.Value.x, startCoords.Value.y, endCoords.Value.x, endCoords.Value.y);
+        var button = (action.GetString("button") ?? "left").ToLowerInvariant();
+        if (button is not ("left" or "right" or "middle"))
+            return new ActionResult(ActionOutcome.Failed, $"unsupported mouse button '{button}'");
+        var mouseButton = button switch
+        {
+            "right" => WindowsAutomationService.MouseButton.Right,
+            "middle" => WindowsAutomationService.MouseButton.Middle,
+            _ => WindowsAutomationService.MouseButton.Left,
+        };
+        await WindowsAutomationService.DragAsync(
+            startCoords.Value.x,
+            startCoords.Value.y,
+            endCoords.Value.x,
+            endCoords.Value.y,
+            mouseButton,
+            ct);
         return new ActionResult(ActionOutcome.Success, $"highlighted span");
-    }
-
-    /// <summary>
-    /// Send a left-button-down via SendInput, move cursor to the destination
-    /// in small steps, then send left-button-up. Used by drag_and_drop and
-    /// highlight_text_span — WindowsAutomationService doesn't expose a
-    /// high-level drag helper.
-    /// </summary>
-    private static void HoldLeftButtonDuringDrag(int x1, int y1, int x2, int y2)
-    {
-        // Use the WindowsAutomationService primitive (left click holds
-        // briefly, so we send a manual mouse-down via Type which doesn't
-        // release). For simplicity we just emulate with two clicks +
-        // MoveMouse; this matches what most screen-reader automation
-        // frameworks do for native drag.
-        WindowsAutomationService.MoveMouse(x2, y2);
-        Thread.Sleep(40);
-        // Native MOUSEINPUTF_LEFTDOWN is not exposed by
-        // WindowsAutomationService; the closest semantic match is a
-        // left_click at the start + a left_click at the end, which on
-        // Windows file-explorer / browsers also drags when the second
-        // click is on a drop target. For true drag, callers should use
-        // OS-level UI Automation (UIA) via pywinauto; out of scope here.
-        WindowsAutomationService.LeftClick(x2, y2);
     }
 
     // ─── Grounding ──────────────────────────────────────────────
@@ -558,28 +646,38 @@ public sealed class VantageACI
     // per-step budget tight — every call is synchronous and bounded by
     // an explicit timeout so a hung action can't stall the loop.
 
-    private ActionResult DoLaunchApp(AgentAction action)
+    private async Task<ActionResult> DoLaunchAppAsync(AgentAction action, CancellationToken ct)
     {
         var executable = action.GetString("executable") ?? "";
         if (string.IsNullOrWhiteSpace(executable))
             return new ActionResult(ActionOutcome.Failed, "launch_app requires `executable` (path or file association)");
 
-        // Refuse inputs that look like shell-injection — only file paths
-        // or registered associations should reach Process.Start.
-        if (executable.Contains('|') || executable.Contains('>') || executable.Contains('<'))
-            return new ActionResult(ActionOutcome.Failed, "launch_app rejected: exotic characters in `executable`");
-
-        var ok = WindowsAppManager.LaunchApp(executable);
-        return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
-            ok ? $"launched {executable}" : $"launch failed for {executable}");
+        var launch = await WindowsAppManager.LaunchAndFocusAppAsync(
+            executable,
+            timeoutMs: 8_000,
+            ct: ct);
+        if (!launch.Started)
+            return new ActionResult(ActionOutcome.Failed, $"launch failed for {executable}");
+        if (launch.Focused && launch.Window is { } window)
+            return new ActionResult(ActionOutcome.Success,
+                $"launched and focused {executable} — window \"{window.Title}\"");
+        return new ActionResult(ActionOutcome.Success,
+            $"launched {executable}; no target window was focusable within 8 seconds");
     }
 
-    private ActionResult DoFocusApp(AgentAction action)
+    private async Task<ActionResult> DoFocusAppAsync(AgentAction action, CancellationToken ct)
     {
         var title = action.GetString("title");
         if (string.IsNullOrWhiteSpace(title))
             return new ActionResult(ActionOutcome.Failed, "focus_app requires `title`");
         var ok = WindowsAppManager.FocusWindowByTitle(title);
+        if (!ok && title.Contains("settings", StringComparison.OrdinalIgnoreCase))
+        {
+            var launch = await WindowsAppManager.LaunchAndFocusAppAsync("ms-settings:", 8_000, ct);
+            if (launch.Started)
+                return new ActionResult(ActionOutcome.Success,
+                    launch.Focused ? "opened and focused Settings" : "opened Settings");
+        }
         return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
             ok ? $"focused window containing \"{title}\"" : $"no visible window containing \"{title}\"");
     }
@@ -610,17 +708,25 @@ public sealed class VantageACI
             ok ? $"closed window containing \"{title}\"" : $"no window containing \"{title}\"");
     }
 
-    private ActionResult DoWaitForApp(AgentAction action)
+    private async Task<ActionResult> DoWaitForAppAsync(AgentAction action, CancellationToken ct)
     {
         var title = action.GetString("title");
         if (string.IsNullOrWhiteSpace(title))
             return new ActionResult(ActionOutcome.Failed, "wait_for_app requires `title`");
         var timeout = action.GetInt("timeout_seconds") ?? 10;
         if (timeout < 1) timeout = 1; if (timeout > 60) timeout = 60;
-        var match = WindowsAppManager.WaitForWindow(title, appear: true, timeout);
+        WindowsAppManager.WindowInfo? match = null;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            match = WindowsAppManager.FindWindowByTitle(title);
+            if (match is not null) break;
+            await Task.Delay(150, ct);
+        }
         if (match is null)
             return new ActionResult(ActionOutcome.Failed, $"no window matching \"{title}\" appeared within {timeout}s");
-        Notes.Add($"wait_for_app: matched \"{title}\" → \"{match.Title}\" (pid {match.Pid})");
+        AddNote($"wait_for_app: matched \"{title}\" → \"{match.Title}\" (pid {match.Pid})");
         return new ActionResult(ActionOutcome.Success, $"\"{title}\" appeared after polling");
     }
 
@@ -630,6 +736,8 @@ public sealed class VantageACI
         var y = action.GetInt("y");
         if (x is null || y is null)
             return new ActionResult(ActionOutcome.Failed, "move_mouse requires integer `x` and `y`");
+        if (!IsPointOnCapturedDisplay(x.Value, y.Value))
+            return PointOutsideCapture("move_mouse", x.Value, y.Value);
         WindowsAppManager.MoveMouse(x.Value, y.Value);
         return new ActionResult(ActionOutcome.Success, $"mouse → ({x.Value}, {y.Value})");
     }
@@ -649,7 +757,7 @@ public sealed class VantageACI
         sb.AppendLine($"{ps.Count} matching processes:");
         foreach (var p in top)
             sb.AppendLine($"  pid {p.Pid,6}  {p.Name,-30}  {p.MainWindowTitle}");
-        Notes.Add(sb.ToString());
+        AddNote(sb.ToString());
         return new ActionResult(ActionOutcome.Success,
             $"{ps.Count} processes matched{(filter is { Length: > 0 } ? " (filter: " + filter + ")" : "")}");
     }
@@ -664,26 +772,24 @@ public sealed class VantageACI
             killed > 0 ? $"killed {killed} process(es) matching \"{name}\"" : $"no running processes matching \"{name}\"");
     }
 
-    private ActionResult DoRunPowerShell(AgentAction action)
+    private async Task<ActionResult> DoRunPowerShellAsync(AgentAction action, CancellationToken ct)
     {
         var command = action.GetString("command");
         if (string.IsNullOrWhiteSpace(command))
             return new ActionResult(ActionOutcome.Failed, "run_powershell requires `command`");
 
-        // Refuse commands that could break out of the single-expression
-        // shell context. Newlines let the agent chain arbitrary statements.
-        if (command.Contains('\n') || command.Contains('\r'))
-            return new ActionResult(ActionOutcome.Failed, "run_powershell rejected: multiline commands not allowed (use single-line semicolon-separated statements)");
-
         var timeout = action.GetInt("timeout_seconds");
-        var r = WindowsAppManager.RunPowerShell(command,
-            timeoutMs: (timeout is > 0 ? timeout.Value : 30) * 1000);
+        var timeoutSeconds = Math.Clamp(timeout is > 0 ? timeout.Value : 30, 1, 600);
+        var r = await WindowsAppManager.RunPowerShellAsync(
+            command,
+            timeoutMs: timeoutSeconds * 1000,
+            ct);
 
         // Store compact output for the next step's context; truncate
         // aggressively so a verbose cmdlet doesn't blow the budget.
         var outTrunc = r.StdOut.Length > 800 ? r.StdOut.Substring(0, 800) + "…" : r.StdOut;
         var errTrunc = r.StdErr.Length > 400 ? r.StdErr.Substring(0, 400) + "…" : r.StdErr;
-        Notes.Add($"pwsh_exit={r.ExitCode}\nout:\n{r.StdOut}\nerr:\n{r.StdErr}".Trim());
+        AddNote($"pwsh_exit={r.ExitCode}\nout:\n{outTrunc}\nerr:\n{errTrunc}".Trim());
         return new ActionResult(r.ExitCode == 0 ? ActionOutcome.Success : ActionOutcome.Failed,
             $"pwsh exit={r.ExitCode} out={outTrunc.Length}ch err={errTrunc.Length}ch");
     }
@@ -716,23 +822,43 @@ public sealed class VantageACI
     //  Direct-coordinate input helpers (computer-use-mcp parity)
     // ════════════════════════════════════════════════════════════════════
 
-    private ActionResult DoClickAt(AgentAction action)
+    private static async Task<ActionResult> DoClickAtAsync(AgentAction action, CancellationToken ct)
     {
         var x = action.GetInt("x");
         var y = action.GetInt("y");
         if (x is null || y is null)
             return new ActionResult(ActionOutcome.Failed, "click_xy requires `x` and `y` ints");
+        if (!IsPointOnCapturedDisplay(x.Value, y.Value))
+            return PointOutsideCapture("click_xy", x.Value, y.Value);
         var count = Math.Clamp(action.GetInt("count") ?? 1, 1, 3);
-        var btn = (action.GetString("button") ?? "left").ToLowerInvariant() switch
+        var button = (action.GetString("button") ?? "left").ToLowerInvariant();
+        if (button is not ("left" or "right" or "middle"))
+            return new ActionResult(ActionOutcome.Failed, $"unsupported mouse button '{button}'");
+        var btn = button switch
         {
             "right"  => WindowsAppManager.ClickButton.Right,
             "middle" => WindowsAppManager.ClickButton.Middle,
             _        => WindowsAppManager.ClickButton.Left,
         };
-        var ok = WindowsAppManager.Click(x.Value, y.Value, btn, count);
+        for (var i = 0; i < count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            switch (btn)
+            {
+                case WindowsAppManager.ClickButton.Right:
+                    WindowsAutomationService.RightClick(x.Value, y.Value);
+                    break;
+                case WindowsAppManager.ClickButton.Middle:
+                    WindowsAutomationService.MiddleClick(x.Value, y.Value);
+                    break;
+                default:
+                    WindowsAutomationService.LeftClick(x.Value, y.Value);
+                    break;
+            }
+            if (i < count - 1) await Task.Delay(80, ct);
+        }
         var label = count > 1 ? $"{count}-click" : "click";
-        return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
-            $"{label} {btn} at ({x}, {y}) [{(ok ? "ok" : "send_input failed")}]");
+        return new ActionResult(ActionOutcome.Success, $"{label} {btn} at ({x}, {y}) [ok]");
     }
 
     private ActionResult DoScrollAt(AgentAction action)
@@ -742,41 +868,69 @@ public sealed class VantageACI
         var dy = action.GetInt("delta") ?? action.GetInt("amount");
         if (x is null || y is null || dy is null)
             return new ActionResult(ActionOutcome.Failed, "scroll_xy requires `x`, `y`, and `delta` (positive = up, one notch = 120)");
-        var ok = WindowsAppManager.Scroll(x.Value, y.Value, dy.Value);
-        return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
-            $"scrolled {dy} at ({x}, {y})");
+        if (!IsPointOnCapturedDisplay(x.Value, y.Value))
+            return PointOutsideCapture("scroll_xy", x.Value, y.Value);
+        var delta = Math.Clamp(dy.Value, -2_400, 2_400);
+        WindowsAutomationService.Scroll(delta, x.Value, y.Value);
+        return new ActionResult(ActionOutcome.Success, $"scrolled {delta} at ({x}, {y})");
     }
 
-    private ActionResult DoDragAt(AgentAction action)
+    private static async Task<ActionResult> DoDragAtAsync(AgentAction action, CancellationToken ct)
     {
         var fromX = action.GetInt("from_x"); var fromY = action.GetInt("from_y");
         var toX   = action.GetInt("to_x");   var toY   = action.GetInt("to_y");
         if (fromX is null || fromY is null || toX is null || toY is null)
             return new ActionResult(ActionOutcome.Failed, "drag_xy requires `from_x`, `from_y`, `to_x`, `to_y`");
-        var btn = (action.GetString("button") ?? "left").ToLowerInvariant() switch
+        if (!IsPointOnCapturedDisplay(fromX.Value, fromY.Value)
+            || !IsPointOnCapturedDisplay(toX.Value, toY.Value))
         {
-            "right"  => WindowsAppManager.ClickButton.Right,
-            "middle" => WindowsAppManager.ClickButton.Middle,
-            _        => WindowsAppManager.ClickButton.Left,
+            return new ActionResult(ActionOutcome.Failed,
+                "drag_xy coordinates are outside the captured primary display; take a fresh screenshot and retry");
+        }
+        var button = (action.GetString("button") ?? "left").ToLowerInvariant();
+        if (button is not ("left" or "right" or "middle"))
+            return new ActionResult(ActionOutcome.Failed, $"unsupported mouse button '{button}'");
+        var btn = button switch
+        {
+            "right"  => WindowsAutomationService.MouseButton.Right,
+            "middle" => WindowsAutomationService.MouseButton.Middle,
+            _        => WindowsAutomationService.MouseButton.Left,
         };
-        var ok = WindowsAppManager.Drag(fromX.Value, fromY.Value, toX.Value, toY.Value, btn);
-        return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
-            $"drag {btn} ({fromX},{fromY}) -> ({toX},{toY})");
+        await WindowsAutomationService.DragAsync(
+            fromX.Value,
+            fromY.Value,
+            toX.Value,
+            toY.Value,
+            btn,
+            ct);
+        return new ActionResult(ActionOutcome.Success, $"drag {btn} ({fromX},{fromY}) -> ({toX},{toY})");
     }
 
-    private ActionResult DoTypeText(AgentAction action)
+    private static async Task<ActionResult> DoTypeTextAsync(AgentAction action, CancellationToken ct)
     {
+        if (CheckForegroundTarget(action, "type_text") is { } targetFailure)
+            return targetFailure;
+
         var text = action.GetString("text") ?? "";
         if (text.Length == 0)
             return new ActionResult(ActionOutcome.Failed, "type_text requires non-empty `text`");
         var delay = action.GetInt("delay_ms") ?? 0;
-        var typed = WindowsAppManager.TypeText(text, Math.Clamp(delay, 0, 1000));
-        return new ActionResult(typed > 0 ? ActionOutcome.Success : ActionOutcome.Failed,
-            typed > 0 ? $"typed {typed} char(s)" : "SendInput returned 0 (focus may not accept synthetic input)");
+        var typed = await WindowsAppManager.TypeTextAsync(
+            text,
+            Math.Clamp(delay, 0, 1000),
+            ct);
+        var expected = text.EnumerateRunes().Count();
+        return new ActionResult(typed == expected ? ActionOutcome.Success : ActionOutcome.Failed,
+            typed == expected
+                ? $"typed {typed} character(s)"
+                : $"typed only {typed} of {expected} character(s) before SendInput failed");
     }
 
     private ActionResult DoPressKey(AgentAction action)
     {
+        if (CheckForegroundTarget(action, "press_key") is { } targetFailure)
+            return targetFailure;
+
         var combo = action.GetString("combo");
         if (string.IsNullOrWhiteSpace(combo))
             return new ActionResult(ActionOutcome.Failed, "press_key requires `combo` like \"ctrl+s\" or \"Return\"");
@@ -785,11 +939,43 @@ public sealed class VantageACI
             ok ? $"pressed {combo}" : $"press_key failed for '{combo}' (unknown token or SendInput rejected)");
     }
 
+    private static ActionResult? CheckForegroundTarget(AgentAction action, string operation)
+    {
+        var target = action.GetString("target_title");
+        if (string.IsNullOrWhiteSpace(target)) return null;
+
+        var front = WindowsAppManager.GetFrontmostApp();
+        if (front is { } current
+            && (current.Window.Title.Contains(target, StringComparison.OrdinalIgnoreCase)
+                || current.ProcessName.Contains(target, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+
+        var actual = front is { } value
+            ? $"{value.ProcessName} — {value.Window.Title}"
+            : "no foreground window";
+        return new ActionResult(
+            ActionOutcome.Failed,
+            $"{operation} blocked because foreground was '{actual}', expected a window matching '{target}'");
+    }
+
     private ActionResult DoCursorPosition()
     {
-        var (x, y) = WindowsAppManager.GetCursorPosition();
+        var (x, y) = WindowsAutomationService.GetCursorPositionLogical();
         return new ActionResult(ActionOutcome.Success, $"cursor at ({x}, {y})");
     }
+
+    private static bool IsPointOnCapturedDisplay(int x, int y)
+    {
+        var monitor = WindowsAutomationService.GetPrimaryMonitor();
+        return x >= 0 && x < monitor.LogicalWidth
+            && y >= 0 && y < monitor.LogicalHeight;
+    }
+
+    private static ActionResult PointOutsideCapture(string action, int x, int y) =>
+        new(ActionOutcome.Failed,
+            $"{action} target ({x},{y}) is outside the captured primary display; take a fresh screenshot and retry");
 
     private ActionResult DoFrontmostApp()
     {
@@ -797,7 +983,7 @@ public sealed class VantageACI
         if (front is null)
             return new ActionResult(ActionOutcome.Failed, "no foreground window");
         var (w, name) = front.Value;
-        Notes.Add($"frontmost_app: {name} (pid={w.Pid}) hwnd=0x{w.Handle:X} \"{w.Title}\"");
+        AddNote($"frontmost_app: {name} (pid={w.Pid}) hwnd=0x{w.Handle:X} \"{w.Title}\"");
         return new ActionResult(ActionOutcome.Success,
             $"{name} (pid={w.Pid}) hwnd=0x{w.Handle:X} \"{Truncate(w.Title, 80)}\"");
     }
@@ -806,7 +992,7 @@ public sealed class VantageACI
     {
         var apps = WindowsAppManager.ListRunningApps();
         var compact = apps.Take(40).Select(a => $"{a.Name} pid={a.Pid} \"{Truncate(a.Title, 60)}\"").ToList();
-        Notes.Add($"list_apps ({apps.Count}):\n" + string.Join("\n", compact));
+        AddNote($"list_apps ({apps.Count}):\n" + string.Join("\n", compact));
         return new ActionResult(ActionOutcome.Success,
             $"{apps.Count} visible app(s):\n" + string.Join("\n", compact.Take(20)));
     }
@@ -815,11 +1001,36 @@ public sealed class VantageACI
     {
         var ds = WindowsAppManager.GetDisplays();
         var compact = ds.Select(d => $"#{d.Index} {d.DeviceName} {d.Width}x{d.Height} @ {d.Dpi}dpi {(d.Primary ? "primary" : "")} origin=({d.OriginX},{d.OriginY})").ToList();
-        Notes.Add($"displays ({ds.Count}):\n" + string.Join("\n", compact));
+        AddNote($"displays ({ds.Count}):\n" + string.Join("\n", compact));
         return new ActionResult(ActionOutcome.Success,
             $"{ds.Count} display(s):\n" + string.Join("\n", compact));
     }
 
     private static string Truncate(string s, int n) =>
         s.Length <= n ? s : s.Substring(0, n) + "…";
+
+    private void AddNote(string note)
+    {
+        if (string.IsNullOrWhiteSpace(note)) return;
+        Notes.Add(Truncate(note, 4_000));
+        if (Notes.Count > 32)
+        {
+            Notes.RemoveRange(0, Notes.Count - 32);
+        }
+    }
+
+    private ActionResult DoListWindows()
+    {
+        var result = _computerUse.ListWindows();
+        AddNote("list_windows:\n" + result);
+        return new ActionResult(ActionOutcome.Success, result);
+    }
+
+    private ActionResult DoGetWindowState(AgentAction action)
+    {
+        var result = _computerUse.ObserveWindow(action.GetString("window_id"));
+        if (result.Outcome == ActionOutcome.Success)
+            AddNote("get_window_state:\n" + result.Description);
+        return result;
+    }
 }

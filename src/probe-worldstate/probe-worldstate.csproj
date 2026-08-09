@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Vantage.Probe</RootNamespace>
+    <AssemblyName>probe-worldstate</AssemblyName>
+    <Platforms>x64</Platforms>
+    <UseWindowsForms>false</UseWindowsForms>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Microsoft.UIAutomationClient.Interop">
+      <HintPath>C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\UIAVerify\Microsoft.UIAutomationClient.Interop.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <PackageReference Include="System.Management" Version="9.0.0" />
+    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Pull the same source files the Vantage app uses so the probe
+         runs against the real production code, not a copy. -->
+    <Compile Include="..\Services\Agent\WorldStateProbe.cs" Link="WorldStateProbe.cs" />
+    <Compile Include="..\Services\Agent\ActionResult.cs" Link="ActionResult.cs" />
+    <Compile Include="..\Services\Agent\ComputerUseSession.cs" Link="ComputerUseSession.cs" />
+    <Compile Include="..\Services\Agent\PROCEDURAL_MEMORY.cs" Link="PROCEDURAL_MEMORY.cs" />
+    <Compile Include="..\Services\WindowsAppManager.cs" Link="WindowsAppManager.cs" />
+    <Compile Include="..\Services\WindowsAutomationService.cs" Link="WindowsAutomationService.cs" />
+    <Compile Include="..\Common\JsonDefaults.cs" Link="JsonDefaults.cs" />
+    <Compile Include="..\Common\NativeInterop.cs" Link="NativeInterop.cs" />
+  </ItemGroup>
+</Project>

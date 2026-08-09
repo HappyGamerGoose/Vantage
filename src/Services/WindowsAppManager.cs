@@ -16,6 +16,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Vantage.Common;
 
 namespace Vantage.Services;
 
@@ -111,8 +112,39 @@ public static class WindowsAppManager
 
     public static bool FocusWindow(WindowInfo w)
     {
-        ShowWindow(w.Handle, SW_RESTORE);  // unminimize first
-        return SetForegroundWindow(w.Handle);
+        ShowWindow(w.Handle,
+            NativeInterop.IsIconic(w.Handle) ? SW_RESTORE : NativeInterop.SW_SHOW);
+        NativeInterop.BringWindowToTop(w.Handle);
+        if (SetForegroundWindow(w.Handle)
+            && NativeInterop.GetForegroundWindow() == w.Handle)
+        {
+            return true;
+        }
+
+        // Windows normally blocks background processes from stealing focus.
+        // Briefly join the current and foreground input queues, focus the
+        // requested window, then detach immediately. This is the same bounded
+        // pattern used by mature desktop automation hosts and avoids burning
+        // another model turn on a focus action that only half-landed.
+        var foreground = NativeInterop.GetForegroundWindow();
+        var currentThread = NativeInterop.GetCurrentThreadId();
+        var foregroundThread = foreground == IntPtr.Zero
+            ? 0
+            : NativeInterop.GetWindowThreadProcessId(foreground, out _);
+        var attached = foregroundThread != 0
+            && foregroundThread != currentThread
+            && NativeInterop.AttachThreadInput(currentThread, foregroundThread, true);
+        try
+        {
+            NativeInterop.BringWindowToTop(w.Handle);
+            SetForegroundWindow(w.Handle);
+        }
+        finally
+        {
+            if (attached)
+                NativeInterop.AttachThreadInput(currentThread, foregroundThread, false);
+        }
+        return NativeInterop.GetForegroundWindow() == w.Handle;
     }
 
     public static bool FocusWindowByTitle(string titleContains) =>
@@ -240,7 +272,10 @@ public static class WindowsAppManager
     /// because that's guaranteed to be on the path; pwsh is preferred if
     /// installed.
     /// </summary>
-    public static PowerShellResult RunPowerShell(string command, int timeoutMs = 30_000)
+    public static async Task<PowerShellResult> RunPowerShellAsync(
+        string command,
+        int timeoutMs = 30_000,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(command))
             return new PowerShellResult(-1, "", "empty command");
@@ -249,23 +284,48 @@ public static class WindowsAppManager
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{command.Replace("\"", "\\\"")}\"",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            psi.ArgumentList.Add("-NoProfile");
+            psi.ArgumentList.Add("-NonInteractive");
+            psi.ArgumentList.Add("-ExecutionPolicy");
+            psi.ArgumentList.Add("Bypass");
+            psi.ArgumentList.Add("-Command");
+            psi.ArgumentList.Add(command);
+
             using var proc = Process.Start(psi);
             if (proc is null)
                 return new PowerShellResult(-1, "", "failed to start powershell.exe");
-            var stdout = proc.StandardOutput.ReadToEnd();
-            var stderr = proc.StandardError.ReadToEnd();
-            if (!proc.WaitForExit(timeoutMs))
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(Math.Clamp(timeoutMs, 1_000, 120_000));
+            try
+            {
+                await proc.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
-                return new PowerShellResult(-1, stdout, stderr + $"[timeout after {timeoutMs}ms]");
+                string partialStdout = "";
+                string partialStderr = "";
+                try { partialStdout = await stdoutTask; } catch { }
+                try { partialStderr = await stderrTask; } catch { }
+                if (ct.IsCancellationRequested) throw;
+                return new PowerShellResult(-1, partialStdout, partialStderr + $"[timeout after {timeoutMs}ms]");
             }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
             return new PowerShellResult(proc.ExitCode, stdout, stderr);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -329,6 +389,7 @@ public static class WindowsAppManager
     private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
     private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
+    private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
     private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     private const uint KEYEVENTF_KEYUP = 0x0002;
@@ -362,15 +423,121 @@ public static class WindowsAppManager
         public IntPtr dwExtraInfo;
     }
 
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUTDATA
+    {
+        [FieldOffset(0)] public MOUSEINPUT Mouse;
+        [FieldOffset(0)] public KEYBDINPUT Keyboard;
+    }
+
+    public sealed record AppLaunchResult(bool Started, bool Focused, WindowInfo? Window);
+
+    /// <summary>
+    /// Launch an app, wait for its visible window, and focus that window in
+    /// one bounded operation. A launch action should leave the next action
+    /// ready to type or click; returning while the shell is still creating
+    /// the window forces the model into redundant Run/Search/focus turns.
+    /// </summary>
+    public static async Task<AppLaunchResult> LaunchAndFocusAppAsync(
+        string executable,
+        int timeoutMs = 6_000,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(executable))
+            return new AppLaunchResult(false, false, null);
+
+        var before = ListVisibleWindows()
+            .Select(window => window.Handle)
+            .ToHashSet();
+        if (!LaunchApp(executable))
+            return new AppLaunchResult(false, false, null);
+
+        var deadline = DateTimeOffset.UtcNow.AddMilliseconds(
+            Math.Clamp(timeoutMs, 500, 15_000));
+        WindowInfo? lastCandidate = null;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            var windows = ListVisibleWindows();
+            var newWindows = windows
+                .Where(window => !before.Contains(window.Handle))
+                .ToList();
+            lastCandidate = newWindows.FirstOrDefault(window =>
+                    WindowMatchesLaunchTarget(window, executable))
+                ?? windows.FirstOrDefault(window =>
+                    WindowMatchesLaunchTarget(window, executable))
+                ?? (newWindows.Count == 1 ? newWindows[0] : null);
+
+            if (lastCandidate is not null && FocusWindow(lastCandidate))
+                return new AppLaunchResult(true, true, lastCandidate);
+
+            await Task.Delay(100, ct);
+        }
+
+        return new AppLaunchResult(true, false, lastCandidate);
+    }
+
+    internal static bool WindowMatchesLaunchTarget(WindowInfo window, string executable)
+    {
+        var normalizedTarget = executable.Trim();
+        var hint = normalizedTarget.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)
+            ? "settings"
+            : Path.GetFileNameWithoutExtension(normalizedTarget);
+        if (string.IsNullOrWhiteSpace(hint)) return false;
+
+        var aliases = hint.ToLowerInvariant() switch
+        {
+            "calc" => new[] { "calc", "calculator", "calculatorapp" },
+            "mspaint" => new[] { "mspaint", "paint" },
+            "msedge" => new[] { "msedge", "edge" },
+            "wt" => new[] { "wt", "windowsterminal", "terminal" },
+            "settings" => new[] { "settings", "systemsettings" },
+            _ => new[] { hint },
+        };
+
+        string processName = string.Empty;
+        try
+        {
+            using var process = Process.GetProcessById((int)window.Pid);
+            processName = process.ProcessName;
+        }
+        catch
+        {
+        }
+
+        return aliases.Any(alias =>
+            window.Title.Contains(alias, StringComparison.OrdinalIgnoreCase)
+            || processName.Contains(alias, StringComparison.OrdinalIgnoreCase));
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
     {
         public uint type;
-        public MOUSEINPUT mi; // union — sized as the largest variant
+        public INPUTDATA data;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    /// <summary>
+    /// Verifies the managed SendInput structs match the Win32 ABI without
+    /// injecting any input. Kept public so the headless probe can guard the
+    /// explicit union layout in CI and local release checks.
+    /// </summary>
+    public static bool ValidateNativeInputLayout()
+    {
+        var expectedInputSize = IntPtr.Size == 8 ? 40 : 28;
+        var expectedUnionOffset = IntPtr.Size == 8 ? 8 : 4;
+        var expectedKeyboardSize = IntPtr.Size == 8 ? 24 : 16;
+
+        return Marshal.SizeOf<INPUT>() == expectedInputSize
+            && Marshal.OffsetOf<INPUT>(nameof(INPUT.data)).ToInt32() == expectedUnionOffset
+            && Marshal.SizeOf<INPUTDATA>() == Marshal.SizeOf<MOUSEINPUT>()
+            && Marshal.SizeOf<KEYBDINPUT>() == expectedKeyboardSize
+            && Marshal.OffsetOf<KEYBDINPUT>(nameof(KEYBDINPUT.wScan)).ToInt32() == 2
+            && Marshal.OffsetOf<KEYBDINPUT>(nameof(KEYBDINPUT.dwFlags)).ToInt32() == 4;
+    }
 
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
@@ -387,7 +554,7 @@ public static class WindowsAppManager
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool QueryFullProcessImageNameW(
         IntPtr hProcess, uint flags, StringBuilder lpExeName, ref uint lpdwSize);
 
@@ -436,6 +603,12 @@ public static class WindowsAppManager
         if (geo.LogicalToPhysicalScale <= 0) return false;
         double physCx = (b.Left + b.Right)  * 0.5;
         double physCy = (b.Top  + b.Bottom) * 0.5;
+        if (physCx < 0 || physCy < 0
+            || physCx >= geo.PhysicalWidth
+            || physCy >= geo.PhysicalHeight)
+        {
+            return false;
+        }
         // Round-to-nearest and clamp to monitor bounds.
         cx = (int)Math.Round(physCx / geo.LogicalToPhysicalScale);
         cy = (int)Math.Round(physCy / geo.LogicalToPhysicalScale);
@@ -535,8 +708,8 @@ public static class WindowsAppManager
     {
         if (count < 1 || count > 3) count = 1;
         var (vw, vh, ox, oy) = VirtualScreen();
-        var (ax, _) = ToAbsolute(x, vw);
-        var (ay, _) = ToAbsolute(y, vh);
+        var (ax, _) = ToAbsolute(x - ox, vw);
+        var (ay, _) = ToAbsolute(y - oy, vh);
         uint downFlag, upFlag;
         switch (button)
         {
@@ -550,7 +723,7 @@ public static class WindowsAppManager
             // Move + first DOWN
             var inputs = new[]
             {
-                MakeMouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE),
+                MakeMouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK),
                 MakeMouse(ax, ay, downFlag),
                 MakeMouse(ax, ay, upFlag),
             };
@@ -577,14 +750,17 @@ public static class WindowsAppManager
         return new INPUT
         {
             type = INPUT_MOUSE,
-            mi = new MOUSEINPUT
+            data = new INPUTDATA
             {
-                dx = absX,
-                dy = absY,
-                mouseData = wheel,
-                dwFlags = flags,
-                time = 0,
-                dwExtraInfo = IntPtr.Zero,
+                Mouse = new MOUSEINPUT
+                {
+                    dx = absX,
+                    dy = absY,
+                    mouseData = wheel,
+                    dwFlags = flags,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero,
+                }
             }
         };
     }
@@ -595,12 +771,12 @@ public static class WindowsAppManager
     /// </summary>
     public static bool Scroll(int x, int y, int delta)
     {
-        var (vw, vh, _, _) = VirtualScreen();
-        var (ax, _) = ToAbsolute(x, vw);
-        var (ay, _) = ToAbsolute(y, vh);
+        var (vw, vh, ox, oy) = VirtualScreen();
+        var (ax, _) = ToAbsolute(x - ox, vw);
+        var (ay, _) = ToAbsolute(y - oy, vh);
         var inputs = new[]
         {
-            MakeMouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0u),
+            MakeMouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, 0u),
             MakeMouse(ax, ay, MOUSEEVENTF_WHEEL, (uint)delta),
         };
         uint sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>());
@@ -704,17 +880,51 @@ public static class WindowsAppManager
     public static int TypeText(string text, int perCharDelayMs = 0)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        var inputs = new INPUT[text.Length * 2];
-        int n = 0;
+        var typed = 0;
+        Span<char> utf16 = stackalloc char[2];
         foreach (var rune in text.EnumerateRunes())
         {
-            WriteKbd(inputs, n++, wVk: 0, wScan: (ushort)rune.Value, flags: KEYEVENTF_UNICODE);
-            WriteKbd(inputs, n++, wVk: 0, wScan: (ushort)rune.Value, flags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            var units = rune.EncodeToUtf16(utf16);
+            var inputs = new INPUT[units * 2];
+            var n = 0;
+            for (var i = 0; i < units; i++)
+            {
+                WriteKbd(inputs, n++, wVk: 0, wScan: utf16[i], flags: KEYEVENTF_UNICODE);
+                WriteKbd(inputs, n++, wVk: 0, wScan: utf16[i], flags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            }
+            var sent = SendInput((uint)n, inputs, Marshal.SizeOf<INPUT>());
+            if (sent != (uint)n) return typed;
+            typed++;
+            if (perCharDelayMs > 0) Thread.Sleep(perCharDelayMs);
         }
-        uint sent = SendInput((uint)n, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != (uint)n) return 0;
-        if (perCharDelayMs > 0) Thread.Sleep(perCharDelayMs * text.Length);
-        return n / 2;
+        return typed;
+    }
+
+    public static async Task<int> TypeTextAsync(
+        string text,
+        int perCharDelayMs,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var typed = 0;
+        var utf16 = new char[2];
+        foreach (var rune in text.EnumerateRunes())
+        {
+            ct.ThrowIfCancellationRequested();
+            var units = rune.EncodeToUtf16(utf16);
+            var inputs = new INPUT[units * 2];
+            var n = 0;
+            for (var i = 0; i < units; i++)
+            {
+                WriteKbd(inputs, n++, wVk: 0, wScan: utf16[i], flags: KEYEVENTF_UNICODE);
+                WriteKbd(inputs, n++, wVk: 0, wScan: utf16[i], flags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+            }
+            var sent = SendInput((uint)n, inputs, Marshal.SizeOf<INPUT>());
+            if (sent != (uint)n) return typed;
+            typed++;
+            if (perCharDelayMs > 0) await Task.Delay(perCharDelayMs, ct);
+        }
+        return typed;
     }
 
     private static void WriteKbd(INPUT[] arr, int idx, ushort wVk, ushort wScan, uint flags)
@@ -722,14 +932,16 @@ public static class WindowsAppManager
         arr[idx] = new INPUT
         {
             type = INPUT_KEYBOARD,
-            mi = new MOUSEINPUT
+            data = new INPUTDATA
             {
-                dx = wVk,
-                dy = wScan,
-                mouseData = flags,
-                dwFlags = 0,
-                time = 0,
-                dwExtraInfo = IntPtr.Zero,
+                Keyboard = new KEYBDINPUT
+                {
+                    wVk = wVk,
+                    wScan = wScan,
+                    dwFlags = flags,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero,
+                }
             }
         };
     }
@@ -782,14 +994,16 @@ public static class WindowsAppManager
         return new INPUT
         {
             type = INPUT_KEYBOARD,
-            mi = new MOUSEINPUT
+            data = new INPUTDATA
             {
-                dx = vk,
-                dy = 0,
-                mouseData = up ? KEYEVENTF_KEYUP : 0u,
-                dwFlags = 0,
-                time = 0,
-                dwExtraInfo = IntPtr.Zero,
+                Keyboard = new KEYBDINPUT
+                {
+                    wVk = vk,
+                    wScan = 0,
+                    dwFlags = up ? KEYEVENTF_KEYUP : 0u,
+                    time = 0,
+                    dwExtraInfo = IntPtr.Zero,
+                }
             }
         };
     }
@@ -945,5 +1159,286 @@ public static class WindowsAppManager
         }
         EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, Callback, IntPtr.Zero);
         return list;
+    }
+
+    // ─── Rich per-app / per-window state for the agent prompt ────────
+    //
+    // The agent needs to know not just "this process exists" but
+    // "this process exists AND has a visible window AND its main
+    // window is at (x,y) sized WxH AND here's the exe path so the
+    // agent can launch a fresh copy / focus by title / kill it
+    // without guessing." These helpers produce that structured view
+    // in one Win32 sweep. Cheap (~5-15 ms) so they can run on every
+    // agent step.
+
+    public sealed record RunningAppInfo(
+        int Pid,
+        string ProcessName,
+        string? ExecutablePath,
+        string MainWindowTitle,
+        IntPtr MainWindowHandle,
+        DateTime? StartedAt,
+        bool HasVisibleWindow,
+        bool IsForeground);
+
+    public sealed record WindowStateInfo(
+        IntPtr Handle,
+        int Pid,
+        string ProcessName,
+        string Title,
+        string ClassName,
+        string State,    // "maximized" | "minimized" | "normal" | "fullscreen"
+        int X, int Y, int Width, int Height,
+        bool IsForeground);
+
+    /// <summary>
+    /// Enumerate every running process that owns at least one visible
+    /// top-level window. Returns rich metadata (pid, exe path,
+    /// started-at, has-window, is-foreground) so the agent can decide
+    /// which app to focus / launch / kill without re-querying.
+    ///
+    /// Excludes background-only processes (no visible window) so the
+    /// agent's prompt only sees apps the user can actually interact
+    /// with. Capped at 16 entries to keep the per-step prompt small.
+    /// </summary>
+    public static List<RunningAppInfo> ListRunningAppsRich()
+    {
+        // Map PID -> (MainWindowHandle, Title). First visible window
+        // per process wins; consistent with ListRunningApps.
+        var windowByPid = new Dictionary<int, (IntPtr Hwnd, string Title)>();
+        EnumWindows((hWnd, _) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            var len = GetWindowTextLengthW(hWnd);
+            if (len == 0) return true;
+            var sb = new StringBuilder(len + 1);
+            GetWindowTextW(hWnd, sb, sb.Capacity);
+            var title = sb.ToString();
+            if (string.IsNullOrWhiteSpace(title)) return true;
+            GetWindowThreadProcessId(hWnd, out var pid);
+            if (!windowByPid.ContainsKey((int)pid))
+            {
+                windowByPid[(int)pid] = (hWnd, title);
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        // Capture the foreground PID once for the IsForeground flag.
+        uint fgPid = 0;
+        var fgHwnd = GetForegroundWindow();
+        if (fgHwnd != IntPtr.Zero)
+        {
+            GetWindowThreadProcessId(fgHwnd, out fgPid);
+        }
+
+        var fg = GetFrontmostApp();
+        var fgPid2 = fg is { } fgv ? (uint)fgv.Window.Pid : 0u;
+
+        var list = new List<RunningAppInfo>();
+        foreach (var (pid, (hwnd, title)) in windowByPid)
+        {
+            string? exePath = null;
+            string? procName = null;
+            DateTime? startedAt = null;
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                procName = SafeProcessName(p);
+                startedAt = SafeTryGetStartTime(p);
+            }
+            catch { /* process may have died between EnumWindows and here */ }
+            exePath = TryGetProcessPath((uint)pid);
+            procName ??= exePath is { } ep ? System.IO.Path.GetFileNameWithoutExtension(ep) : "<unknown>";
+
+            list.Add(new RunningAppInfo(
+                Pid: pid,
+                ProcessName: procName,
+                ExecutablePath: exePath,
+                MainWindowTitle: title,
+                MainWindowHandle: hwnd,
+                StartedAt: startedAt,
+                HasVisibleWindow: true,
+                IsForeground: pid == (int)fgPid2));
+        }
+
+        return list
+            .OrderByDescending(a => a.IsForeground)
+            .ThenBy(a => a.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Take(16)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Return the visible top-level windows with state metadata
+    /// (maximized / minimized / normal / fullscreen) and screen
+    /// position. Capped at 12 entries; the agent's prompt is
+    /// small enough that the existing Title-only listing has been
+    /// the cheaper choice, but knowing a window is minimized tells
+    /// the agent "focus_window, don't click blindly."
+    /// </summary>
+    public static List<WindowStateInfo> ListWindowsWithState()
+    {
+        uint fgPid = 0;
+        var fgHwnd = GetForegroundWindow();
+        if (fgHwnd != IntPtr.Zero)
+        {
+            GetWindowThreadProcessId(fgHwnd, out fgPid);
+        }
+
+        var result = new List<WindowStateInfo>();
+        EnumWindows((hWnd, _) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            var len = GetWindowTextLengthW(hWnd);
+            if (len == 0) return true;
+            var titleSb = new StringBuilder(len + 1);
+            GetWindowTextW(hWnd, titleSb, titleSb.Capacity);
+            var title = titleSb.ToString();
+            if (string.IsNullOrWhiteSpace(title)) return true;
+            var clsSb = new StringBuilder(256);
+            GetClassNameW(hWnd, clsSb, clsSb.Capacity);
+            GetWindowThreadProcessId(hWnd, out var pid);
+
+            // GetWindowPlacement tells us show-state (SW_SHOWMAXIMIZED
+            // / SW_SHOWMINIMIZED / SW_SHOWNORMAL). Combined with
+            // GetWindowRect for the on-screen bounds, the agent
+            // knows whether to focus + restore first or just click.
+            var placement = new WINDOWPLACEMENT { length = (uint)Marshal.SizeOf<WINDOWPLACEMENT>() };
+            bool haveState = GetWindowPlacement(hWnd, ref placement);
+            string state = "normal";
+            if (haveState)
+            {
+                state = placement.showCmd switch
+                {
+                    SW_SHOWMAXIMIZED => "maximized",
+                    SW_SHOWMINIMIZED => "minimized",
+                    SW_SHOWNORMAL    => "normal",
+                    _                => "normal"
+                };
+            }
+
+            int x = 0, y = 0, w = 0, h = 0;
+            if (GetWindowRect(hWnd, out var rc))
+            {
+                x = rc.Left;
+                y = rc.Top;
+                w = rc.Right - rc.Left;
+                h = rc.Bottom - rc.Top;
+            }
+
+            result.Add(new WindowStateInfo(
+                Handle: hWnd,
+                Pid: (int)pid,
+                ProcessName: TryGetProcessName(pid) ?? "<unknown>",
+                Title: title,
+                ClassName: clsSb.ToString(),
+                State: state,
+                X: x, Y: y, Width: w, Height: h,
+                IsForeground: pid == fgPid));
+            return true;
+        }, IntPtr.Zero);
+
+        return result
+            .OrderByDescending(w => w.IsForeground)
+            .ThenBy(w => w.Pid)
+            .Take(12)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Return the active keyboard input locale (e.g. "en-US", "ja-JP",
+    /// "de-DE") plus Caps/Num/Scroll lock state. Knowing CapsLock is
+    /// on prevents the agent from typing "hello" and getting "HELLO"
+    /// when the user expected mixed case — a common silent failure
+    /// on desktops where someone toggled the key.
+    /// </summary>
+    public static (string? LayoutId, bool CapsLock, bool NumLock, bool ScrollLock)
+        GetKeyboardState()
+    {
+        string? layoutId = null;
+        try
+        {
+            // GetKeyboardLayoutName returns the input locale name (a
+            // BCP-47-ish tag like "00000409"). The full hex is fine
+            // for the prompt — the model can pattern-match on the
+            // leading hex digits ("409" = en-US, "411" = ja-JP, etc.).
+            var name = new StringBuilder(9);
+            // GetKeyboardLayoutName returns the number of characters
+            // copied (excluding the null terminator), or 0 on failure.
+            // On success the buffer contains a hex KLID like
+            // "00000409" (en-US), "00000411" (ja-JP), etc.
+            if (GetKeyboardLayoutNameW(name, name.Capacity) > 0)
+            {
+                layoutId = name.ToString();
+            }
+        }
+        catch { }
+
+        bool caps   = (GetKeyState(VK_CAPITAL)  & 0x0001) != 0;
+        bool num    = (GetKeyState(VK_NUMLOCK)  & 0x0001) != 0;
+        bool scroll = (GetKeyState(VK_SCROLL)  & 0x0001) != 0;
+        return (layoutId, caps, num, scroll);
+    }
+
+    // ─── Native interop for the new probes ──────────────────────────
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetKeyboardLayoutNameW(StringBuilder pwszKLID, int nBuff);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWPLACEMENT
+    {
+        public uint length;
+        public uint flags;
+        public uint showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT  rcNormalPosition;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    private const int VK_CAPITAL  = 0x14;
+    private const int VK_NUMLOCK  = 0x90;
+    private const int VK_SCROLL   = 0x91;
+    private const uint SW_SHOWNORMAL     = 1;
+    private const uint SW_SHOWMINIMIZED  = 2;
+    private const uint SW_SHOWMAXIMIZED  = 3;
+
+    private static string? TryGetProcessPath(uint pid)
+    {
+        try
+        {
+            var hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (hProc == IntPtr.Zero) return null;
+            try
+            {
+                var buf = new StringBuilder(1024);
+                var size = (uint)buf.Capacity;
+                if (QueryFullProcessImageNameW(hProc, 0, buf, ref size))
+                {
+                    return buf.ToString();
+                }
+                return null;
+            }
+            finally { CloseHandle(hProc); }
+        }
+        catch { return null; }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hHandle);
+
+    private static string? SafeProcessName(Process p)
+    {
+        try { return p.ProcessName; }
+        catch { return null; }
+    }
+
+    private static DateTime? SafeTryGetStartTime(Process p)
+    {
+        try { return p.StartTime; }
+        catch { return null; }
     }
 }

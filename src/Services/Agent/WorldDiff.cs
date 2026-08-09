@@ -35,6 +35,10 @@ public sealed record WorldDiff(
         var cursorMoved = dx * dx + dy * dy >= 16; // ≥ 4 logical px in either axis
         var clipChanged = before.ClipboardText != after.ClipboardText;
         var fpChanged = before.Fingerprint != after.Fingerprint;
+        var beforeWindows = before.VisibleWindowHandles.ToHashSet();
+        var afterWindows = after.VisibleWindowHandles.ToHashSet();
+        var addedWindows = afterWindows.Except(beforeWindows).Count();
+        var removedWindows = beforeWindows.Except(afterWindows).Count();
 
         return new WorldDiff(
             foregroundChanged,
@@ -48,7 +52,8 @@ public sealed record WorldDiff(
             clipChanged,
             before.ClipboardText,
             after.ClipboardText,
-            0, 0, // populated separately if WindowInfo delta is computed
+            addedWindows,
+            removedWindows,
             fpChanged);
     }
 

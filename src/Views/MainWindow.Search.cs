@@ -34,6 +34,11 @@ public sealed partial class MainWindow
             FilteredConversations.Add(conversation);
         }
 
+        SidebarEmptyState.Text = Conversations.Count == 0 ? "No conversations yet" : "No matches";
+        SidebarEmptyState.Visibility = FilteredConversations.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
         SearchResults.Clear();
 
         if (!string.IsNullOrWhiteSpace(query))
@@ -66,15 +71,15 @@ public sealed partial class MainWindow
 
     private static bool MessageMatches(ChatMessage message, string query)
     {
-        return message.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+        return message.SearchableText.Contains(query, StringComparison.CurrentCultureIgnoreCase)
             || (!string.IsNullOrWhiteSpace(message.ImagePath)
                 && message.ImagePath.Contains(query, StringComparison.CurrentCultureIgnoreCase));
     }
 
     private static string BuildSnippet(ChatMessage message, string query)
     {
-        var source = !string.IsNullOrWhiteSpace(message.Text)
-            ? message.Text
+        var source = !string.IsNullOrWhiteSpace(message.SearchableText)
+            ? message.SearchableText
             : Path.GetFileName(message.ImagePath ?? string.Empty);
 
         if (string.IsNullOrWhiteSpace(source)) return "Image";
@@ -101,12 +106,30 @@ public sealed partial class MainWindow
         var conversation = Conversations.FirstOrDefault(item => item.Id == result.ConversationId);
         ActivateConversation(conversation);
         MessagesList.ScrollIntoView(result.Message);
+        SearchPanel.Visibility = Visibility.Collapsed;
         InputBox.Focus(FocusState.Programmatic);
     }
 
     private void SearchAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
+        FocusConversationSearch();
+    }
+
+    private void HeaderSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        FocusConversationSearch();
+    }
+
+    private void FocusConversationSearch()
+    {
+        if (!_sidebarExpanded)
+        {
+            _sidebarExpanded = true;
+            UpdateSidebarVisibility();
+            SaveSidebarPreference();
+        }
+        SearchPanel.Visibility = Visibility.Visible;
         SearchBox.Focus(FocusState.Programmatic);
         SearchBox.SelectAll();
     }

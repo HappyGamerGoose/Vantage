@@ -21,12 +21,17 @@ public sealed partial class MainWindow
     private sealed class MainWindowAgentHooks : IRunHooks
     {
         private readonly MainWindow _self;
+        private readonly Conversation _conversation;
         private readonly ChatMessage _assistantMessage;
         private readonly AgentRunViewModel _run;
 
-        public MainWindowAgentHooks(MainWindow self, ChatMessage assistant)
+        public MainWindowAgentHooks(
+            MainWindow self,
+            Conversation conversation,
+            ChatMessage assistant)
         {
             _self = self;
+            _conversation = conversation;
             _assistantMessage = assistant;
             _run = new AgentRunViewModel(a => self.DispatcherQueue.TryEnqueue(() => a()));
             // Tag the host message so the DataTemplate switches to the
@@ -35,15 +40,51 @@ public sealed partial class MainWindow
             assistant.AgentRun = _run;
         }
 
-        public void OnRunStarted(int displayWidth, int displayHeight)
+        public Task OnRunStartedAsync(
+            int displayWidth,
+            int displayHeight,
+            CancellationToken ct)
         {
-            _self.DispatcherQueue.TryEnqueue(() =>
+            if (ct.IsCancellationRequested) return Task.FromCanceled(ct);
+
+            void Prepare()
             {
                 _self.PrepareAgentWorkspace();
                 _run.HeaderTitle = $"Working on your desktop ({displayWidth}×{displayHeight})";
                 _run.StatusText  = "Initializing…";
-                _self.MessagesList.ScrollIntoView(_assistantMessage);
-            });
+                ScrollIntoViewIfVisible();
+            }
+
+            if (_self.DispatcherQueue.HasThreadAccess)
+            {
+                Prepare();
+                return Task.CompletedTask;
+            }
+
+            var completion = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_self.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    completion.TrySetCanceled(ct);
+                    return;
+                }
+                try
+                {
+                    Prepare();
+                    completion.TrySetResult();
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }))
+            {
+                completion.TrySetException(
+                    new InvalidOperationException("UI dispatcher unavailable before screen capture."));
+            }
+            return completion.Task;
         }
 
         public void OnStepCompleted(int step, ActionResult result)
@@ -68,7 +109,7 @@ public sealed partial class MainWindow
                     {
                         var phase = PhaseParser.Parse(step, result);
                         _run.AddPhase(phase);
-                        _self.MessagesList.ScrollIntoView(_assistantMessage);
+                        ScrollIntoViewIfVisible();
                     }
                 }
             });
@@ -76,6 +117,10 @@ public sealed partial class MainWindow
 
         public void OnRunFinished(string reason)
         {
+            // Make every completed run immediately diagnosable. The writers
+            // are reopened lazily on the next run, so this keeps the normal
+            // batched-write performance without hiding the final entries.
+            CommonUtils.FlushLogs();
             _self.DispatcherQueue.TryEnqueue(() =>
             {
                 // Final terminator — close out any in-flight phase then
@@ -99,7 +144,7 @@ public sealed partial class MainWindow
                     vm.TerminationLabel = reason;
                     vm.TerminationKind  = kindLabel;
                 });
-                _self.MessagesList.ScrollIntoView(_assistantMessage);
+                ScrollIntoViewIfVisible();
 
                 // Bring Vantage back to front so the user always knows
                 // where the run ended. Without this the user has to alt-tab
@@ -123,6 +168,14 @@ public sealed partial class MainWindow
             ActionOutcome.Failed      => PhaseStatus.Failed,
             _                         => PhaseStatus.Done,
         };
+
+        private void ScrollIntoViewIfVisible()
+        {
+            if (ReferenceEquals(_self._activeConversation, _conversation))
+            {
+                _self.MessagesList.ScrollIntoView(_assistantMessage);
+            }
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -158,6 +211,18 @@ public sealed partial class MainWindow
     /// a successful JSON action, a fatal failure, an Esc cancellation,
     /// or an unhandled exception. Safe to call from the UI thread or the
     /// dispatcher queue.
+    ///
+    /// Window state policy: when a task finishes, the window is
+    /// <b>maximized</b>, not "Maximize then Restore". The previous
+    /// `Maximize(); Restore();` pattern was a polite "show me briefly"
+    /// gesture that — because `Restore()` reverts the maximized state
+    /// to whatever was there before — left the user staring at a
+    /// 1180x760 window every time the agent finished a step. The user
+    /// explicitly asked for fully-maximized on completion, so we now
+    /// end in <c>OverlappedPresenterState.Maximized</c> no matter what
+    /// the pre-task state was. If the user snapped the window to a
+    /// side before the task, the completion will pull it back to full
+    /// screen — that's the explicit ask.
     /// </summary>
     public static void BringVantageToFront(MainWindow self, int maxAttempts = 4)
     {
@@ -198,35 +263,40 @@ public sealed partial class MainWindow
                         aw.Show();
                         if (aw.Presenter is Microsoft.UI.Windowing.OverlappedPresenter overlapped)
                         {
-                            if (overlapped.State == Microsoft.UI.Windowing.OverlappedPresenterState.Minimized)
-                            {
-                                overlapped.Restore();
-                            }
-                            else
-                            {
-                                // Force a show even if not minimized, so
-                                // a fully-occluded window still receives
-                                // the bring-forward attempt.
-                                try { overlapped.Maximize(); overlapped.Restore(); } catch { }
-                            }
+                            // Bring back to full screen on task end
+                            // regardless of the pre-task window state.
+                            // The previous Maximize+Restore pair ended
+                            // in Restored (normal) state and was
+                            // shrinking the window out from under the
+                            // user. Maximize is idempotent: if we're
+                            // already there, this is a no-op.
+                            try { overlapped.Maximize(); } catch { }
                         }
                     }
 
-                    // 3) Win32 SetForegroundWindow + BringWindowToTop +
-                    //    ShowWindow(SW_RESTORE). Belt-and-suspenders on
-                    //    top of the AppWindow APIs. Each call is cheap
-                    //    and one of them usually succeeds.
+                    // 3) Win32 belt-and-suspenders on top of the
+                    //    AppWindow APIs. Each call is cheap and one of
+                    //    them usually succeeds. We deliberately do NOT
+                    //    pass SW_RESTORE here — the previous version
+                    //    did, and SW_RESTORE on a maximized window
+                    //    actively reverts to normal / Restored state,
+                    //    shrinking Vantage out from under the user the
+                    //    moment a task ended. SW_SHOW is the right
+                    //    primitive for "make sure the window is
+                    //    visible": it's a no-op for a normal or
+                    //    maximized window, and for a minimized one it
+                    //    brings it back in its previous size (which
+                    //    Windows tracks for us).
                     if (hwnd != IntPtr.Zero)
                     {
                         NativeInterop.ShowWindow(hwnd, NativeInterop.SW_SHOW);
-                        NativeInterop.ShowWindow(hwnd, NativeInterop.SW_RESTORE);
                         NativeInterop.BringWindowToTop(hwnd);
                         NativeInterop.SetForegroundWindow(hwnd);
                     }
 
                     // 4) Drop focus into the composer so the user can
                     //    immediately type the next prompt.
-                    try { self.InputBox.Focus(FocusState.Programmatic); } catch { }
+                    try { self.InputBox.Focus(FocusState.Keyboard); } catch { }
                 }
                 catch (Exception attemptEx)
                 {
@@ -240,6 +310,7 @@ public sealed partial class MainWindow
                 {
                     CommonUtils.LogDiagnostic("worker-bring-to-front-success",
                         $"attempt={attempt}");
+                    QueueDelayedComposerFocus(self);
                     return;
                 }
 
@@ -251,11 +322,24 @@ public sealed partial class MainWindow
             CommonUtils.LogDiagnostic("worker-bring-to-front-final",
                 $"did-not-win-foreground after {maxAttempts} attempts; hwnd=0x" +
                 (hwnd == IntPtr.Zero ? "0" : hwnd.ToString("X")));
+            QueueDelayedComposerFocus(self);
         }
         catch (Exception ex)
         {
             CommonUtils.LogDiagnostic("worker-bring-to-front-failed",
                 ex.Message);
         }
+    }
+
+    private static void QueueDelayedComposerFocus(MainWindow self)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(180);
+            self.DispatcherQueue.TryEnqueue(() =>
+            {
+                try { self.InputBox.Focus(FocusState.Keyboard); } catch { }
+            });
+        });
     }
 }

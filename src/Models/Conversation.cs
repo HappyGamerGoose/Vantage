@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 
 namespace Vantage.Models;
 
@@ -17,7 +19,15 @@ public sealed class Conversation : INotifyPropertyChanged
     public string Title
     {
         get => _title;
-        set => SetField(ref _title, string.IsNullOrWhiteSpace(value) ? "New conversation" : value);
+        set
+        {
+            if (SetField(ref _title, string.IsNullOrWhiteSpace(value) ? "New conversation" : value))
+            {
+                OnPropertyChanged(nameof(IconGlyph));
+                OnPropertyChanged(nameof(IconBrush));
+                OnPropertyChanged(nameof(IconBackgroundBrush));
+            }
+        }
     }
 
     public ObservableCollection<ChatMessage> Messages { get; set; } = new();
@@ -62,11 +72,43 @@ public sealed class Conversation : INotifyPropertyChanged
     [JsonIgnore]
     public string LastMessagePreview => Messages.LastOrDefault()?.PreviewText ?? string.Empty;
 
+    [JsonIgnore]
+    public string IconGlyph => IconVariant switch
+    {
+        1 => "\uE787",
+        2 => "\uE9D2",
+        3 => "\uE70F",
+        4 => "\uE943",
+        _ => "\uE8BD",
+    };
+
+    [JsonIgnore]
+    public Brush IconBrush => new SolidColorBrush(IconVariant switch
+    {
+        1 => Color.FromArgb(255, 93, 66, 245),
+        2 => Color.FromArgb(255, 20, 166, 106),
+        3 => Color.FromArgb(255, 84, 66, 245),
+        4 => Color.FromArgb(255, 232, 93, 4),
+        _ => Color.FromArgb(255, 84, 66, 245),
+    });
+
+    [JsonIgnore]
+    public Brush IconBackgroundBrush => new SolidColorBrush(IconVariant switch
+    {
+        1 => Color.FromArgb(255, 242, 238, 255),
+        2 => Color.FromArgb(255, 232, 248, 240),
+        3 => Color.FromArgb(255, 242, 238, 255),
+        4 => Color.FromArgb(255, 255, 240, 230),
+        _ => Color.FromArgb(255, 242, 238, 255),
+    });
+
+    private int IconVariant => (StringComparer.Ordinal.GetHashCode(Id) & 0x7FFFFFFF) % 5;
+
     public bool Contains(string query)
     {
         return Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)
             || Messages.Any(message =>
-                message.Text.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                message.SearchableText.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || (!string.IsNullOrWhiteSpace(message.ImagePath)
                     && message.ImagePath.Contains(query, StringComparison.CurrentCultureIgnoreCase)));
     }

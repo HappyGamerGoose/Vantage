@@ -19,6 +19,7 @@ public sealed partial class MainWindow
     {
         _sidebarExpanded = !_sidebarExpanded;
         UpdateSidebarVisibility();
+        SaveSidebarPreference();
     }
 
     private void SidebarToggleAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -26,6 +27,7 @@ public sealed partial class MainWindow
         args.Handled = true;
         _sidebarExpanded = !_sidebarExpanded;
         UpdateSidebarVisibility();
+        SaveSidebarPreference();
     }
 
     private void EscapeAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -41,6 +43,21 @@ public sealed partial class MainWindow
         if (!string.IsNullOrEmpty(SearchBox.Text))
         {
             SearchBox.Text = string.Empty;
+            SearchPanel.Visibility = Visibility.Collapsed;
+            InputBox.Focus(FocusState.Programmatic);
+            return;
+        }
+
+        if (SearchPanel.Visibility == Visibility.Visible)
+        {
+            SearchPanel.Visibility = Visibility.Collapsed;
+            InputBox.Focus(FocusState.Programmatic);
+            return;
+        }
+
+        if (Workspace.Visibility != Visibility.Visible)
+        {
+            ShowPage("chat");
             InputBox.Focus(FocusState.Programmatic);
         }
     }
@@ -52,6 +69,15 @@ public sealed partial class MainWindow
         ProvidersGrid.Visibility = pageName == "providers" ? Visibility.Visible : Visibility.Collapsed;
 
         ConversationList.SelectedItem = pageName == "chat" ? _activeConversation : null;
+
+        if (RootGrid.Resources["AccentSoftBrush"] is Brush selected)
+        {
+            var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            SettingsButton.Background = pageName == "settings" ? selected : clear;
+            SettingsButtonCollapsed.Background = pageName == "settings" ? selected : clear;
+            ProvidersButton.Background = pageName == "providers" ? selected : clear;
+            ProvidersButtonCollapsed.Background = pageName == "providers" ? selected : clear;
+        }
 
         // Settings page carries the palette picker; hidden WinUI subtrees
         // don't always fire `Loaded`, so we kick the build when the user
@@ -69,29 +95,45 @@ public sealed partial class MainWindow
 
         if (_sidebarExpanded)
         {
-            SidebarColumn.Width = new GridLength(288);
-            if (ExpandedTopRow is not null) ExpandedTopRow.Visibility = Visibility.Visible;
-            if (CollapsedTopStack is not null) CollapsedTopStack.Visibility = Visibility.Collapsed;
-            if (MiddleSection is not null) MiddleSection.Visibility = Visibility.Visible;
-            if (ExpandedBottomStack is not null) ExpandedBottomStack.Visibility = Visibility.Visible;
-            if (CollapsedBottomStack is not null) CollapsedBottomStack.Visibility = Visibility.Collapsed;
+            SidebarColumn.Width = new GridLength(292);
+            TitlebarNavBackdrop.Width = 292;
+            BrandText.Visibility = Visibility.Visible;
+            PaneToggleButton.Margin = new Thickness(244, 0, 0, 0);
+            ToolTipService.SetToolTip(PaneToggleButton, "Collapse sidebar");
+            PaneToggleGlyph.Glyph = "\uE76B";
+            ConversationPane.Visibility = Visibility.Visible;
+            CollapsedSidebarCommands.Visibility = Visibility.Collapsed;
         }
         else
         {
-            SidebarColumn.Width = new GridLength(72);
-            if (ExpandedTopRow is not null) ExpandedTopRow.Visibility = Visibility.Collapsed;
-            if (CollapsedTopStack is not null) CollapsedTopStack.Visibility = Visibility.Visible;
-            if (MiddleSection is not null) MiddleSection.Visibility = Visibility.Collapsed;
-            if (ExpandedBottomStack is not null) ExpandedBottomStack.Visibility = Visibility.Collapsed;
-            if (CollapsedBottomStack is not null) CollapsedBottomStack.Visibility = Visibility.Visible;
+            SidebarColumn.Width = new GridLength(64);
+            TitlebarNavBackdrop.Width = 64;
+            BrandText.Visibility = Visibility.Collapsed;
+            PaneToggleButton.Margin = new Thickness(16, 0, 0, 0);
+            ToolTipService.SetToolTip(PaneToggleButton, "Expand sidebar");
+            PaneToggleGlyph.Glyph = "\uE76C";
+            ConversationPane.Visibility = Visibility.Collapsed;
+            CollapsedSidebarCommands.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SaveSidebarPreference()
+    {
+        try
+        {
+            Windows.Storage.ApplicationData.Current.LocalSettings.Values["SidebarExpanded"] = _sidebarExpanded;
+        }
+        catch
+        {
+            // A settings write should never interrupt navigation.
         }
     }
 
     private void UpdateComposerFocus()
     {
-        var accent = (Brush)RootGrid.Resources["AccentBrush"];
+        var focusedBorder = (Brush)RootGrid.Resources["StrokeBrush"];
         var composerBorder = (Brush)RootGrid.Resources["ComposerBorderBrush"];
-        InputBox.GotFocus  += (_, _) => ComposerCard.BorderBrush = accent;
+        InputBox.GotFocus  += (_, _) => ComposerCard.BorderBrush = focusedBorder;
         InputBox.LostFocus += (_, _) => ComposerCard.BorderBrush = composerBorder;
     }
 
@@ -110,15 +152,17 @@ public sealed partial class MainWindow
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
+            StopResponse();
             Conversations.Clear();
             FilteredConversations.Clear();
             _activeConversation = null;
             MessagesList.ItemsSource = null;
             EmptyState.Visibility = Visibility.Visible;
-            ConversationTitleBlock.Text = "Vantage";
+            ConversationTitleBlock.Text = "New chat";
 
-            await CreateConversationAsync();
+            await PersistAsync();
             ShowPage("chat");
+            InputBox.Focus(FocusState.Programmatic);
         }
     }
 }

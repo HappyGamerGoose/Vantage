@@ -9,7 +9,7 @@
 //
 // All probes here are local — no LLM, no API calls, no subprocess
 // outside the process tree of standard system tools. Total wall-clock
-// budget on a typical desktop: 5-25 ms.
+// budget on a typical desktop: 8-35 ms.
 
 using System.Diagnostics;
 using System.IO;
@@ -19,6 +19,8 @@ using System.Text;
 using Vantage.Services;
 
 namespace Vantage.Services.Agent;
+
+public sealed record InstalledAppInfo(string Name, string? ExecutablePath);
 
 public sealed record WorldStateProbe(
     DateTimeOffset CapturedAt,
@@ -38,12 +40,32 @@ public sealed record WorldStateProbe(
     IReadOnlyList<string> RecentFiles,
     int InstalledAppCount,
     string InstalledAppSummary,
+    IReadOnlyList<InstalledAppInfo> InstalledApps,
+    IReadOnlyList<WindowsAppManager.RunningAppInfo> RunningApps,
+    IReadOnlyList<string> RecentApps,
+    string? KeyboardLayout,
+    bool CapsLockOn,
+    bool NumLockOn,
+    bool ScrollLockOn,
+    string LocalTimeIso,
+    string TimeZoneId,
     string? OsVersion)
 {
     // ── Cached session fields ──────────────────────────────────
     private static string? _cachedOsVersion;
     private static int    _cachedInstalledAppCount;
-    private static string _cachedInstalledAppSummary = "";
+    private static List<InstalledAppInfo> _cachedInstalledApps = new();
+    private const int InstalledAppsCachedLimit = 80;
+
+    // Recent-foreground-app ring: when the foreground process changes
+    // (different PID from the previous capture), push the previous app
+    // name onto this list. The agent uses it as a lightweight "where
+    // did the user just come from" hint so it can pick up context
+    // (e.g. "they were in Slack a moment ago, now they need me to
+    // open Settings — keep the Slack window untouched").
+    private static readonly LinkedList<string> _recentAppRing = new();
+    private static int _recentAppRingLimit = 6;
+    private static string? _lastForegroundName;
 
     public static void PrimeSessionCache()
     {
@@ -51,19 +73,19 @@ public sealed record WorldStateProbe(
         try { _cachedOsVersion = ProbeOsVersion(); } catch { _cachedOsVersion = "Windows (unknown version)"; }
         try
         {
-            var (count, summary) = ProbeInstalledApps();
+            var (count, apps) = ProbeInstalledApps();
             _cachedInstalledAppCount  = count;
-            _cachedInstalledAppSummary = summary;
+            _cachedInstalledApps       = apps;
         }
         catch
         {
             _cachedInstalledAppCount  = 0;
-            _cachedInstalledAppSummary = "(installed-apps probe unavailable)";
+            _cachedInstalledApps       = new();
         }
     }
 
     /// <summary>
-    /// Capture the volatile half of the world state. Cheap: 5-25 ms wall clock.
+    /// Capture the volatile half of the world state. Cheap: 8-35 ms wall clock.
     /// Failures in any single probe degrade gracefully (field becomes null / empty)
     /// so a flaky WMI call can't tank the agent loop.
     /// </summary>
@@ -81,12 +103,14 @@ public sealed record WorldStateProbe(
         var tClip    = Task.Run(SafeReadClipboard);
         var tBattery = Task.Run(SafeProbeBattery);
         var tRecent  = Task.Run(SafeProbeRecentFiles);
+        var tApps    = Task.Run(SafeListRunningAppsRich);
+        var tKb      = Task.Run(SafeKeyboard);
 
         // We don't Task.WhenAll + GetAwaiter().GetResult() because that
         // would deadlock; instead we sleep until the slowest task finishes
         // via WaitAll on the thread pool. .NET's thread pool does not run
         // continuations on already-blocking threads.
-        Task.WaitAll(new Task[] { tFg, tCursor, tDisp, tWins, tClip, tBattery, tRecent });
+        Task.WaitAll(new Task[] { tFg, tCursor, tDisp, tWins, tClip, tBattery, tRecent, tApps, tKb });
         sw.Stop();
 
         var fg       = tFg.IsCompletedSuccessfully   ? tFg.Result   : default;
@@ -96,6 +120,8 @@ public sealed record WorldStateProbe(
         var clip     = tClip.IsCompletedSuccessfully   ? tClip.Result  : null;
         var battery  = tBattery.IsCompletedSuccessfully ? tBattery.Result : null;
         var recent   = tRecent.IsCompletedSuccessfully ? tRecent.Result : new List<string>();
+        var apps     = tApps.IsCompletedSuccessfully ? tApps.Result : new List<WindowsAppManager.RunningAppInfo>();
+        var kb       = tKb.IsCompletedSuccessfully ? tKb.Result : ((string? Layout, bool Caps, bool Num, bool Scroll))(null, false, false, false);
 
         var dispSummary = displays.Count == 0
             ? "?"
@@ -131,8 +157,33 @@ public sealed record WorldStateProbe(
             }
         }
 
+        // Track recent foreground transitions for the prompt. We key on
+        // process name (not PID — PIDs are unstable across launches) and
+        // only push when the name actually changes, so a user clicking
+        // between two windows of the same app doesn't spam the ring.
+        var recentAppsForPrompt = new List<string>(_recentAppRing);
+        if (fg is { } fgNow && !string.IsNullOrEmpty(fgNow.ProcessName))
+        {
+            var name = fgNow.ProcessName;
+            if (name != _lastForegroundName)
+            {
+                if (_lastForegroundName is not null)
+                {
+                    _recentAppRing.AddFirst(_lastForegroundName);
+                    while (_recentAppRing.Count > _recentAppRingLimit)
+                        _recentAppRing.RemoveLast();
+                }
+                _lastForegroundName = name;
+                recentAppsForPrompt = new List<string>(_recentAppRing);
+            }
+        }
+
+        var localNow     = DateTimeOffset.Now;
+        var localTimeIso = localNow.ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var tzId         = TimeZoneInfo.Local.Id;
+
         return new WorldStateProbe(
-            CapturedAt: DateTimeOffset.Now,
+            CapturedAt: localNow,
             ElapsedMs: sw.ElapsedMilliseconds,
             ForegroundTitle: fg?.Window.Title ?? "",
             ForegroundProcess: fg?.ProcessName ?? "",
@@ -148,20 +199,36 @@ public sealed record WorldStateProbe(
             BatteryState: battery,
             RecentFiles: recent,
             InstalledAppCount: _cachedInstalledAppCount,
-            InstalledAppSummary: _cachedInstalledAppSummary,
+            InstalledAppSummary: SummarizeInstalledApps(_cachedInstalledApps),
+            InstalledApps: _cachedInstalledApps,
+            RunningApps: apps,
+            RecentApps: recentAppsForPrompt,
+            KeyboardLayout: kb.Layout,
+            CapsLockOn: kb.Caps,
+            NumLockOn: kb.Num,
+            ScrollLockOn: kb.Scroll,
+            LocalTimeIso: localTimeIso,
+            TimeZoneId: tzId,
             OsVersion: _cachedOsVersion);
     }
 
     /// <summary>
     /// Compact single-line representation for prompt injection. Designed to
-    /// add ~600-1400 bytes to the generator prompt — heavy enough to be
+    /// add ~800-1800 bytes to the generator prompt — heavy enough to be
     /// useful, light enough that the per-token reasoning cost is negligible.
+    ///
+    /// The fields the model reaches for most are surfaced first; deep
+    /// metadata (running apps + installed apps with exe paths) is
+    /// formatted so the model can quickly scan the names AND copy a
+    /// concrete exe path into a `launch_app` action.
     /// </summary>
     public string ToPromptBlock()
     {
-        var sb = new StringBuilder(1024);
+        var sb = new StringBuilder(1536);
         sb.Append("WORLD_STATE = { ");
         sb.Append("os=\"").Append(Escape(OsVersion ?? "Windows")).Append("\"");
+        sb.Append(", tz=\"").Append(Escape(TimeZoneId)).Append("\"");
+        sb.Append(", time=\"").Append(LocalTimeIso).Append("\"");
         sb.Append(", monitors=").Append(DisplayCount).Append("(").Append(DisplaySummary).Append(")");
         if (!string.IsNullOrEmpty(ForegroundProcess))
         {
@@ -175,17 +242,80 @@ public sealed record WorldStateProbe(
             sb.Append(", active_tab=\"").Append(Escape(Truncate(tab, 80))).Append('"');
         if (BatteryState is { } bat)
             sb.Append(", battery=\"").Append(Escape(Truncate(bat, 40))).Append('"');
+
+        // Keyboard / lock state — useful for accurate typing. CapsLock
+        // surprises are a real source of "agent typed everything in
+        // upper case" failures.
+        sb.Append(", kb=\"").Append(KeyboardLayout ?? "?")
+          .Append(" caps=").Append(CapsLockOn ? 1 : 0)
+          .Append(" num=").Append(NumLockOn ? 1 : 0)
+          .Append(" scroll=").Append(ScrollLockOn ? 1 : 0)
+          .Append('"');
+
         sb.Append(", windows=[").Append(TopVisibleWindows.Count).Append(']');
         if (TopVisibleWindows.Count > 0)
             sb.Append(" top=\"").Append(Escape(TopVisibleWindows[0])).Append('"');
         if (ClipboardText is { Length: > 0 } c)
-            sb.Append(", clipboard=\"").Append(Escape(Truncate(c, 60))).Append('"');
+            sb.Append(", clipboard_chars=").Append(c.Length);
         if (RecentFiles.Count > 0)
             sb.Append(", recent_files=[").Append(Escape(string.Join(", ", RecentFiles.Take(5).Select(Path.GetFileName)))).Append(']');
-        sb.Append(", installed_apps=").Append(InstalledAppCount)
-          .Append(" (").Append(Escape(Truncate(InstalledAppSummary, 220))).Append(")");
+
+        // Running apps with rich metadata. Formatted as
+        // `name@pid=N haswin=1` so the model can identify a specific
+        // process by its number; the IsForeground one is marked with
+        // `/fg` so the model doesn't have to cross-reference.
+        if (RunningApps.Count > 0)
+        {
+            sb.Append(", running_apps=[");
+            for (int i = 0; i < RunningApps.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                var a = RunningApps[i];
+                sb.Append(Escape(a.ProcessName)).Append("@pid=").Append(a.Pid);
+                if (a.IsForeground) sb.Append("/fg");
+                if (a.HasVisibleWindow) sb.Append("/win");
+            }
+            sb.Append(']');
+        }
+        if (RecentApps.Count > 0)
+        {
+            sb.Append(", recent_apps=[").Append(Escape(string.Join(", ", RecentApps))).Append(']');
+        }
+
+        // Installed apps with executable paths. The model can call
+        // `launch_app` directly with the path; if the path is
+        // missing (rare — system shortcuts that don't carry targets)
+        // we still surface the name.
+        if (InstalledApps.Count > 0)
+        {
+            sb.Append(", installed_apps=").Append(InstalledAppCount)
+              .Append(" (");
+            var shown = InstalledApps.Take(12).ToList();
+            for (int i = 0; i < shown.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                var app = shown[i];
+                sb.Append(Escape(app.Name));
+                if (!string.IsNullOrEmpty(app.ExecutablePath))
+                {
+                    sb.Append('=').Append(Escape(Truncate(app.ExecutablePath!, 80)));
+                }
+            }
+            if (InstalledAppCount > shown.Count)
+                sb.Append(", …+").Append(InstalledAppCount - shown.Count).Append(" more");
+            sb.Append(')');
+        }
         sb.Append(" }");
         return sb.ToString();
+    }
+
+    private static string SummarizeInstalledApps(List<InstalledAppInfo> apps)
+    {
+        if (apps.Count == 0) return "(no shortcuts enumerated)";
+        var top = apps.Take(40).ToList();
+        var summary = string.Join(", ", top.Select(a => a.Name)) +
+                      (apps.Count > 40 ? $" …+{apps.Count - 40} more" : "");
+        return summary;
     }
 
     // ── Safe wrappers — never throw ────────────────────────────
@@ -196,7 +326,7 @@ public sealed record WorldStateProbe(
     }
     private static (int X, int Y) SafeCursor()
     {
-        try { return WindowsAppManager.GetCursorPosition(); } catch { return (0, 0); }
+        try { return WindowsAutomationService.GetCursorPositionLogical(); } catch { return (0, 0); }
     }
     private static List<WindowsAppManager.DisplayInfo> SafeDisplays()
     {
@@ -214,6 +344,14 @@ public sealed record WorldStateProbe(
     {
         try { return ProbeRecentFiles(); } catch { return new(); }
     }
+    private static List<WindowsAppManager.RunningAppInfo> SafeListRunningAppsRich()
+    {
+        try { return WindowsAppManager.ListRunningAppsRich(); } catch { return new(); }
+    }
+    private static (string? Layout, bool Caps, bool Num, bool Scroll) SafeKeyboard()
+    {
+        try { return WindowsAppManager.GetKeyboardState(); } catch { return (null, false, false, false); }
+    }
 
     [SupportedOSPlatform("windows")]
     private static string ProbeOsVersion()
@@ -227,13 +365,16 @@ public sealed record WorldStateProbe(
         return string.IsNullOrEmpty(ed) ? $"{pn} {ver}" : $"{pn} {ver} {ed}";
     }
 
+    /// <summary>
+    /// Enumerate Start Menu shortcuts AND resolve each .lnk's target
+    /// path so the agent gets a name → exe-path map. Without the
+    /// target, the agent would have to guess at `launch_app`
+    /// arguments; with the path, it can issue a precise call.
+    /// </summary>
     [SupportedOSPlatform("windows")]
-    private static (int Count, string Summary) ProbeInstalledApps()
+    private static (int Count, List<InstalledAppInfo> Apps) ProbeInstalledApps()
     {
-        // Enumerate Start Menu shortcuts — stable across desktop installs,
-        // doesn't require UAC, gives the agent a "what apps are here" view
-        // without enumerating Program Files.
-        var names = new List<string>();
+        var apps = new Dictionary<string, InstalledAppInfo>(StringComparer.OrdinalIgnoreCase);
         string[] startMenuRoots =
         {
             Environment.GetFolderPath(Environment.SpecialFolder.Programs),
@@ -247,18 +388,53 @@ public sealed record WorldStateProbe(
                 foreach (var lnk in Directory.EnumerateFiles(root, "*.lnk", SearchOption.AllDirectories))
                 {
                     var n = Path.GetFileNameWithoutExtension(lnk);
-                    if (!string.IsNullOrWhiteSpace(n) && !names.Contains(n, StringComparer.OrdinalIgnoreCase))
-                        names.Add(n);
+                    if (string.IsNullOrWhiteSpace(n)) continue;
+                    if (apps.ContainsKey(n)) continue;
+                    // Resolve the .lnk target. Failures are non-fatal —
+                    // we just store the name with a null exe path.
+                    var target = SafeResolveShortcut(lnk);
+                    apps[n] = new InstalledAppInfo(n, target);
                 }
             }
             catch { /* individual subfolder access failures are fine */ }
         }
-        names.Sort(StringComparer.OrdinalIgnoreCase);
-        var top = names.Take(40).ToList();
-        var summary = top.Count == 0
-            ? "(no shortcuts enumerated)"
-            : string.Join(", ", top) + (names.Count > 40 ? $" …+{names.Count - 40} more" : "");
-        return (names.Count, summary);
+        // Stable order: alphabetical by name.
+        var list = apps.Values.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        return (list.Count, list);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? SafeResolveShortcut(string lnkPath)
+    {
+        try
+        {
+            // WScript.Shell COM is the standard shortcut resolver. We
+            // avoid taking a hard reference so the probe never throws
+            // if WSH is unavailable on locked-down systems. ProgID lookup
+            // is wrapped because Type.GetTypeFromProgID returns null on
+            // systems where WSH has been disabled by policy; the null
+            // check makes that a "no target" rather than an NRE.
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null) return null;
+            dynamic? shell = Activator.CreateInstance(shellType);
+            if (shell is null) return null;
+            try
+            {
+                dynamic? shortcut = shell.CreateShortcut(lnkPath);
+                if (shortcut is null) return null;
+                try
+                {
+                    var target = shortcut.TargetPath as string;
+                    return string.IsNullOrWhiteSpace(target) ? null : target;
+                }
+                finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut); }
+            }
+            finally { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     [SupportedOSPlatform("windows")]

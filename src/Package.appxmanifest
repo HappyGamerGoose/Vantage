@@ -10,7 +10,7 @@
   <Identity
     Name="Vantage"
     Publisher="CN=Vantage"
-    Version="1.0.0.0" />
+    Version="1.1.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="73E06CCD-94C7-42D7-9988-8FE898E79FF8" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

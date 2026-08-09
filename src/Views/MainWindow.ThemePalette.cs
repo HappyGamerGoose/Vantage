@@ -21,6 +21,7 @@ public sealed partial class MainWindow
 {
     private const string PaletteKey   = "ThemePalette";
     private const string ThemeModeKey = "ThemeMode";
+    private const string ReferenceDesignPaletteKey = "ReferenceDesignPaletteApplied";
 
     // Single OS-theme listener, subscribed on first apply. Listens to
     // `ColorValuesChanged` from the system's UISettings — fires whenever
@@ -121,22 +122,22 @@ public sealed partial class MainWindow
     {
         var card = new Border
         {
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(8),
             Background   = (Brush)RootGrid.Resources["SurfaceElevatedBrush"],
             BorderBrush  = (Brush)RootGrid.Resources["SoftStrokeBrush"],
             BorderThickness = new Thickness(1),
-            Padding      = new Thickness(12, 8, 14, 8),
+            Padding      = new Thickness(10, 6, 12, 6),
             Margin       = new Thickness(0, 0, 0, 0),
             Tag          = palette.Name,
         };
-        var inner = new Grid { ColumnSpacing = 10 };
+        var inner = new Grid { ColumnSpacing = 8 };
         inner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
         inner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var dot = new Border
         {
-            Width = 22, Height = 22,
-            CornerRadius = new CornerRadius(11),
+            Width = 18, Height = 18,
+            CornerRadius = new CornerRadius(9),
             Background   = new SolidColorBrush(swatchColor),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -150,14 +151,14 @@ public sealed partial class MainWindow
         };
         text.Children.Add(new TextBlock
         {
-            FontSize = 13,
+            FontSize = 12,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Brush)RootGrid.Resources["PrimaryTextBrush"],
             Text = palette.Name,
         });
         text.Children.Add(new TextBlock
         {
-            FontSize = 11,
+            FontSize = 10,
             Foreground = (Brush)RootGrid.Resources["MutedTextBrush"],
             Text = PaletteTagline(palette.Name),
         });
@@ -176,7 +177,7 @@ public sealed partial class MainWindow
     private void HighlightActivePaletteCard()
     {
         var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        var currentName = localSettings.Values.TryGetValue(PaletteKey, out var v) && v is string s ? s : "Blue";
+        var currentName = localSettings.Values.TryGetValue(PaletteKey, out var v) && v is string s ? s : "Violet";
         foreach (var child in PalettePicker.Children)
         {
             if (child is Border b && b.Tag is string paletteName)
@@ -226,19 +227,25 @@ public sealed partial class MainWindow
     private void ApplyCurrentTheme()
     {
         var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
+        if (!localSettings.Values.TryGetValue(ReferenceDesignPaletteKey, out var migrated) || migrated is not true)
+        {
+            localSettings.Values[PaletteKey] = "Violet";
+            localSettings.Values[ReferenceDesignPaletteKey] = true;
+        }
         var paletteName = localSettings.Values.TryGetValue(PaletteKey, out var pal) && pal is string ps
-            ? ps : "Blue";
+            ? ps : "Violet";
         var modeTag = localSettings.Values.TryGetValue(ThemeModeKey, out var tm) && tm is string ts
-            ? ts : "Light";
+            ? ts : "System";
         var mode = modeTag switch
         {
             "Dark"   => AppThemeMode.Dark,
             "System" => AppThemeMode.System,
-            _        => AppThemeMode.Light,
+            _        => AppThemeMode.System,
         };
         var useDark = mode == AppThemeMode.Dark
                    || (mode == AppThemeMode.System && IsOsDarkMode());
         ThemeManager.Apply(RootGrid, paletteName, useDark);
+        UpdateTitleBarColors(useDark);
         RootGrid.RequestedTheme = mode == AppThemeMode.System
             ? ElementTheme.Default
             : (useDark ? ElementTheme.Dark : ElementTheme.Light);
@@ -254,5 +261,39 @@ public sealed partial class MainWindow
             ThemeModeCombo.SelectedIndex = idx;
         }
         HighlightActivePaletteCard();
+    }
+
+    private void UpdateTitleBarColors(bool useDark)
+    {
+        try
+        {
+            if (AppWindow.TitleBar is not { } titleBar) return;
+
+            var foreground = useDark
+                ? Color.FromArgb(0xFF, 0xE7, 0xEA, 0xEC)
+                : Color.FromArgb(0xFF, 0x10, 0x1A, 0x24);
+            var inactive = useDark
+                ? Color.FromArgb(0xFF, 0x73, 0x78, 0x7E)
+                : Color.FromArgb(0xFF, 0x94, 0xA0, 0xA6);
+            var hover = useDark
+                ? Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)
+                : Color.FromArgb(0x16, 0x07, 0x14, 0x1A);
+            var pressed = useDark
+                ? Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)
+                : Color.FromArgb(0x26, 0x07, 0x14, 0x1A);
+
+            titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+            titleBar.ButtonForegroundColor = foreground;
+            titleBar.ButtonHoverBackgroundColor = hover;
+            titleBar.ButtonHoverForegroundColor = foreground;
+            titleBar.ButtonPressedBackgroundColor = pressed;
+            titleBar.ButtonPressedForegroundColor = foreground;
+            titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+            titleBar.ButtonInactiveForegroundColor = inactive;
+        }
+        catch
+        {
+            // Native title-bar theming is best-effort on older Windows builds.
+        }
     }
 }

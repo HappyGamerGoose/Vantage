@@ -3,6 +3,7 @@ obj/
 .tmp/
 .nuget/
 .dotnet/
+.freebuff/
 AppPackages/
 *.cer
 *.pfx

@@ -223,10 +223,9 @@ public sealed class Worker
             sbGen.AppendLine(
                 "STUCK_RECOVERY: Your last few attempts failed with the same description. " +
                 "Pivot NOW. Do NOT repeat the same description. Try a totally different approach: " +
-                "switch to a hotkey (Tab/Shift+Tab to cycle focus, Enter to activate, Escape to dismiss, " +
-                "Alt+Tab to switch app, Win+E for Explorer, Win+I for Settings home), or take a " +
-                "`screenshot`/`wait` first to reassess. If the target is a menu item, prefer `key` " +
-                "or `press_key` (e.g. Alt+F to open File menu) instead of click-on-text.");
+                "call `list_windows`, select exactly one returned window_id, then call `get_window_state`. " +
+                "Use a returned accessibility element, or use app-local Tab/Shift+Tab/Enter/Escape only " +
+                "through `press_window_key` after a fresh observation.");
         }
         else if (_emptyResponseStreak > 0)
         {
@@ -250,9 +249,8 @@ public sealed class Worker
             // the description). Help the model pick a different approach.
             sbGen.AppendLine(
                 $"GROUNDING_FAILED_RECOVERY: Your last action could not be executed: {_lastActionOutcome}. " +
-                "Look at the FRESH screenshot above, pick a different target element, or switch to a " +
-                "hotkey (Tab/Arrow/Enter to navigate, Esc to close, Ctrl+F to search, Alt+Tab to switch " +
-                "app, Win+E for Explorer, Win+I for Settings home). Do NOT repeat the same description.");
+                "Call `list_windows`, select one exact returned window, then `get_window_state`; use a " +
+                "returned element index or an app-local key with `press_window_key`. Do not repeat the same guess.");
         }
 
         if (_aci.Notes.Count > 0)
@@ -323,7 +321,7 @@ public sealed class Worker
 
         // Mirror the plan back into the generator's assistant turn so the
         // next iteration sees the full conversation
-        _generator.AddTextMessage(plan, role: "assistant");
+        _generator.AddTextMessage(plan!, role: "assistant");
 
         // Distinguish two failure modes so the feedback we send next turn
         // is targeted, not generic. An empty plan means the model returned
@@ -349,7 +347,7 @@ public sealed class Worker
         _emptyResponseStreak = 0;
 
         // Parse JSON action out of the response
-        var jsonText = CommonUtils.ExtractLastJsonBlock(plan);
+        var jsonText = CommonUtils.ExtractLastJsonBlock(plan!);
         var action = CommonUtils.ParseAgentAction(jsonText);
         if (action is null)
         {
@@ -362,10 +360,10 @@ public sealed class Worker
             // responses forever.
             if (_parseFailStreak >= MaxParseFailStreak)
                 return new ActionResult(ActionOutcome.FailedFatal,
-                    $"aborted after {_parseFailStreak} consecutive unparseable responses. Last plan excerpt: {Truncate(plan, 200)}");
+                    $"aborted after {_parseFailStreak} consecutive unparseable responses. Last plan excerpt: {Truncate(plan!, 200)}");
 
             return new ActionResult(ActionOutcome.Failed,
-                $"worker response did not contain a parseable JSON action. Plan excerpt: {Truncate(plan, 200)}");
+                $"worker response did not contain a parseable JSON action. Plan excerpt: {Truncate(plan!, 200)}");
         }
         _parseFailStreak = 0;
 
@@ -390,7 +388,7 @@ public sealed class Worker
             || string.Equals(action.Action, "screenshot", StringComparison.OrdinalIgnoreCase)
             // Pure-movement (cursor only, no click) — foreground and window
             // state don't change.
-            || string.Equals(action.Action, "move", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(action.Action, "move_mouse", StringComparison.OrdinalIgnoreCase)
             // Observation tools — they READ state, never modify it.
             || string.Equals(action.Action, "list_apps", StringComparison.OrdinalIgnoreCase)
             || string.Equals(action.Action, "list_processes", StringComparison.OrdinalIgnoreCase)
@@ -406,14 +404,8 @@ public sealed class Worker
         // (screenshotBytes) was captured BEFORE the reflection prompt
         // fired; we re-capture here so the diff is "immediately before
         // the action" vs "immediately after", not 5-second-stale.
-        WorldSnapshot preSnapshot = default;
+        WorldSnapshot? preSnapshot = null;
         byte[]? preScreenshot = null;
-        if (!skipVerification)
-        {
-            preSnapshot = WorldSnapshot.Capture();
-            try { preScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
-            catch { /* diff falls back to world-only signal */ }
-        }
 
         // Pre-dispatch safety net: if the model emitted a screen-target
         // action without enough information to actually land it
@@ -422,9 +414,11 @@ public sealed class Worker
         // typically immediately give up with `done`. Catch those here
         // and substitute a forced screenshot so the next turn starts
         // from a fresh look at the screen instead of a dead end.
+        var actionWasSanitized = false;
         var (replacement, sanitizationFeedback) = ActionSanitizer.Sanitize(action);
         if (replacement is not null && sanitizationFeedback is not null)
         {
+            actionWasSanitized = true;
             CommonUtils.LogDiagnostic("worker-sanitized-action",
                 $"turn={_turnCount + 1} original={action.Action} → forced screenshot " +
                 $"raw=({Truncate(TryDescribeAction(action), 120)})");
@@ -432,9 +426,17 @@ public sealed class Worker
             _verificationFeedback.Enqueue(sanitizationFeedback);
             while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
             _noOpStreak++;
-            // A sanitized action was a forced screenshot — that isn't
-            // a terminator, even if it replaced a terminator original.
-            skipVerification = false;
+            // The replacement screenshot is an observation-only marker.
+            // Preserve the no-op signal without paying for a meaningless
+            // before/after capture around the marker itself.
+            skipVerification = true;
+        }
+
+        if (!skipVerification)
+        {
+            preSnapshot = WorldSnapshot.Capture();
+            try { preScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
+            catch { /* diff falls back to world-only signal */ }
         }
 
         var executeSw = Stopwatch.StartNew();
@@ -463,7 +465,7 @@ public sealed class Worker
         // Post-snapshot + post-screenshot for the verifier. Skipped for
         // terminator actions (no diff to compute) but still run for
         // observation tools so we can verify they returned valid data.
-        WorldSnapshot postSnapshot = default;
+        WorldSnapshot? postSnapshot = null;
         byte[]? postScreenshot = null;
         if (needVerify)
         {
@@ -472,7 +474,7 @@ public sealed class Worker
             catch { /* diff falls back to world-only signal */ }
         }
         var worldDiff = needVerify
-            ? WorldDiff.Between(preSnapshot, postSnapshot)
+            ? WorldDiff.Between(preSnapshot!, postSnapshot!)
             : default;
         ScreenshotDiff screenDiff = (preScreenshot is not null && postScreenshot is not null)
             ? ScreenshotDiffer.Diff(preScreenshot, postScreenshot)
@@ -487,9 +489,9 @@ public sealed class Worker
             : ActionVerifier.Verify(
                 action.Action,
                 action.Raw,
-                preSnapshot,
-                postSnapshot,
-                worldDiff,
+                preSnapshot!,
+                postSnapshot!,
+                worldDiff!,
                 screenDiff);
         verifySw.Stop();
         verifyMs = verifySw.ElapsedMilliseconds;
@@ -541,21 +543,22 @@ public sealed class Worker
                 $"turn={_turnCount + 1} action={action.Action} " +
                 $"worldDiff=({worldDiff}) screenDiff={screenDiff.TotalChangeRatio:P3} " +
                 $"reason={Truncate(verdict.Reason, 200)} " +
-                $"before=({preSnapshot.Compact()}) after=({postSnapshot.Compact()})");
-        }
-        else if (!string.IsNullOrWhiteSpace(predicted) && verdict.Met)
-        {
-            // Confirmation feedback: when the prediction is met, briefly
-            // acknowledge so the model learns that high-confidence predictions
-            // that landed are reinforced. Keep it low-cost (1 line).
-            CommonUtils.LogDiagnostic("worker-self-critique-match",
-                $"predicted={Truncate(predicted, 120)} confidence={confidence} action={action.Action}");
+                $"before=({preSnapshot!.Compact()}) after=({postSnapshot!.Compact()})");
         }
         else
         {
-            // Reset no-op streak on any action that visibly landed
-            // (including Done/FailedFatal — both are confirmable terminators)
-            _noOpStreak = 0;
+            if (!actionWasSanitized)
+            {
+                // Reset on every verified success, including actions that
+                // supplied expected_state. Previously those successes left
+                // an old no-op streak alive and could trigger false recovery.
+                _noOpStreak = 0;
+            }
+            if (!string.IsNullOrWhiteSpace(predicted))
+            {
+                CommonUtils.LogDiagnostic("worker-self-critique-match",
+                    $"predicted={Truncate(predicted, 120)} confidence={confidence} action={action.Action}");
+            }
         }
 
         // When we see 3+ consecutive no-ops, inject a stronger recovery
@@ -566,10 +569,19 @@ public sealed class Worker
         {
             _verificationFeedback.Enqueue(
                 "RECOVERY_NUDGE: 5 consecutive actions did not visibly change state. " +
-                "Take a fresh screenshot via `screenshot` and re-locate the target. " +
-                "Try a coarse action like `press_key` Win+E to open File Explorer " +
-                "(a known starting state) before attempting your target again.");
+                "Call `list_windows`, choose exactly one returned window, then `get_window_state`. " +
+                "Use a returned element index or stop if no safe target is available.");
             while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
+        }
+        if (_noOpStreak >= 10
+            && result.Outcome is not ActionOutcome.Done and not ActionOutcome.FailedFatal)
+        {
+            result = new ActionResult(
+                ActionOutcome.FailedFatal,
+                "stopped after 10 consecutive actions produced no verified progress");
+            _lastActionOutcome = $"{result.Outcome}: {result.Description}";
+            CommonUtils.LogDiagnostic("worker-no-progress-stop",
+                $"turn={_turnCount + 1} streak={_noOpStreak}");
         }
 
         // Grounding-loop guard: the grounding LLM just failed twice on the
@@ -585,9 +597,8 @@ public sealed class Worker
                 $"consecutive_failures={_aci.ConsecutiveGroundFailures}");
             _verificationFeedback.Enqueue(
                 $"GROUNDING_LOOP: the grounding LLM returned no coordinates twice in a row for \"{_aci.LastGroundDescription}\". " +
-                "The target isn't where you thought. Use a screen-aware alternative: `screenshot` and look again, " +
-                "or use a hotkey (e.g. `press_key` Win+E for Explorer, Win+I for Settings), " +
-                "or `launch_app` with the executable / `focus_app` with the window title. " +
+                "The target isn't where you thought. Call `list_windows`, select one exact returned window, " +
+                "then `get_window_state`; use a returned element index, or `launch_app` if the app is absent. " +
                 "Stop guessing click coordinates — they keep failing.");
             while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
             // Reset the counter so the next step starts fresh. The next
@@ -597,13 +608,19 @@ public sealed class Worker
         }
 
         // Track failures & successes for stuck-detection and history.
-        if (result.Outcome == ActionOutcome.Success || result.Outcome == ActionOutcome.Done)
+        var effectiveFailure = actionWasSanitized
+            || ((result.Outcome == ActionOutcome.Success || result.Outcome == ActionOutcome.Done)
+                && !verdict.Met);
+        if (!effectiveFailure
+            && (result.Outcome == ActionOutcome.Success || result.Outcome == ActionOutcome.Done))
         {
             PushRecentSuccess(TryDescribeAction(action));
             // Successful action clears the failure streak.
             _recentFailures.Clear();
         }
-        else if (result.Outcome == ActionOutcome.Failed || result.Outcome == ActionOutcome.FailedFatal)
+        else if (effectiveFailure
+            || result.Outcome == ActionOutcome.Failed
+            || result.Outcome == ActionOutcome.FailedFatal)
         {
             var desc = TryDescribeAction(action);
             if (!string.IsNullOrEmpty(desc))

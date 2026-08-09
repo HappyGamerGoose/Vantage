@@ -23,10 +23,26 @@ public sealed partial class MainWindow
 {
     private void LoadProviders()
     {
-        _providers.Clear();
-        foreach (var provider in _providerStore.Load())
+        // Detach the auto-save handler for the duration of the load.
+        // The handler fires on Add / Remove / Clear, so without this
+        // the _providers.Clear() at the top would write an empty list
+        // to disk *before* _providerStore.Load() has a chance to run
+        // the LocalSettings → file migration, which would then see a
+        // zero-byte file and skip the migration entirely. The bug
+        // would manifest as "I had providers in v1.0 and now they're
+        // gone" on the first launch of v1.5.36+.
+        _providers.CollectionChanged -= OnProvidersChanged;
+        try
         {
-            _providers.Add(provider);
+            _providers.Clear();
+            foreach (var provider in _providerStore.Load())
+            {
+                _providers.Add(provider);
+            }
+        }
+        finally
+        {
+            _providers.CollectionChanged += OnProvidersChanged;
         }
         RefreshModelSelector();
     }
@@ -117,13 +133,50 @@ public sealed partial class MainWindow
 
     private void SaveProviders()
     {
+        CancelPendingProviderSave();
+        var cts = new CancellationTokenSource();
+        _providerSaveCts = cts;
+        _ = SaveProvidersAfterDelayAsync(cts);
+    }
+
+    private async Task SaveProvidersAfterDelayAsync(CancellationTokenSource cts)
+    {
         try
         {
+            await Task.Delay(300, cts.Token);
             _providerStore.Save(_providers);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            CommonUtils.LogDiagnostic("provider-save-failed", ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_providerSaveCts, cts))
+            {
+                _providerSaveCts = null;
+            }
+            cts.Dispose();
+        }
+    }
+
+    private void CancelPendingProviderSave()
+    {
+        var pending = _providerSaveCts;
+        _providerSaveCts = null;
+        if (pending is null) return;
+
+        try
+        {
+            pending.Cancel();
         }
         catch
         {
-            // Persistence is best-effort here.
+            // The delayed task may already have completed and disposed
+            // its token source. There is nothing left to cancel then.
         }
     }
 
@@ -169,22 +222,41 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(provider.ApiKey) || string.IsNullOrWhiteSpace(provider.DefaultModel))
+        {
+            provider.Status = ProviderStatus.Failed;
+            provider.LastTestMessage = "API key and model are required.";
+            SaveProviders();
+            RenderProviderCards();
+            return;
+        }
+
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-            using var request = new HttpRequestMessage(HttpMethod.Get, provider.BaseUrl);
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var engine = LMMEngine.Create(provider);
+            var agent = new LmmAgent(engine, "Reply with OK.");
+            agent.AddTextMessage("Connection test", role: "user");
+            await agent.GetResponseAsync(temperature: 0, maxTokens: 8, timeout.Token);
 
-            if ((int)response.StatusCode < 500)
+            var vision = await _visionCapability.SupportsAsync(provider);
+            provider.Status = vision == VisionVerdict.No ? ProviderStatus.Failed : ProviderStatus.Ok;
+            provider.LastTestMessage = vision switch
             {
-                provider.Status = ProviderStatus.Ok;
-                provider.LastTestMessage = $"Reachable ({response.StatusCode}).";
-            }
-            else
-            {
-                provider.Status = ProviderStatus.Failed;
-                provider.LastTestMessage = $"Server error {response.StatusCode}.";
-            }
+                VisionVerdict.Yes => "Authenticated · vision ready.",
+                VisionVerdict.No => "Authenticated, but this model has no vision support.",
+                _ => "Authenticated · vision support could not be confirmed.",
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            provider.Status = ProviderStatus.Failed;
+            provider.LastTestMessage = "Connection test timed out.";
+        }
+        catch (LmmProviderException ex)
+        {
+            provider.Status = ProviderStatus.Failed;
+            provider.LastTestMessage = $"Provider rejected the test (HTTP {ex.HttpStatus}): {ex.Message}";
         }
         catch (Exception ex)
         {
@@ -396,23 +468,19 @@ public sealed partial class MainWindow
         VirtualKeyModifiers modifiers,
         TypedEventHandler<KeyboardAccelerator, KeyboardAcceleratorInvokedEventArgs> handler)
     {
-        // Attach to the specific button if we have a target; otherwise
-        // skip to avoid persistent accelerator hints.
         var accelerator = new KeyboardAccelerator
         {
             Key = key,
             Modifiers = modifiers
         };
         accelerator.Invoked += handler;
-        if (key == VirtualKey.N)
-            NewChatButton.KeyboardAccelerators.Add(accelerator);
-        else if (key == VirtualKey.B)
-            PaneToggleButton.KeyboardAccelerators.Add(accelerator);
+        RootGrid.KeyboardAccelerators.Add(accelerator);
     }
 
     private void InputAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
+        ShowPage("chat");
         InputBox.Focus(FocusState.Programmatic);
     }
 

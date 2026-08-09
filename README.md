@@ -2,14 +2,14 @@
 
 An autonomous Windows desktop agent. Type a goal in plain English, Vantage drives the desktop — opening apps, clicking through UIs, copying values into dialogs — and reasons about what it sees via a vision-capable LLM.
 
-- **UI**: WinUI 3 / Windows App SDK 1.8, .NET 9, single-window Mica-less design with an 8-accent theme palette
+- **UI**: WinUI 3 / Windows App SDK 1.8, .NET 9, compact single-window design with light/dark themes and an 8-accent palette
 - **Packaging**: signed MSIX, self-contained runtime (no separate runtime install)
 - **Engines**: Anthropic + OpenAI-compatible (Azure / Groq / OpenRouter / OpenAI / anything else) — chosen per-conversation
-- **In-process**: no subprocess, no MCP — all desktop interaction is direct in-process Win32
+- **Computer use**: direct Win32/UI Automation input plus PowerShell, process, app, and window controls
 - **Persistence**: `LocalSettings` survives MSIX in-place upgrades; conversation history + providers JSON in `%LOCALAPPDATA%\Vantage`
-- **Current version**: 1.0
+- **Current version**: 1.1.0.0
 
-> The MSIX schema pins `Identity/@Version` to a 4-segment `Major.Minor.Build.Revision` string. The manifest keeps `1.0.0.0` to satisfy the schema; everywhere else — folder name, MSIX filename, README, release notes — we write **v1.0**.
+> Vantage 1.1.0.0 is an unrestricted desktop agent. It executes requested computer-use actions without per-action approval prompts, including shell commands and consequential UI actions. Use it only with providers and instructions you trust. Stop or Escape cancels an active run.
 
 ## Build
 
@@ -74,9 +74,9 @@ Open *Vantage*, click *Settings → Add Provider*, enter your endpoint URL + API
 
 ## Notes
 
-- Vantage ships with **no built-in providers** — every endpoint is yours to add. The provider list lives in `%LOCALAPPDATA%\Vantage\state.json` (LocalSettings).
+- Vantage ships with **no built-in providers** — every endpoint is yours to add. Provider configuration lives in `%LOCALAPPDATA%\Vantage\providers.json`.
 - The first conversation is created when you send your first prompt; you can delete the last conversation and the app will sit at an EmptyState.
-- A single task can run for hundreds of steps; the activity card streams the phase-by-phase progress and any verifier pre/post screenshots.
+- A task runs until completion, failure, or an explicit Stop/Escape cancellation; the activity card streams phase-by-phase progress.
 - All screenshot capture uses **logical pixels** (DPI-correct), so the agent's click coordinates land where it expects them on high-DPI displays.
 
 ## Repo layout
@@ -91,7 +91,7 @@ src/                    source — the project we work on
   Models/                 ViewModels and DTOs
   Services/               Provider dispatch, history store, vision, theme manager
     Agent/                LMMAgent, LMMEngine, WorldSnapshot, VantageACI, prompts
-  Views/                  MainWindow.xaml + 11 partials (Sidebar, Chat, ...)
+  Views/                  MainWindow.xaml + focused partials (Sidebar, Chat, Settings, ...)
   Regenerate-Icons.ps1    one-shot helper that rebuilds Assets/ from ICON.png
   ICON.png                master icon for ICON.pdf regeneration
   .vantage.signing.props  local-only signing inputs (gitignored)

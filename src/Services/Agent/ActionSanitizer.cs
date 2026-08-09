@@ -33,9 +33,9 @@ public static class ActionSanitizer
             ["left_click"]          = new SanitizationRule("description", "left-click"),
             ["right_click"]         = new SanitizationRule("description", "right-click"),
             ["double_click"]        = new SanitizationRule("description", "double-click"),
-            ["highlight_text_span"] = new SanitizationRule("description", "highlight"),
+            ["highlight_text_span"] = new SanitizationRule("highlight-target", "highlight"),
             ["scroll"]              = new SanitizationRule("description", "scroll"),
-            ["drag"]                = new SanitizationRule("description", "drag"),
+            ["drag"]                = new SanitizationRule("drag-target", "drag"),
 
             // ── direct-coordinate variants ────────────────────────────────
             ["click_xy"]            = new SanitizationRule("coord", "click"),
@@ -49,7 +49,9 @@ public static class ActionSanitizer
             // ── text input / keyboard ────────────────────────────────────
             ["type"]                = new SanitizationRule("typed-text", "type"),
             ["type_text"]           = new SanitizationRule("typed-text", "type"),
+            ["type_window_text"]    = new SanitizationRule("typed-text", "type_window_text"),
             ["press_key"]           = new SanitizationRule("combo", "press_key"),
+            ["press_window_key"]    = new SanitizationRule("combo", "press_window_key"),
             ["key"]                 = new SanitizationRule("combo", "key"),
             ["hotkey"]              = new SanitizationRule("combo", "hotkey"),
 
@@ -76,6 +78,8 @@ public static class ActionSanitizer
         bool hasNeededArg = rule.Requires switch
         {
             "description" => HasDescription(action),
+            "drag-target" => HasDragTarget(action),
+            "highlight-target" => HasHighlightTarget(action),
             "coord"       => HasCoords(action, tool),
             "typed-text"  => HasTypedText(action, tool),
             "combo"       => HasCombo(action),
@@ -102,11 +106,19 @@ public static class ActionSanitizer
         return !string.IsNullOrWhiteSpace(desc);
     }
 
+    private static bool HasDragTarget(AgentAction action) =>
+        !string.IsNullOrWhiteSpace(action.GetString("start_description"))
+        && !string.IsNullOrWhiteSpace(action.GetString("end_description"));
+
+    private static bool HasHighlightTarget(AgentAction action) =>
+        !string.IsNullOrWhiteSpace(action.GetString("start_phrase"))
+        && !string.IsNullOrWhiteSpace(action.GetString("end_phrase"));
+
     private static bool HasTypedText(AgentAction action, string tool)
     {
         // type and type_text both need a non-empty `text` parameter.
         var t = action.GetString("text");
-        return !string.IsNullOrWhiteSpace(t);
+        return !string.IsNullOrEmpty(t);
     }
 
     private static bool HasCombo(AgentAction action)

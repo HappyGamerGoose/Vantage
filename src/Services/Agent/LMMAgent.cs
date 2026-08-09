@@ -13,6 +13,9 @@ namespace Vantage.Services.Agent;
 
 public sealed class LmmAgent
 {
+    private const long DefaultImageHistoryBudgetBytes = 25L * 1024 * 1024;
+    private const int ActiveVisualHistoryTurns = 6;
+
     private readonly LMMEngine _engine;
     public string SystemPrompt { get; private set; } = "You are a helpful assistant.";
     public List<JsonObject> Messages { get; private set; } = new();
@@ -136,7 +139,9 @@ public sealed class LmmAgent
         // blocks, which some upstream proxies cap at ~250 MB. We squashed
         // old image attachments to text placeholders so the model still has
         // the conversation context but the wire payload stays sane.
-        CompactImageHistory(maxBodyBytes: 25 * 1024 * 1024, keepLastImageTurns: 2);
+        CompactImageHistory(
+            maxBodyBytes: DefaultImageHistoryBudgetBytes,
+            keepLastImageTurns: ActiveVisualHistoryTurns);
 
         // Defensive deep clone — same parent-tracking problem we hit in
         // AgentOrchestrator before. Each LMMEngine.GenerateAsync re-parents
@@ -245,18 +250,16 @@ public sealed class LmmAgent
         int n = arr.Count;
         int dropped = 0;
         var kept = new JsonArray();
-        bool hasText = false;
         foreach (var block in arr)
         {
+            if (block is null) continue;
             if (block is JsonObject o && o["type"]?.GetValue<string>() is "image" or "image_url")
             {
                 approxSaved += EstimateImageBlockBytes(o);
                 dropped++;
                 continue;
             }
-            if (block is JsonObject t && t["type"]?.GetValue<string>() == "text")
-                hasText = true;
-            kept.Add((JsonNode)block.DeepClone());
+            kept.Add(block.DeepClone());
         }
         if (dropped == 0) return 0;
 
@@ -264,7 +267,9 @@ public sealed class LmmAgent
         kept.Add(new JsonObject
         {
             ["type"] = "text",
-            ["text"] = $"[screenshot omitted from turn {turnIndex} to keep request body bounded]"
+            ["text"] =
+                $"[visual history folded: screenshot from turn {turnIndex} omitted to keep the request bounded; " +
+                "use the surrounding action/result text and the latest screenshots for current state]"
         });
         // Replace content
         msg["content"] = kept;

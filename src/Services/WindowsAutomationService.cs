@@ -6,9 +6,9 @@
 //
 // CONSENT, AUDIT, AND GATING ARE THE CALLER'S RESPONSIBILITY.
 // This service will happily inject clicks and capture pixels without checking
-// whether the user agreed. Do not call it from anywhere except an agent loop
-// that has already verified the default-OFF "Desktop Control" toggle is on,
-// is showing the runtime overlay, and is asking for per-action approval.
+// whether the user agreed. Vantage calls it only from a user-initiated run
+// with a visible running state, immediate Stop/Escape cancellation, action
+// history, and deterministic safety gates around sensitive operations.
 
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -192,6 +192,7 @@ public sealed class WindowsAutomationService
     private const int VK_RSHIFT  = 0xA1;
     private const int VK_LCONTROL= 0xA2;
     private const int VK_RCONTROL= 0xA3;
+    private const int VK_LMENU   = 0xA4;
 
     // ── Structs ──────────────────────────────────────────────────
     [StructLayout(LayoutKind.Sequential)]
@@ -361,11 +362,11 @@ public sealed class WindowsAutomationService
 
     /// <summary>
     /// Captures the entire primary display, downscales to <c>captureWidth</c>
-    /// logical pixels wide while preserving the monitor's native aspect ratio
+    /// image pixels wide while preserving the monitor's native aspect ratio
     /// (16:9, 16:10, etc.) — never forces a 4:3 squish. Pass through DPI math
     /// so PerMonitorV2 scaling is honored on 4K@200% / 1440p@125% displays.
     /// </summary>
-    /// <param name="captureWidth">Width in LOGICAL pixels (model space).</param>
+    /// <param name="captureWidth">Output width in pixels.</param>
     /// <param name="quality">JPEG quality 0–100.</param>
     /// <returns>JPEG bytes; resolution = <c>captureWidth × round(captureWidth × logicalH / logicalW)</c>.</returns>
     public static byte[] CaptureScreenJpeg(int captureWidth = 1024, long quality = 72)
@@ -382,11 +383,6 @@ public sealed class WindowsAutomationService
         int logicalDestW = captureWidth;
         int logicalDestH = (int)Math.Round(captureWidth * (double)geo.LogicalHeight / geo.LogicalWidth);
 
-        // Convert logical-pixel target to physical-pixel target so the resize
-        // operates in real screen pixels (no DPI double-scaling).
-        int physicalDestW = (int)Math.Round(logicalDestW * geo.LogicalToPhysicalScale);
-        int physicalDestH = (int)Math.Round(logicalDestH * geo.LogicalToPhysicalScale);
-
         IntPtr screenDc = IntPtr.Zero;
         IntPtr memDc   = IntPtr.Zero;
         IntPtr bmp      = IntPtr.Zero;
@@ -400,15 +396,17 @@ public sealed class WindowsAutomationService
 
             using var full = Image.FromHbitmap(bmp);
             full.SetResolution(geo.Dpi, geo.Dpi);
-            using var resized = new Bitmap(physicalDestW, physicalDestH, PixelFormat.Format32bppArgb);
-            resized.SetResolution(geo.Dpi, geo.Dpi);
+            // Bitmap dimensions, not DPI metadata, determine verifier cost.
+            // Keep the requested cap exact on high-DPI displays.
+            using var resized = new Bitmap(logicalDestW, logicalDestH, PixelFormat.Format32bppArgb);
+            resized.SetResolution(96, 96);
             using (var g = Graphics.FromImage(resized))
             {
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                 g.SmoothingMode     = SmoothingMode.HighQuality;
                 g.PixelOffsetMode   = PixelOffsetMode.HighQuality;
                 g.CompositingQuality= CompositingQuality.HighQuality;
-                g.DrawImage(full, 0, 0, physicalDestW, physicalDestH);
+                g.DrawImage(full, 0, 0, logicalDestW, logicalDestH);
             }
 
             var jpeg = ImageCodecInfo.GetImageEncoders()
@@ -590,11 +588,6 @@ public sealed class WindowsAutomationService
             dstLogicalH = (int)Math.Round(srcLogicalH * scale);
         }
 
-        // Convert logical target back to physical for the BitBlt + resize
-        // (GDI only knows physical pixels).
-        int dstPhysicalW = (int)Math.Round(dstLogicalW  * geo.LogicalToPhysicalScale);
-        int dstPhysicalH = (int)Math.Round(dstLogicalH  * geo.LogicalToPhysicalScale);
-
         IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, bmp = IntPtr.Zero;
         try
         {
@@ -606,8 +599,12 @@ public sealed class WindowsAutomationService
 
             using var full = Image.FromHbitmap(bmp);
             full.SetResolution(geo.Dpi, geo.Dpi);
-            using var resized = new Bitmap(dstPhysicalW, dstPhysicalH, PixelFormat.Format32bppArgb);
-            resized.SetResolution(geo.Dpi, geo.Dpi);
+            // Bitmap dimensions are the coordinate space a vision model
+            // sees. Keep them in logical pixels; DPI metadata does not
+            // change a PNG's actual pixel dimensions and previously caused
+            // a 1280px cap to expand back to 1920px at 150% scaling.
+            using var resized = new Bitmap(dstLogicalW, dstLogicalH, PixelFormat.Format32bppArgb);
+            resized.SetResolution(96, 96);
             using (var g = Graphics.FromImage(resized))
             {
                 g.CompositingMode    = CompositingMode.SourceCopy;
@@ -615,7 +612,7 @@ public sealed class WindowsAutomationService
                 g.InterpolationMode  = InterpolationMode.HighQualityBicubic;
                 g.SmoothingMode      = SmoothingMode.HighQuality;
                 g.PixelOffsetMode    = PixelOffsetMode.HighQuality;
-                g.DrawImage(full, 0, 0, dstPhysicalW, dstPhysicalH);
+                g.DrawImage(full, 0, 0, dstLogicalW, dstLogicalH);
             }
             using var ms = new MemoryStream();
             resized.Save(ms, ImageFormat.Png);
@@ -711,6 +708,56 @@ public sealed class WindowsAutomationService
             MakeMouseInput(MOUSEEVENTF_MIDDLEDOWN, 0, 0),
             MakeMouseInput(MOUSEEVENTF_MIDDLEUP,   0, 0));
         MarkSyntheticInput();
+    }
+
+    public enum MouseButton
+    {
+        Left,
+        Right,
+        Middle,
+    }
+
+    /// <summary>
+    /// Drag between logical coordinates while holding the requested mouse
+    /// button. Cancellation always releases the button before propagating.
+    /// </summary>
+    public static async Task DragAsync(
+        int fromLogicalX,
+        int fromLogicalY,
+        int toLogicalX,
+        int toLogicalY,
+        MouseButton button,
+        CancellationToken ct)
+    {
+        MoveMouse(fromLogicalX, fromLogicalY);
+        await Task.Delay(25, ct);
+
+        var (downFlag, upFlag) = button switch
+        {
+            MouseButton.Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            MouseButton.Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+            _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        };
+
+        SendBatch(MakeMouseInput(downFlag, 0, 0));
+        MarkSyntheticInput();
+        try
+        {
+            const int steps = 12;
+            for (var step = 1; step <= steps; step++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var x = (int)Math.Round(fromLogicalX + (toLogicalX - fromLogicalX) * (step / (double)steps));
+                var y = (int)Math.Round(fromLogicalY + (toLogicalY - fromLogicalY) * (step / (double)steps));
+                MoveMouse(x, y);
+                await Task.Delay(12, ct);
+            }
+        }
+        finally
+        {
+            SendBatch(MakeMouseInput(upFlag, 0, 0));
+            MarkSyntheticInput();
+        }
     }
 
     /// <summary>
@@ -864,6 +911,27 @@ public sealed class WindowsAutomationService
         MarkSyntheticInput();
     }
 
+    public static async Task<int> TypeAsync(string text, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var typed = 0;
+        try
+        {
+            foreach (var rune in text.EnumerateRunes())
+            {
+                ct.ThrowIfCancellationRequested();
+                TypeOneRune(rune);
+                typed++;
+                await Task.Delay(6, ct);
+            }
+            return typed;
+        }
+        finally
+        {
+            if (typed > 0) MarkSyntheticInput();
+        }
+    }
+
     private static void TypeOneRune(Rune rune)
     {
         // Try ASCII shortcut first.
@@ -872,11 +940,25 @@ public sealed class WindowsAutomationService
             short vkScan = VkKeyScan((char)rune.Value);
             if (vkScan != -1)
             {
-                ushort vKey = (ushort)(vkScan & 0xFF);
-                bool shift  = (vkScan & 0x100) != 0;
+                var vKey = (ushort)(vkScan & 0xFF);
+                var modifierState = (vkScan >> 8) & 0xFF;
+                var modifiers = new List<ushort>(3);
+                if ((modifierState & 1) != 0) modifiers.Add(VK_LSHIFT);
+                if ((modifierState & 2) != 0) modifiers.Add(VK_LCONTROL);
+                if ((modifierState & 4) != 0) modifiers.Add(VK_LMENU);
 
-                if (shift) PressAndRelease(VK_LSHIFT);
-                PressAndRelease(vKey);
+                foreach (var modifier in modifiers) SendBatch(MakeVkKey(modifier, false));
+                try
+                {
+                    PressAndRelease(vKey);
+                }
+                finally
+                {
+                    for (var i = modifiers.Count - 1; i >= 0; i--)
+                    {
+                        SendBatch(MakeVkKey(modifiers[i], true));
+                    }
+                }
                 return;
             }
         }
@@ -885,12 +967,16 @@ public sealed class WindowsAutomationService
         if (rune.Value == '\r') { PressAndRelease(0x0D); return; }
         if (rune.Value == '\t') { PressAndRelease(0x09); return; }   // VK_TAB
 
-        // Fallback: Unicode SendInput. Surrogate pairs come in as two runes;
-        // each gets its own DOWN/UP which the target app reassembles.
-        ushort scan;
-        var down = MakeUnicodeKey(rune.Value, keyUp: false, out scan);
-        var up   = MakeUnicodeKey(rune.Value, keyUp: true,  out _);
-        SendBatch(down, up);
+        // SendInput consumes UTF-16 code units. Supplementary runes need
+        // both surrogate halves, each with a down/up pair.
+        Span<char> utf16 = stackalloc char[2];
+        var units = rune.EncodeToUtf16(utf16);
+        for (var i = 0; i < units; i++)
+        {
+            var down = MakeUnicodeKey(utf16[i], keyUp: false, out _);
+            var up = MakeUnicodeKey(utf16[i], keyUp: true, out _);
+            SendBatch(down, up);
+        }
     }
 
     private static void PressAndRelease(ushort vKey)
@@ -922,10 +1008,16 @@ public sealed class WindowsAutomationService
     public static void HotKey(VirtualKey modifier, VirtualKey key)
     {
         KeyDown(modifier);
-        Thread.Sleep(8);
-        SendKey(key);
-        Thread.Sleep(8);
-        KeyUp(modifier);
+        try
+        {
+            Thread.Sleep(8);
+            SendKey(key);
+            Thread.Sleep(8);
+        }
+        finally
+        {
+            KeyUp(modifier);
+        }
         MarkSyntheticInput();
     }
 

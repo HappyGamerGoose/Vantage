@@ -2,13 +2,14 @@
 // Vantage — MainWindow.AgentRun.cs
 //
 // Agent-run helpers: PrepareAgentWorkspace (used by hooks before the
-// first screenshot so we never leak credentials), and RunPanicMonitorAsync
-// (Escape-hold abort sensor).
+// first screenshot so the controller stays out of its own view), and
+// RunPanicMonitorAsync (explicit Escape abort sensor).
 
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using Vantage.Services;
+using Vantage.Services.Agent;
 using Windows.UI.Core;
 using Windows.UI.Input;
 
@@ -22,19 +23,38 @@ public sealed partial class MainWindow
     /// the Anthropic image payload. Switches to the chat workspace, which
     /// contains no credentials.
     /// </summary>
-    private void PrepareAgentWorkspace() => ShowPage("chat");
+    private void PrepareAgentWorkspace()
+    {
+        ShowPage("chat");
+        MinimizeForAgentCapture();
+    }
 
     /// <summary>
-    /// Polls the Escape key at ~20 Hz and aborts the agent when it's
-    /// physically held down. This is the ONLY panic gesture — the previous
-    /// "400 px mouse jitter within 250 ms" velocity sensor was removed
-    /// because it self-sabotaged the run: even with a synthetic-input
-    /// grace window, the very first 400 px of natural post-submit cursor
-    /// motion on a 120-DPI panel (≈333 logical px) cancelled the agent
-    /// before it could fire its first request. Escape is unambiguous, has
-    /// no false-positive risk against normal interaction, and is the
-    /// canonical abort gesture for a computer-use agent. Runs on a
-    /// background thread, observes the linked token, and never throws.
+    /// Keep Vantage itself out of desktop screenshots. Besides wasting a
+    /// vision turn on the controller instead of the target app, capturing
+    /// the chat stream would unnecessarily send conversation history to the
+    /// selected vision provider. Escape remains the always-available stop;
+    /// activating Vantage from the taskbar still reveals the Stop button.
+    /// </summary>
+    private void MinimizeForAgentCapture()
+    {
+        try
+        {
+            if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter
+                && presenter.State != Microsoft.UI.Windowing.OverlappedPresenterState.Minimized)
+            {
+                presenter.Minimize();
+            }
+        }
+        catch (Exception ex)
+        {
+            CommonUtils.LogDiagnostic("agent-minimize-failed", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Escape remains an immediate manual abort. Normal keyboard and mouse
+    /// activity no longer cancels the run.
     /// </summary>
     private Task RunPanicMonitorAsync(CancellationToken token)
     {
@@ -46,6 +66,8 @@ public sealed partial class MainWindow
                 {
                     if (WindowsAutomationService.IsEscapeHeld())
                     {
+                        CommonUtils.LogDiagnostic("agent-manual-stop",
+                            "run cancelled because Escape was pressed");
                         _responseCts?.Cancel();
                         _agentRunCts?.Cancel();
                         break;

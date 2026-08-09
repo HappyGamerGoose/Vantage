@@ -56,6 +56,23 @@
   </ItemGroup>
 
   <!--
+    Exclude the probe-worldstate subproject from this project's default
+    Compile globs. The probe shares source files via <Compile Include>
+    links, and without this exclude the SDK's recursive "**\*.cs" pick-up
+    also pulls in probe-worldstate\Program.cs — and worse, the SDK
+    generates a second auto-AssemblyInfo for that subdir, so the
+    C# compiler ends up seeing two TargetFrameworkAttribute +
+    AssemblyProductAttribute declarations and the build fails with
+    "Duplicate attribute" errors. Keeping the probe in a subdir is fine
+    as long as the main project explicitly ignores it.
+  -->
+  <ItemGroup>
+    <Compile Remove="probe-worldstate\**" />
+    <None    Remove="probe-worldstate\**" />
+    <Page    Remove="probe-worldstate\**" />
+  </ItemGroup>
+
+  <!--
     Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
     Tools extension to be activated for this project.
   -->
@@ -64,10 +81,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="Microsoft.UIAutomationClient.Interop">
+      <HintPath>C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\UIAVerify\Microsoft.UIAutomationClient.Interop.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
     <PackageReference Include="System.Management" Version="9.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>
 
   <PropertyGroup>

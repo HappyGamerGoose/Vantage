@@ -27,6 +27,7 @@ public sealed record WorldSnapshot(
     int DisplayCount,
     string DisplaySummary,
     int VisibleWindowCount,
+    IReadOnlyList<long> VisibleWindowHandles,
     int RunningAppCount,
     string? ClipboardText,
     string Fingerprint)
@@ -47,7 +48,7 @@ public sealed record WorldSnapshot(
         // thread-pool worker (Task.Run), so the marshalling cost is
         // bounded by the slowest call rather than the sum.
         var tFrontmost   = Task.Run(() => WindowsAppManager.GetFrontmostApp());
-        var tCursor      = Task.Run(() => WindowsAppManager.GetCursorPosition());
+        var tCursor      = Task.Run(() => WindowsAutomationService.GetCursorPositionLogical());
         var tDisplays    = Task.Run(() => WindowsAppManager.GetDisplays());
         var tWindows     = Task.Run(() => WindowsAppManager.ListVisibleWindows());
         var tApps        = Task.Run(() => WindowsAppManager.ListRunningApps());
@@ -85,6 +86,7 @@ public sealed record WorldSnapshot(
             displays.Count,
             displaySummary,
             windows.Count,
+            windows.Select(w => w.Handle.ToInt64()).Order().ToArray(),
             apps.Count,
             clip,
             ComputeFingerprint(frontmost, cursor, windows));

@@ -34,41 +34,41 @@ public static class ThemeManager
     // ── Light neutrals — match the existing pre-palette chrome so the
     // existing app stays looking the same on first launch.
     private static readonly ThemeNeutralSet LightNeutral = new(
-        Page              : "#F7FAFB",
-        Surface           : "#FCFFFFFF",
-        SurfaceElevated   : "#FFFFFFFF",
-        SubtleSurface     : "#F2F6F7",
-        Stroke            : "#2607141A",
-        SoftStroke        : "#1607141A",
-        Hairline          : "#0F000000",
-        PrimaryText       : "#101A24",
-        SecondaryText     : "#6D7D86",
-        MutedText         : "#94A0A6",
-        PaneStart         : "#F2F5F7",
-        PaneEnd           : "#E4EAEE",
-        Composer          : "#FFFFFFFF",
-        ComposerBorder    : "#D8DEE3",
-        Hover             : "#0A000000",
-        Background        : "#FAFAFA");
+        Page              : "#FFFCFCFE",
+        Surface           : "#F8FFFFFF",
+        SurfaceElevated   : "#F7FFFFFF",
+        SubtleSurface     : "#F4F4F9",
+        Stroke            : "#1F182033",
+        SoftStroke        : "#14182033",
+        Hairline          : "#0D182033",
+        PrimaryText       : "#111522",
+        SecondaryText     : "#66708A",
+        MutedText         : "#9299AA",
+        PaneStart         : "#FAFAFD",
+        PaneEnd           : "#F6F7FC",
+        Composer          : "#FAFFFFFF",
+        ComposerBorder    : "#E3E5EC",
+        Hover             : "#0A5442F5",
+        Background        : "#FCFCFE");
 
     // ── Dark neutrals — calibrated for late-night reading. We avoid
     // pure #000 backgrounds because they look harsh next to a wide
     // monitor; instead the page sits one notch below the system
     // dark grey so chrome elements read as layered, not negative.
     private static readonly ThemeNeutralSet DarkNeutral = new(
-        Page              : "#15171C",
-        Surface           : "#1C1F26",
-        SurfaceElevated   : "#26292F",
-        SubtleSurface     : "#1A1D24",
+        Page              : "#D20F1115",
+        Surface           : "#D91A1D23",
+        SurfaceElevated   : "#F022252B",
+        SubtleSurface     : "#E123262D",
         Stroke            : "#40FFFFFF",
         SoftStroke        : "#20FFFFFF",
         Hairline          : "#12FFFFFF",
         PrimaryText       : "#E7EAEC",
         SecondaryText     : "#A4ADB5",
         MutedText         : "#73787E",
-        PaneStart         : "#181A20",
+        PaneStart         : "#D916181E",
         PaneEnd           : "#1F2128",
-        Composer          : "#22262D",
+        Composer          : "#F022252B",
         ComposerBorder    : "#323640",
         Hover             : "#14FFFFFF",
         Background        : "#15171C");
@@ -94,8 +94,8 @@ public static class ThemeManager
 
         // 2. Violet — Tailwind violet + Windows 11 Flow accent.
         new ThemePalette("Violet",
-            new AccentSet("#7C4DFF", "#8E5DFF", "#6232D9", "#EFE8FF", "#267C4DFF"),
-            new AccentSet("#B69DF8", "#C5B0FA", "#9577DC", "#2A1F44", "#50B69DF8")),
+            new AccentSet("#5442F5", "#6555FA", "#4534D9", "#EFEDFF", "#265442F5"),
+            new AccentSet("#968BFF", "#AAA1FF", "#7F72F0", "#292445", "#50968BFF")),
 
         // 3. Yellow — sunshine / amber. Reads warm without being alarm-orange.
         //    Light accent stays in the "deep gold" range so dark text on it
@@ -134,7 +134,7 @@ public static class ThemeManager
 
     public static ThemePalette GetPalette(string name) =>
         Palettes.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-        ?? Palettes[1]; // default to Blue
+        ?? Palettes.First(p => p.Name == "Blue");
 
     /// <summary>
     /// Apply a palette + theme to the running window. Mutates the brush
@@ -160,7 +160,9 @@ public static class ThemeManager
         TrySwapBrush(root, "PrimaryTextBrush",       neutral.PrimaryText);
         TrySwapBrush(root, "SecondaryTextBrush",     neutral.SecondaryText);
         TrySwapBrush(root, "MutedTextBrush",         neutral.MutedText);
-        TrySwapGradient(root, "PaneBrush",           neutral.PaneStart, neutral.PaneEnd);
+        TrySwapBrush(root, "PaneBrush",              neutral.PaneStart);
+        TrySwapBrush(root, "RailBrush",              darkMode ? "#F0121820" : "#F8F9FD");
+        TrySwapBrush(root, "ChatCanvasBrush",        darkMode ? "#E8101217" : "#FCFCFE");
         TrySwapBrush(root, "HoverBrush",             neutral.Hover);
         TrySwapBrush(root, "ComposerBrush",          neutral.Composer);
         TrySwapBrush(root, "ComposerBorderBrush",    neutral.ComposerBorder);
@@ -173,19 +175,19 @@ public static class ThemeManager
         TrySwapBrush(root, "AccentHoverBrush",       accent.AccentHover);
         TrySwapBrush(root, "AccentPressedBrush",     accent.AccentPressed);
         TrySwapBrush(root, "AccentSoftBrush",        accent.AccentSoft);
-        TrySwapBrush(root, "PaneEdgeBrush",          accent.PaneEdge);
-        TrySwapBrush(root, "PanelTintBrush",         LerpAlpha(accent.Accent, darkMode ? "#26" : "#E5F0FA"));
+        TrySwapBrush(root, "PaneEdgeBrush",          neutral.SoftStroke);
+        TrySwapBrush(root, "PanelTintBrush",         darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft);
 
         // Warm / Success / Danger families — these had hard-coded light-mode
         // hexes before; dark mode now repaints them too. The light value
         // is the same as the XAML default so behavior on light theme is
         // unchanged.
-        var warmAccent   = LerpAlpha(accent.Accent, darkMode ? "#EA" : "#B66A42");
+        var warmAccent   = darkMode ? WithAlpha(accent.Accent, "EA") : "#B66A42";
         var successAccent = darkMode ? "#6CD676" : "#237A4B";
         var successSoft  = darkMode ? "#1B3326" : "#D8EFE2";
         var dangerAccent = darkMode ? "#E67878" : "#A83232";
-        var warmHover    = darkMode ? LerpAlpha(accent.Accent, "#FF") : "#C77C58";
-        var warmPressed   = darkMode ? LerpAlpha(accent.Accent, "#C0") : "#8E5030";
+        var warmHover    = darkMode ? WithAlpha(accent.Accent, "FF") : "#C77C58";
+        var warmPressed   = darkMode ? WithAlpha(accent.Accent, "C0") : "#8E5030";
         TrySwapBrush(root, "WarmBrush",              warmAccent);
         TrySwapBrush(root, "WarmHoverBrush",         warmHover);
         TrySwapBrush(root, "WarmPressedBrush",       warmPressed);
@@ -204,14 +206,14 @@ public static class ThemeManager
         // stay legible against either light or dark chat background. The
         // XAML defaults are light-mode; dark mode swaps them to dark
         // surfaces with a hint of accent contrast.
-        var bubbleUser          = darkMode ? "#1F2429" : "#FCFCFC";
-        var bubbleAssistant     = darkMode ? "#22272C" : "#F2F6F7";
+        var bubbleUser          = darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft;
+        var bubbleAssistant     = "#00FFFFFF";
         var bubbleError         = darkMode ? "#3A1F1C" : "#FBEEE8";
-        var bubbleBorderUser    = darkMode ? "#33000000" : "#1407141A";
-        var bubbleBorderAssist  = darkMode ? "#33FFFFFF" : "#2607141A";
+        var bubbleBorderUser    = WithAlpha(accent.Accent, darkMode ? "55" : "32");
+        var bubbleBorderAssist  = "#00000000";
         var bubbleBorderError   = darkMode ? "#80E67878" : "#E9B9A7";
         var avatarUser          = darkMode ? "#262C32" : "#E2E9EE";
-        var avatarAssistant     = darkMode ? LerpAlpha(accent.Accent, "#28") : "#D6E7F8";
+        var avatarAssistant     = darkMode ? WithAlpha(accent.Accent, "28") : accent.AccentSoft;
         var avatarError         = darkMode ? "#3A1F1C" : "#FBEEE8";
         // AuthorTextBrush used to fall back to "#00D78CD4" in light mode —
         // that's alpha=00 (fully transparent) so the "Vantage" author label
@@ -219,8 +221,8 @@ public static class ThemeManager
         // accent direct (with a small saturation lift in light) makes the
         // author label consistent across every palette.
         var authorText          = darkMode
-                                    ? LerpAlpha(accent.Accent, "#FF")
-                                    : LerpAlpha(accent.AccentPressed, "#FF");
+                                    ? WithAlpha(accent.Accent, "FF")
+                                    : WithAlpha(accent.AccentPressed, "FF");
         TrySwapBrush(root, "BubbleUserBrush",            bubbleUser);
         TrySwapBrush(root, "BubbleAssistantBrush",       bubbleAssistant);
         TrySwapBrush(root, "BubbleErrorBrush",           bubbleError);
@@ -284,16 +286,19 @@ public static class ThemeManager
     }
 
     /// <summary>
-    /// Mix an alpha hex (#AARRGGBB) with the full RRGGBB string by
-    /// parsing both — used to derive a translucent accent wash for the
-    /// dark/light theme. Falls back to the original if parsing fails.
+    /// Apply a two-digit alpha value to an accent color.
     /// </summary>
-    private static string LerpAlpha(string baseColor, string alphaHex)
+    private static string WithAlpha(string baseColor, string alphaHex)
     {
         var b = ParseColor(baseColor);
-        var a = ParseColor(alphaHex);
-        if (b is null || a is null) return baseColor;
-        var mixed = Color.FromArgb(a.Value.A, b.Value.R, b.Value.G, b.Value.B);
+        var normalizedAlpha = alphaHex.TrimStart('#');
+        if (b is null || normalizedAlpha.Length != 2 ||
+            !byte.TryParse(normalizedAlpha, System.Globalization.NumberStyles.HexNumber, null, out var alpha))
+        {
+            return baseColor;
+        }
+
+        var mixed = Color.FromArgb(alpha, b.Value.R, b.Value.G, b.Value.B);
         return $"#{mixed.A:X2}{mixed.R:X2}{mixed.G:X2}{mixed.B:X2}";
     }
 }

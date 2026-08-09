@@ -72,7 +72,7 @@ public sealed class VisionCapability
         var key = provider.Id + "|" + (provider.DefaultModel ?? "");
         if (_probeCache.TryGetValue(key, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
         {
-            if (entry.Result is { } r) return r ? VisionVerdict.Yes : VisionVerdict.No;
+            return entry.Result;
         }
 
         bool? probeResult;
@@ -85,7 +85,7 @@ public sealed class VisionCapability
             false => VisionVerdict.No,
             null  => VisionVerdict.Unknown, // inconclusive — try anyway
         };
-        _probeCache[key] = (verdict == VisionVerdict.Yes, DateTimeOffset.UtcNow.AddMinutes(10));
+        _probeCache[key] = (verdict, DateTimeOffset.UtcNow.AddMinutes(10));
         return verdict;
     }
 
@@ -100,7 +100,7 @@ public sealed class VisionCapability
         foreach (var k in stale) _probeCache.Remove(k);
     }
 
-    private readonly Dictionary<string, (bool Result, DateTimeOffset ExpiresAt)> _probeCache = new();
+    private readonly Dictionary<string, (VisionVerdict Result, DateTimeOffset ExpiresAt)> _probeCache = new();
 
     // ─────────────────────────────────────────────────────────────────
     //  Heuristic tables

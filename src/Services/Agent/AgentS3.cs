@@ -3,11 +3,8 @@
 //
 // Top-level port of Agent-S S3 (gui_agents/s3/agents/agent_s.py).
 // Wraps the Worker with a run-loop that ticks until `done`, `fail`,
-// or until the user hits Esc / Stop. No hard step cap — long-horizon
-// tasks (multi-app workflows, 30+ step sequences) need to keep going
-// as long as the agent makes forward progress. Cycle detection + the
-// existing Stuck-recovery feedback loop cover the original safety
-// concern that the 20-step cap was guarding against.
+// or until the user hits Esc / Stop. Long-horizon tasks continue until the
+// model finishes, fails, or the user explicitly stops the run.
 //
 // Emits lifecycle events back through IRunHooks so the existing
 // MainWindow chat surface can render progress.
@@ -24,17 +21,11 @@ public sealed class AgentS3
     private readonly LMMEngine _engine;
     private readonly WindowsAutomationService.MonitorGeometry _monitor;
     private readonly IRunHooks _hooks;
-    // Soft cap only — emitted as a UI warning when hit. The loop continues
-    // until either the task is done or the user cancels. Default 500
-    // steps maps roughly to a 5-minute sustained task; large multi-app
-    // workflows can blow past this without dying.
-    private const int SoftStepCeiling = 500;
 
     public AgentS3(
         Vantage.Models.Provider provider,
         WindowsAutomationService.MonitorGeometry monitor,
         IRunHooks hooks,
-        int maxSteps = 500,
         bool enableReflection = true,
         double temperature = 0.0,
         string platform = "windows")
@@ -43,7 +34,10 @@ public sealed class AgentS3
         _monitor = monitor;
         _hooks = hooks;
         _engine = LMMEngine.Create(provider);
-        _aci = new VantageACI(_engine, monitor, platform);
+        _aci = new VantageACI(
+            _engine,
+            monitor,
+            platform);
         _worker = new Worker(
             _engine, _aci, monitor, platform,
             maxTrajectoryLength: 4,
@@ -51,9 +45,26 @@ public sealed class AgentS3
             temperature: temperature);
     }
 
-    public async Task<string> RunAsync(string instruction, CancellationToken ct)
+    /// <summary>
+    /// Returns the terminal <see cref="ActionResult"/> of the run so
+    /// the caller can detect <c>FailedFatal</c> (e.g. consecutive
+    /// empty LLM responses) and surface a message — without this
+    /// signal, the catch blocks in
+    /// <c>BeginAssistantDraftAsync</c> would never fire on a
+    /// graceful fatal abort, and the assistant bubble would stay
+    /// empty. Returns the failing <see cref="ActionResult"/>; throws
+    /// on cancellation / generic exception (caller's existing catch
+    /// blocks already handle those paths and AppendText a message).
+    /// </summary>
+    public async Task<ActionResult> RunAsync(string instruction, CancellationToken ct)
     {
-        _hooks.OnRunStarted(_monitor.LogicalWidth, _monitor.LogicalHeight);
+        await _hooks.OnRunStartedAsync(
+            _monitor.LogicalWidth,
+            _monitor.LogicalHeight,
+            ct);
+        // Let the dispatcher/compositor present the sanitized chat workspace
+        // before Worker takes the first screenshot.
+        await Task.Delay(120, ct);
 
         var sb = new StringBuilder();
         try
@@ -71,21 +82,13 @@ public sealed class AgentS3
                 {
                     sb.AppendLine(result.Description);
                     _hooks.OnRunFinished($"done in {step} steps");
-                    return sb.ToString().Trim();
+                    return result;
                 }
                 if (result.Outcome == ActionOutcome.FailedFatal)
                 {
                     sb.AppendLine($"fail: {result.Description}");
                     _hooks.OnRunFinished($"failed at step {step}: {result.Description}");
-                    return sb.ToString().Trim();
-                }
-
-                // Soft ceiling — keep going but flag for the user. The
-                // only hard stop now is cancellation, success, or fatal.
-                if (step == SoftStepCeiling)
-                {
-                    _hooks.OnStepCompleted(step, new ActionResult(ActionOutcome.Failed,
-                        $"Reached the {SoftStepCeiling}-step soft cap — continuing unless you press Stop."));
+                    return result;
                 }
 
                 // Give the desktop a beat to redraw between steps
@@ -107,7 +110,7 @@ public sealed class AgentS3
 
 public interface IRunHooks
 {
-    void OnRunStarted(int displayWidth, int displayHeight);
+    Task OnRunStartedAsync(int displayWidth, int displayHeight, CancellationToken ct);
     void OnStepCompleted(int step, ActionResult result);
     void OnRunFinished(string reason);
 }

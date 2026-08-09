@@ -61,7 +61,7 @@ public static class WindowsOsKnowledge
     // 2. Launch catalog — the most-reached destinations.
     // ─────────────────────────────────────────────────────────────────
     public const string LaunchCatalog = """
-    ## Launch catalog (use `launch_app "<alias>"` or `key win+r` then type)
+    ## Launch catalog (prefer `launch_app "<alias>"`)
 
     ### Built-in apps
     - `notepad` · `wordpad` · `mspaint` · `calc` · `charmap`
@@ -171,6 +171,11 @@ public static class WindowsOsKnowledge
         `steam` `notion` `obsidian`
       * UWP Settings pages: `ms-settings:` / `ms-settings:display` /
         `ms-settings:sound` / etc. (Win+R-only).
+
+    `launch_app` waits for and focuses the visible window before it
+    returns. Once it succeeds, do not open Run, Search, or another launch
+    route for that app. Continue with the requested work in the focused
+    window and add `target_title` to typing/key actions when possible.
 
     **STEP 2 — If STEP 1 fails or the app has no alias, search:**
     This is the most reliable path on Windows 11. Emitting three
