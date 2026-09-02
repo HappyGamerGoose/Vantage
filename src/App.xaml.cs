@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Vantage.Services;
 
 namespace Vantage;
 
@@ -55,6 +56,10 @@ public partial class App : Application
             _window = new MainWindow();
             LogStartup("MainWindow created");
             _window.Activate();
+            WindowsShellIdentity.Apply(_window);
+            _window.DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () => WindowsShellIdentity.Apply(_window));
             LogStartup("MainWindow activated");
         }
         catch (Exception ex)

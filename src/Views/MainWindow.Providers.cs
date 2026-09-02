@@ -113,14 +113,7 @@ public sealed partial class MainWindow
     private void ModelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ModelSelector.SelectedItem is not ModelChoice choice) return;
-        try
-        {
-            Windows.Storage.ApplicationData.Current.LocalSettings.Values[SelectedModelSettingKey] = choice.Key;
-        }
-        catch
-        {
-            // Persistence is best-effort.
-        }
+        LocalPreferences.SetString(SelectedModelSettingKey, choice.Key);
         UpdateConversationSubtitle(choice);
     }
 

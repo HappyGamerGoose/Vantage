@@ -8,6 +8,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Vantage.Services;
+using Vantage.Services.Agent;
 
 namespace Vantage;
 
@@ -97,6 +99,7 @@ public sealed partial class MainWindow
         {
             SidebarColumn.Width = new GridLength(292);
             TitlebarNavBackdrop.Width = 292;
+            BrandLogo.Visibility = Visibility.Visible;
             BrandText.Visibility = Visibility.Visible;
             PaneToggleButton.Margin = new Thickness(244, 0, 0, 0);
             ToolTipService.SetToolTip(PaneToggleButton, "Collapse sidebar");
@@ -108,6 +111,7 @@ public sealed partial class MainWindow
         {
             SidebarColumn.Width = new GridLength(64);
             TitlebarNavBackdrop.Width = 64;
+            BrandLogo.Visibility = Visibility.Collapsed;
             BrandText.Visibility = Visibility.Collapsed;
             PaneToggleButton.Margin = new Thickness(16, 0, 0, 0);
             ToolTipService.SetToolTip(PaneToggleButton, "Expand sidebar");
@@ -119,14 +123,7 @@ public sealed partial class MainWindow
 
     private void SaveSidebarPreference()
     {
-        try
-        {
-            Windows.Storage.ApplicationData.Current.LocalSettings.Values["SidebarExpanded"] = _sidebarExpanded;
-        }
-        catch
-        {
-            // A settings write should never interrupt navigation.
-        }
+        LocalPreferences.SetBool("SidebarExpanded", _sidebarExpanded);
     }
 
     private void UpdateComposerFocus()
@@ -153,6 +150,7 @@ public sealed partial class MainWindow
         if (result == ContentDialogResult.Primary)
         {
             StopResponse();
+            PersistentTaskContext.DeleteAll();
             Conversations.Clear();
             FilteredConversations.Clear();
             _activeConversation = null;

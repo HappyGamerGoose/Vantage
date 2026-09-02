@@ -222,10 +222,6 @@ public static class WindowsAppManager
                 {
                     // skip processes we can't read
                 }
-                finally
-                {
-                    p.Dispose();
-                }
             }
         }
         finally
@@ -251,7 +247,6 @@ public static class WindowsAppManager
                     killed++;
                 }
                 catch { /* ignore ones we can't kill */ }
-                finally { p.Dispose(); }
             }
         }
         finally
@@ -300,10 +295,11 @@ public static class WindowsAppManager
             if (proc is null)
                 return new PowerShellResult(-1, "", "failed to start powershell.exe");
 
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = proc.StandardError.ReadToEndAsync(ct);
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(Math.Clamp(timeoutMs, 1_000, 120_000));
+            var effectiveTimeoutMs = Math.Clamp(timeoutMs, 1_000, 120_000);
+            timeoutCts.CancelAfter(effectiveTimeoutMs);
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = proc.StandardError.ReadToEndAsync(timeoutCts.Token);
             try
             {
                 await proc.WaitForExitAsync(timeoutCts.Token);
@@ -316,7 +312,7 @@ public static class WindowsAppManager
                 try { partialStdout = await stdoutTask; } catch { }
                 try { partialStderr = await stderrTask; } catch { }
                 if (ct.IsCancellationRequested) throw;
-                return new PowerShellResult(-1, partialStdout, partialStderr + $"[timeout after {timeoutMs}ms]");
+                return new PowerShellResult(-1, partialStdout, partialStderr + $"[timeout after {effectiveTimeoutMs}ms]");
             }
 
             var stdout = await stdoutTask;

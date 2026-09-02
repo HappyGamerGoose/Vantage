@@ -194,6 +194,7 @@ public sealed partial class MainWindow
         }
 
         Conversations.Remove(conversation);
+        PersistentTaskContext.Delete(conversation.Id);
 
         // When the deleted conversation was the active one, pick a
         // neighbour or fall back to empty state. Previously we

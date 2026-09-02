@@ -179,6 +179,7 @@ public sealed partial class MainWindow
                 activeProvider,
                 monitor,
                 new MainWindowAgentHooks(this, conversation, assistantMessage),
+                taskContextKey: conversation.Id,
                 enableReflection: true,
                 temperature: 0.0);
 

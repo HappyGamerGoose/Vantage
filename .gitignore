@@ -5,11 +5,12 @@ obj/
 .dotnet/
 .freebuff/
 AppPackages/
+artifacts/
 *.cer
 *.pfx
 .vantage.signing.props
 
-# Releases folder holds built .msix artifacts. Folder is kept in the repo
+# Releases folder holds built VeloPack artifacts. Folder is kept in the repo
 # (via .gitkeep) but its contents stay local until you explicitly commit
 # a release artifact or upload it via `gh release create`.
 releases/*

@@ -111,12 +111,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-            bool launchMaximized = true;
-            if (localSettings.Values.TryGetValue("LaunchMaximized", out var val) && val is bool b)
-            {
-                launchMaximized = b;
-            }
+            var launchMaximized = LocalPreferences.GetBool("LaunchMaximized", true);
 
             if (launchMaximized && AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter overlappedPresenter)
             {

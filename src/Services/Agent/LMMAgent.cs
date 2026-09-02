@@ -14,16 +14,23 @@ namespace Vantage.Services.Agent;
 public sealed class LmmAgent
 {
     private const long DefaultImageHistoryBudgetBytes = 25L * 1024 * 1024;
-    private const int ActiveVisualHistoryTurns = 6;
 
     private readonly LMMEngine _engine;
+    private readonly int _activeTextHistoryMessages;
+    private readonly int _activeVisualHistoryTurns;
     public string SystemPrompt { get; private set; } = "You are a helpful assistant.";
     public List<JsonObject> Messages { get; private set; } = new();
     public bool UseThinking { get; set; }
 
-    public LmmAgent(LMMEngine engine, string systemPrompt = "You are a helpful assistant.")
+    public LmmAgent(
+        LMMEngine engine,
+        string systemPrompt = "You are a helpful assistant.",
+        int activeTextHistoryMessages = int.MaxValue,
+        int activeVisualHistoryTurns = 6)
     {
         _engine = engine;
+        _activeTextHistoryMessages = Math.Max(1, activeTextHistoryMessages);
+        _activeVisualHistoryTurns = Math.Max(1, activeVisualHistoryTurns);
         AddSystemPrompt(systemPrompt);
     }
 
@@ -134,14 +141,20 @@ public sealed class LmmAgent
     /// <summary>Plain text completion. For grounding/short prompts.</summary>
     public async Task<LmmResponse> GetResponseAsync(double temperature = 0.0, int maxTokens = 4096, CancellationToken ct = default)
     {
-        // Bound the request body — long-horizon workers (10+ steps with PNG
-        // screenshots) can otherwise pile up hundreds of MB of base64 image
-        // blocks, which some upstream proxies cap at ~250 MB. We squashed
-        // old image attachments to text placeholders so the model still has
-        // the conversation context but the wire payload stays sane.
+        // Keep a fixed recent window. Durable task continuity is injected by
+        // Worker as text on every turn, so old prose and screenshots do not
+        // need to accumulate in the provider context.
+        var compacted = CompactContextWindow();
+        if (compacted.RemovedMessages > 0 || compacted.RemovedImages > 0)
+        {
+            CommonUtils.LogDiagnostic("lmm-context-window-compacted",
+                $"messages={compacted.RemovedMessages} images={compacted.RemovedImages} retained={Messages.Count}");
+        }
+
+        // A byte-budget backstop remains for unusually large recent captures.
         CompactImageHistory(
             maxBodyBytes: DefaultImageHistoryBudgetBytes,
-            keepLastImageTurns: ActiveVisualHistoryTurns);
+            keepLastImageTurns: _activeVisualHistoryTurns);
 
         // Defensive deep clone — same parent-tracking problem we hit in
         // AgentOrchestrator before. Each LMMEngine.GenerateAsync re-parents
@@ -158,6 +171,20 @@ public sealed class LmmAgent
         };
         return await _engine.GenerateAsync(req, ct);
     }
+
+    /// <summary>
+    /// Retains the system instruction, a small recent text window, and only
+    /// the newest visual turns. Older screenshots are removed rather than
+    /// represented as prompt text; <see cref="PersistentTaskContext"/>
+    /// carries the durable text state needed to continue the task.
+    /// </summary>
+    public ContextWindowCompactor.Result CompactContextWindow(
+        int? keepRecentNonSystemMessages = null,
+        int? keepRecentImages = null) =>
+        ContextWindowCompactor.Compact(
+            Messages,
+            keepRecentNonSystemMessages ?? _activeTextHistoryMessages,
+            keepRecentImages ?? _activeVisualHistoryTurns);
 
     /// <summary>
     /// Walk the message history, measure the projected JSON byte size of all

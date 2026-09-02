@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.UIAutomation;
 
@@ -39,14 +40,20 @@ internal sealed class ComputerUseSession
     private readonly object _gate = new();
     private Observation? _current;
 
-    public static bool IsScopedAction(string action) => action is
+    public static bool IsScopedAction(string? action) => action?.Trim().ToLowerInvariant() is
         "list_windows" or "get_window_state" or "activate_window" or
         "click_element" or "click_window_xy" or "scroll_window" or
         "drag_window" or "set_value" or "type_window_text" or "press_window_key";
 
     public void Invalidate()
     {
-        lock (_gate) _current = null;
+        Observation? stale;
+        lock (_gate)
+        {
+            stale = _current;
+            _current = null;
+        }
+        if (stale is not null) ReleaseObservation(stale);
     }
 
     public string ListWindows()
@@ -85,7 +92,13 @@ internal sealed class ComputerUseSession
             return new ActionResult(ActionOutcome.Failed, error);
 
         var observed = ReadAccessibility(window!);
-        lock (_gate) _current = observed;
+        Observation? previous;
+        lock (_gate)
+        {
+            previous = _current;
+            _current = observed;
+        }
+        if (previous is not null) ReleaseObservation(previous);
 
         var sb = new StringBuilder();
         sb.Append("observation_id=").Append(observed.Id)
@@ -108,17 +121,25 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (elementIndex is null || !observation!.Elements.TryGetValue(elementIndex.Value, out var element))
-            return new ActionResult(ActionOutcome.Failed, "element_index was not returned by that observation; re-observe the window");
-        if (!element.Enabled || element.Offscreen || element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
-            return new ActionResult(ActionOutcome.Failed, $"element [{element.Index}] is disabled, offscreen, or has no clickable bounds; re-observe after scrolling");
-        if (!WindowsAppManager.FocusWindow(observation.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no click was sent");
+        var liveObservation = observation!;
+        try
+        {
+            if (elementIndex is null || !liveObservation.Elements.TryGetValue(elementIndex.Value, out var element))
+                return new ActionResult(ActionOutcome.Failed, "element_index was not returned by that observation; re-observe the window");
+            if (!element.Enabled || element.Offscreen || element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
+                return new ActionResult(ActionOutcome.Failed, $"element [{element.Index}] is disabled, offscreen, or has no clickable bounds; re-observe after scrolling");
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no click was sent");
 
-        var (x, y) = PhysicalToLogical(element.Bounds.CenterX, element.Bounds.CenterY);
-        await SendClickAsync(x, y, button, clickCount, ct);
-        return new ActionResult(ActionOutcome.Success,
-            $"clicked [{element.Index}] {element.Role} \"{OneLine(element.Name, 100)}\" in {observation.WindowId}");
+            var (x, y) = PhysicalToLogical(element.Bounds.CenterX, element.Bounds.CenterY);
+            await SendClickAsync(x, y, button, clickCount, ct);
+            return new ActionResult(ActionOutcome.Success,
+                $"clicked [{element.Index}] {element.Role} \"{OneLine(element.Name, 100)}\" in {liveObservation.WindowId}");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     public async Task<ActionResult> ClickWindowAsync(
@@ -132,16 +153,24 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (relativeX is null || relativeY is null)
-            return new ActionResult(ActionOutcome.Failed, "click_window_xy requires integer x and y from the latest window observation");
-        if (!TryWindowPoint(observation!, relativeX.Value, relativeY.Value, out var x, out var y, out error))
-            return new ActionResult(ActionOutcome.Failed, error);
-        if (!WindowsAppManager.FocusWindow(observation!.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no click was sent");
+        var liveObservation = observation!;
+        try
+        {
+            if (relativeX is null || relativeY is null)
+                return new ActionResult(ActionOutcome.Failed, "click_window_xy requires integer x and y from the latest window observation");
+            if (!TryWindowPoint(liveObservation, relativeX.Value, relativeY.Value, out var x, out var y, out error))
+                return new ActionResult(ActionOutcome.Failed, error);
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no click was sent");
 
-        await SendClickAsync(x, y, button, clickCount, ct);
-        return new ActionResult(ActionOutcome.Success,
-            $"clicked window-relative ({relativeX},{relativeY}) in {observation.WindowId}");
+            await SendClickAsync(x, y, button, clickCount, ct);
+            return new ActionResult(ActionOutcome.Success,
+                $"clicked window-relative ({relativeX},{relativeY}) in {liveObservation.WindowId}");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     public ActionResult ScrollWindow(
@@ -153,17 +182,25 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (relativeX is null || relativeY is null || scrollY is null)
-            return new ActionResult(ActionOutcome.Failed, "scroll_window requires x, y, and scroll_y from the latest window observation");
-        if (!TryWindowPoint(observation!, relativeX.Value, relativeY.Value, out var x, out var y, out error))
-            return new ActionResult(ActionOutcome.Failed, error);
-        if (!WindowsAppManager.FocusWindow(observation!.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no scroll was sent");
+        var liveObservation = observation!;
+        try
+        {
+            if (relativeX is null || relativeY is null || scrollY is null)
+                return new ActionResult(ActionOutcome.Failed, "scroll_window requires x, y, and scroll_y from the latest window observation");
+            if (!TryWindowPoint(liveObservation, relativeX.Value, relativeY.Value, out var x, out var y, out error))
+                return new ActionResult(ActionOutcome.Failed, error);
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no scroll was sent");
 
-        // The plugin uses positive Y for down. Win32 wheel deltas use the opposite sign.
-        WindowsAutomationService.Scroll(-Math.Clamp(scrollY.Value, -2400, 2400), x, y);
-        return new ActionResult(ActionOutcome.Success,
-            $"scrolled {scrollY.Value} at window-relative ({relativeX},{relativeY}) in {observation.WindowId}");
+            // The plugin uses positive Y for down. Win32 wheel deltas use the opposite sign.
+            WindowsAutomationService.Scroll(-Math.Clamp(scrollY.Value, -2400, 2400), x, y);
+            return new ActionResult(ActionOutcome.Success,
+                $"scrolled {scrollY.Value} at window-relative ({relativeX},{relativeY}) in {liveObservation.WindowId}");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     public async Task<ActionResult> DragWindowAsync(
@@ -178,17 +215,24 @@ internal sealed class ComputerUseSession
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
         var liveObservation = observation!;
-        if (fromX is null || fromY is null || toX is null || toY is null)
-            return new ActionResult(ActionOutcome.Failed, "drag_window requires from_x, from_y, to_x, and to_y");
-        if (!TryWindowPoint(liveObservation, fromX.Value, fromY.Value, out var sx, out var sy, out error)
-            || !TryWindowPoint(liveObservation, toX.Value, toY.Value, out var ex, out var ey, out error))
-            return new ActionResult(ActionOutcome.Failed, error);
-        if (!WindowsAppManager.FocusWindow(liveObservation.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no drag was sent");
+        try
+        {
+            if (fromX is null || fromY is null || toX is null || toY is null)
+                return new ActionResult(ActionOutcome.Failed, "drag_window requires from_x, from_y, to_x, and to_y");
+            if (!TryWindowPoint(liveObservation, fromX.Value, fromY.Value, out var sx, out var sy, out error)
+                || !TryWindowPoint(liveObservation, toX.Value, toY.Value, out var ex, out var ey, out error))
+                return new ActionResult(ActionOutcome.Failed, error);
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no drag was sent");
 
-        await WindowsAutomationService.DragAsync(sx, sy, ex, ey, WindowsAutomationService.MouseButton.Left, ct);
-        return new ActionResult(ActionOutcome.Success,
-            $"dragged window-relative ({fromX},{fromY}) -> ({toX},{toY}) in {liveObservation.WindowId}");
+            await WindowsAutomationService.DragAsync(sx, sy, ex, ey, WindowsAutomationService.MouseButton.Left, ct);
+            return new ActionResult(ActionOutcome.Success,
+                $"dragged window-relative ({fromX},{fromY}) -> ({toX},{toY}) in {liveObservation.WindowId}");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     public ActionResult SetValue(
@@ -199,29 +243,41 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (elementIndex is null || !observation!.Elements.TryGetValue(elementIndex.Value, out var element))
-            return new ActionResult(ActionOutcome.Failed, "element_index was not returned by that observation; re-observe the window");
-        if (!element.Enabled)
-            return new ActionResult(ActionOutcome.Failed, $"element [{element.Index}] is disabled");
-        if (!WindowsAppManager.FocusWindow(observation.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; value was not changed");
-
+        var liveObservation = observation!;
         try
         {
-            if (element.NativeElement.GetCurrentPattern(ValuePatternId)
-                is not IUIAutomationValuePattern pattern)
+            if (elementIndex is null || !liveObservation.Elements.TryGetValue(elementIndex.Value, out var element))
+                return new ActionResult(ActionOutcome.Failed, "element_index was not returned by that observation; re-observe the window");
+            if (!element.Enabled)
+                return new ActionResult(ActionOutcome.Failed, $"element [{element.Index}] is disabled");
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; value was not changed");
+
+            var patternObject = element.NativeElement.GetCurrentPattern(ValuePatternId);
+            try
             {
-                return new ActionResult(ActionOutcome.Failed,
-                    $"element [{element.Index}] does not expose a writable Value pattern");
+                if (patternObject is not IUIAutomationValuePattern pattern)
+                {
+                    return new ActionResult(ActionOutcome.Failed,
+                        $"element [{element.Index}] does not expose a writable Value pattern");
+                }
+                pattern.SetValue(value);
+                return new ActionResult(ActionOutcome.Success,
+                    $"set value on [{element.Index}] {element.Role} \"{OneLine(element.Name, 100)}\"");
             }
-            pattern.SetValue(value);
-            return new ActionResult(ActionOutcome.Success,
-                $"set value on [{element.Index}] {element.Role} \"{OneLine(element.Name, 100)}\"");
+            finally
+            {
+                ReleaseComObject(patternObject);
+            }
         }
         catch (Exception ex)
         {
             return new ActionResult(ActionOutcome.Failed,
-                $"element [{element.Index}] does not expose a writable Value pattern: {ex.Message}");
+                $"element [{elementIndex}] does not expose a writable Value pattern: {ex.Message}");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
         }
     }
 
@@ -234,20 +290,28 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (string.IsNullOrEmpty(text))
-            return new ActionResult(ActionOutcome.Failed, "type_window_text requires non-empty text");
-        if (string.IsNullOrWhiteSpace(observation!.FocusedElement))
-            return new ActionResult(ActionOutcome.Failed, "the latest observation did not identify a focused element; click the editable control, re-observe, then type");
-        if (!WindowsAppManager.FocusWindow(observation.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no text was sent");
+        var liveObservation = observation!;
+        try
+        {
+            if (string.IsNullOrEmpty(text))
+                return new ActionResult(ActionOutcome.Failed, "type_window_text requires non-empty text");
+            if (string.IsNullOrWhiteSpace(liveObservation.FocusedElement))
+                return new ActionResult(ActionOutcome.Failed, "the latest observation did not identify a focused element; click the editable control, re-observe, then type");
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no text was sent");
 
-        var typed = await WindowsAppManager.TypeTextAsync(text, Math.Clamp(delayMs, 0, 1000), ct);
-        var expected = text.EnumerateRunes().Count();
-        return new ActionResult(
-            typed == expected ? ActionOutcome.Success : ActionOutcome.Failed,
-            typed == expected
-                ? $"typed {typed} character(s) into {observation.WindowId} focused={observation.FocusedElement}"
-                : $"typed only {typed} of {expected} character(s); re-observe before retrying");
+            var typed = await WindowsAppManager.TypeTextAsync(text, Math.Clamp(delayMs, 0, 1000), ct);
+            var expected = text.EnumerateRunes().Count();
+            return new ActionResult(
+                typed == expected ? ActionOutcome.Success : ActionOutcome.Failed,
+                typed == expected
+                    ? $"typed {typed} character(s) into {liveObservation.WindowId} focused={liveObservation.FocusedElement}"
+                    : $"typed only {typed} of {expected} character(s); re-observe before retrying");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     public ActionResult PressKey(
@@ -257,15 +321,23 @@ internal sealed class ComputerUseSession
     {
         if (!TryConsume(windowId, observationId, out var observation, out var error))
             return new ActionResult(ActionOutcome.Failed, error);
-        if (string.IsNullOrWhiteSpace(combo))
-            return new ActionResult(ActionOutcome.Failed, "press_window_key requires a key or chord");
-        if (!WindowsAppManager.FocusWindow(observation!.Window))
-            return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no key was sent");
+        var liveObservation = observation!;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(combo))
+                return new ActionResult(ActionOutcome.Failed, "press_window_key requires a key or chord");
+            if (!WindowsAppManager.FocusWindow(liveObservation.Window))
+                return new ActionResult(ActionOutcome.Failed, "target window could not be activated; no key was sent");
 
-        var ok = WindowsAppManager.PressKey(combo);
-        return new ActionResult(
-            ok ? ActionOutcome.Success : ActionOutcome.Failed,
-            ok ? $"pressed {combo} in {observation.WindowId}" : $"key '{combo}' was rejected");
+            var ok = WindowsAppManager.PressKey(combo);
+            return new ActionResult(
+                ok ? ActionOutcome.Success : ActionOutcome.Failed,
+                ok ? $"pressed {combo} in {liveObservation.WindowId}" : $"key '{combo}' was rejected");
+        }
+        finally
+        {
+            ReleaseObservation(liveObservation);
+        }
     }
 
     private static Observation ReadAccessibility(WindowsAppManager.WindowInfo window)
@@ -275,18 +347,26 @@ internal sealed class ComputerUseSession
         var focused = string.Empty;
         var focusedIsPassword = false;
 
+        IUIAutomation? automation = null;
+        IUIAutomationElement? root = null;
+        IUIAutomationCondition? condition = null;
+        IUIAutomationElementArray? found = null;
+        IUIAutomationElement? focusedElement = null;
         try
         {
-            IUIAutomation automation = new CUIAutomation();
-            var root = automation.ElementFromHandle(window.Handle);
-            var found = root.FindAll(TreeScope.TreeScope_Descendants, automation.CreateTrueCondition());
+            automation = new CUIAutomation();
+            root = automation.ElementFromHandle(window.Handle);
+            condition = automation.CreateTrueCondition();
+            found = root.FindAll(TreeScope.TreeScope_Descendants, condition);
             int count = Math.Min(found.Length, MaxElements);
 
             for (var i = 0; i < count; i++)
             {
+                IUIAutomationElement? native = null;
+                var retained = false;
                 try
                 {
-                    var native = found.GetElement(i);
+                    native = found.GetElement(i);
                     var name = SafeString(() => native.CurrentName);
                     var automationId = SafeString(() => native.CurrentAutomationId);
                     var role = ControlTypeName(native.CurrentControlType);
@@ -299,6 +379,7 @@ internal sealed class ComputerUseSession
                     var label = string.IsNullOrWhiteSpace(name) ? automationId : name;
                     var element = new ObservedElement(index, label, role, enabled, offscreen, bounds, native);
                     elements[index] = element;
+                    retained = true;
                     tree.Append('[').Append(index).Append("] ").Append(role)
                         .Append(" name=\"").Append(OneLine(label, 140)).Append('"');
                     if (!string.IsNullOrWhiteSpace(automationId) && !automationId.Equals(label, StringComparison.Ordinal))
@@ -314,18 +395,22 @@ internal sealed class ComputerUseSession
                 {
                     // UIA trees are live; individual elements may disappear during enumeration.
                 }
+                finally
+                {
+                    if (!retained) ReleaseComObject(native);
+                }
             }
 
             try
             {
-                var current = automation.GetFocusedElement();
-                if (current.CurrentProcessId == window.Pid)
+                focusedElement = automation.GetFocusedElement();
+                if (focusedElement.CurrentProcessId == window.Pid)
                 {
-                    focusedIsPassword = SafeBool(() => current.CurrentIsPassword != 0, false);
-                    var name = SafeString(() => current.CurrentName);
+                    focusedIsPassword = SafeBool(() => focusedElement.CurrentIsPassword != 0, false);
+                    var name = SafeString(() => focusedElement.CurrentName);
                     if (string.IsNullOrWhiteSpace(name) && focusedIsPassword)
                         name = "password control";
-                    var role = ControlTypeName(current.CurrentControlType);
+                    var role = ControlTypeName(focusedElement.CurrentControlType);
                     if (!string.IsNullOrWhiteSpace(name)) focused = $"{role} name=\"{OneLine(name, 140)}\"";
                 }
             }
@@ -334,6 +419,14 @@ internal sealed class ComputerUseSession
         catch (Exception ex)
         {
             tree.Append("Accessibility unavailable: ").Append(OneLine(ex.Message, 180));
+        }
+        finally
+        {
+            ReleaseComObject(focusedElement);
+            ReleaseComObject(found);
+            ReleaseComObject(condition);
+            ReleaseComObject(root);
+            ReleaseComObject(automation);
         }
 
         if (tree.Length == 0) tree.Append("No named accessibility elements were returned. Activate the window and use a fresh screenshot.");
@@ -368,11 +461,13 @@ internal sealed class ComputerUseSession
         if (!string.Equals(observation.Id, observationId?.Trim(), StringComparison.Ordinal)
             || !string.Equals(observation.WindowId, windowId?.Trim(), StringComparison.OrdinalIgnoreCase))
         {
+            ReleaseObservation(observation);
             error = "window_id or observation_id does not match the latest observation; re-observe before acting";
             return false;
         }
         if (DateTimeOffset.UtcNow - observation.CreatedAt > ObservationLifetime)
         {
+            ReleaseObservation(observation);
             error = "the observation expired; re-observe before acting";
             return false;
         }
@@ -380,12 +475,32 @@ internal sealed class ComputerUseSession
             || current!.Pid != observation.Window.Pid
             || current.Handle != observation.Window.Handle)
         {
+            ReleaseObservation(observation);
             error = "the observed window closed or changed identity; list windows again";
             return false;
         }
 
         error = string.Empty;
         return true;
+    }
+
+    private static void ReleaseObservation(Observation observation)
+    {
+        foreach (var element in observation.Elements.Values)
+            ReleaseComObject(element.NativeElement);
+    }
+
+    private static void ReleaseComObject(object? value)
+    {
+        try
+        {
+            if (value is not null && Marshal.IsComObject(value))
+                Marshal.ReleaseComObject(value);
+        }
+        catch
+        {
+            // UIA providers can disappear while their COM wrappers are released.
+        }
     }
 
     private static bool TryResolveWindow(

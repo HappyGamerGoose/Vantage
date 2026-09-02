@@ -20,6 +20,16 @@ namespace Vantage.Services.Agent;
 
 public sealed class VantageACI
 {
+    private const int MaxBatchSteps = 8;
+    private static readonly HashSet<string> BatchableActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "click", "click_xy", "type", "type_text", "key", "press_key",
+        "scroll", "scroll_xy", "drag", "drag_xy", "move_mouse",
+        "highlight_text_span", "activate_window", "click_element",
+        "click_window_xy", "scroll_window", "drag_window", "set_value",
+        "type_window_text", "press_window_key", "focus_app", "wait",
+        "vantage_set_clipboard"
+    };
     private readonly LMMEngine _groundingEngine;
     private readonly WindowsAutomationService.MonitorGeometry _monitor;
     private readonly LmmAgent _groundingAgent;
@@ -68,12 +78,19 @@ public sealed class VantageACI
         // LastGroundingMs after ExecuteAsync returns to feed its verbose log.
         _groundingMs = 0;
 
+        return await ExecuteCoreAsync(action, ct);
+    }
+
+    private async Task<ActionResult> ExecuteCoreAsync(AgentAction action, CancellationToken ct)
+    {
+        var actionName = action.Action?.Trim().ToLowerInvariant() ?? string.Empty;
+
         if (_screenshotJpeg is null || _screenshotJpeg.Length == 0)
             return new ActionResult(ActionOutcome.Failed, "no screenshot assigned; cannot ground description to coordinates");
 
         // Window observations are point-in-time capabilities. Any legacy
         // desktop-wide action makes the cached tree/coordinates stale.
-        if (!ComputerUseSession.IsScopedAction(action.Action))
+        if (actionName != "batch" && !ComputerUseSession.IsScopedAction(actionName))
             _computerUse.Invalidate();
 
         // Wrap dispatch in a try/catch so a failure deep in the Windows
@@ -87,8 +104,9 @@ public sealed class VantageACI
         // path is one jump per call.
         try
         {
-            return action.Action switch
+            return actionName switch
             {
+                "batch"            => await DoBatchAsync(action, ct),
                 // ── UI-input actions (sent to the grounding layer or click_xy) ──
                 "click"            => await DoClickAsync(action, ct),
                 "click_xy"         => await DoClickAtAsync(action, ct),
@@ -178,7 +196,7 @@ public sealed class VantageACI
             // often SetCursorPos or SendInput). Surface it as a Failed
             // result so the agent can pivot; do NOT crash the run.
             return new ActionResult(ActionOutcome.Failed,
-                $"input layer failed during `{action.Action}`: {ex.Message}. " +
+                $"input layer failed during `{actionName}`: {ex.Message}. " +
                 "Try a hotkey (Tab/Enter/Escape/Alt+Tab) or take a `screenshot` to re-evaluate the desktop.");
         }
     }
@@ -1017,6 +1035,61 @@ public sealed class VantageACI
         {
             Notes.RemoveRange(0, Notes.Count - 32);
         }
+    }
+
+    private async Task<ActionResult> DoBatchAsync(AgentAction action, CancellationToken ct)
+    {
+        if (!action.Raw.TryGetProperty("steps", out var rawSteps)
+            || rawSteps.ValueKind != JsonValueKind.Array)
+        {
+            return new ActionResult(ActionOutcome.Failed, "batch requires a `steps` array");
+        }
+
+        var steps = action.GetActionList("steps");
+        if (steps.Count != rawSteps.GetArrayLength())
+            return new ActionResult(ActionOutcome.Failed, "every batch step must be an object with a non-empty `action`");
+        if (steps.Count < 2)
+            return new ActionResult(ActionOutcome.Failed, "batch requires at least 2 steps; emit a single action directly");
+        if (steps.Count > MaxBatchSteps)
+            return new ActionResult(ActionOutcome.Failed, $"batch is limited to {MaxBatchSteps} steps");
+
+        var summaries = new List<string>(steps.Count);
+        for (var index = 0; index < steps.Count; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var step = steps[index];
+            if (!BatchableActions.Contains(step.Action))
+            {
+                return new ActionResult(
+                    ActionOutcome.Failed,
+                    $"batch step {index + 1}/{steps.Count} uses non-batchable action `{step.Action}`");
+            }
+
+            var (replacement, feedback) = ActionSanitizer.Sanitize(step);
+            if (replacement is not null)
+            {
+                return new ActionResult(
+                    ActionOutcome.Failed,
+                    $"batch step {index + 1}/{steps.Count} is incomplete: {feedback}");
+            }
+
+            var result = await ExecuteCoreAsync(step, ct);
+            summaries.Add($"{index + 1}:{step.Action}={result.Outcome}");
+            if (result.Outcome != ActionOutcome.Success)
+            {
+                return new ActionResult(
+                    result.Outcome,
+                    $"batch stopped at step {index + 1}/{steps.Count} `{step.Action}`: {result.Description}; " +
+                    string.Join(", ", summaries));
+            }
+
+            if (index < steps.Count - 1)
+                await Task.Delay(100, ct);
+        }
+
+        return new ActionResult(
+            ActionOutcome.Success,
+            $"batch completed {steps.Count}/{steps.Count}: {string.Join(", ", summaries)}");
     }
 
     private ActionResult DoListWindows()

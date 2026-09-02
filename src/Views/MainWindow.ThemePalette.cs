@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Vantage — MainWindow.ThemePalette.cs
 //
-// Theme + palette picker code. The settings are persisted to LocalSettings
+// Theme + palette picker code. The settings are persisted to LocalPreferences
 // under "ThemePalette" + "ThemeMode" and reapplied on startup. `ApplyCurrentTheme`
 // resolves the current ThemeMode (Light/Dark/System), walks the palette
 // through ThemeManager.Apply, and updates the Window chrome's ElementTheme
@@ -168,7 +168,7 @@ public sealed partial class MainWindow
         card.Child = inner;
         card.Tapped += (_, _) =>
         {
-            try { Windows.Storage.ApplicationData.Current.LocalSettings.Values[PaletteKey] = palette.Name; } catch { }
+            LocalPreferences.SetString(PaletteKey, palette.Name);
             ApplyCurrentTheme();
         };
         return card;
@@ -176,8 +176,7 @@ public sealed partial class MainWindow
 
     private void HighlightActivePaletteCard()
     {
-        var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        var currentName = localSettings.Values.TryGetValue(PaletteKey, out var v) && v is string s ? s : "Violet";
+        var currentName = LocalPreferences.GetString(PaletteKey, "Violet");
         foreach (var child in PalettePicker.Children)
         {
             if (child is Border b && b.Tag is string paletteName)
@@ -208,7 +207,7 @@ public sealed partial class MainWindow
     {
         if (ThemeModeCombo.SelectedItem is not ComboBoxItem item) return;
         var tag = item.Tag?.ToString() ?? "Light";
-        try { Windows.Storage.ApplicationData.Current.LocalSettings.Values[ThemeModeKey] = tag; } catch { }
+        LocalPreferences.SetString(ThemeModeKey, tag);
         ApplyCurrentTheme();
     }
 
@@ -226,16 +225,13 @@ public sealed partial class MainWindow
     /// </summary>
     private void ApplyCurrentTheme()
     {
-        var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        if (!localSettings.Values.TryGetValue(ReferenceDesignPaletteKey, out var migrated) || migrated is not true)
+        if (!LocalPreferences.GetBool(ReferenceDesignPaletteKey, false))
         {
-            localSettings.Values[PaletteKey] = "Violet";
-            localSettings.Values[ReferenceDesignPaletteKey] = true;
+            LocalPreferences.SetString(PaletteKey, "Violet");
+            LocalPreferences.SetBool(ReferenceDesignPaletteKey, true);
         }
-        var paletteName = localSettings.Values.TryGetValue(PaletteKey, out var pal) && pal is string ps
-            ? ps : "Violet";
-        var modeTag = localSettings.Values.TryGetValue(ThemeModeKey, out var tm) && tm is string ts
-            ? ts : "System";
+        var paletteName = LocalPreferences.GetString(PaletteKey, "Violet");
+        var modeTag = LocalPreferences.GetString(ThemeModeKey, "System");
         var mode = modeTag switch
         {
             "Dark"   => AppThemeMode.Dark,

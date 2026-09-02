@@ -485,8 +485,11 @@
             <Border x:Name="TitlebarNavBackdrop" Width="292" HorizontalAlignment="Left"
                     Background="{StaticResource PaneBrush}" BorderBrush="{StaticResource PaneEdgeBrush}"
                     BorderThickness="0,0,1,0" />
+            <Image x:Name="BrandLogo" Width="24" Height="24" Margin="22,0,0,0"
+                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                   Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
             <TextBlock x:Name="BrandText" FontFamily="Segoe UI Variable Display, Segoe UI"
-                       Margin="24,0,120,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"
+                       Margin="56,0,120,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"
                        Foreground="{StaticResource PrimaryTextBrush}" Text="Vantage" />
             <Button x:Name="PaneToggleButton" Width="32" Height="32" Margin="244,0,0,0"
                     HorizontalAlignment="Left" VerticalAlignment="Center" Padding="0"
@@ -974,22 +977,8 @@
                                     Background="{StaticResource SurfaceElevatedBrush}"
                                     BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1"
                                     Shadow="{StaticResource EmptyStateShadow}" Translation="0,0,12">
-                                <Grid Width="40" Height="38" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <Border Width="40" Height="32" VerticalAlignment="Top" CornerRadius="8"
-                                            Background="{StaticResource AccentBrush}">
-                                        <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                            <Ellipse Width="3.5" Height="3.5" Fill="White" />
-                                            <Ellipse Width="3.5" Height="3.5" Fill="White" />
-                                            <Ellipse Width="3.5" Height="3.5" Fill="White" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Width="11" Height="11" Margin="7,0,0,1" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                                            Background="{StaticResource AccentBrush}">
-                                        <Border.RenderTransform>
-                                            <RotateTransform Angle="45" CenterX="5.5" CenterY="5.5" />
-                                        </Border.RenderTransform>
-                                    </Border>
-                                </Grid>
+                                <Image Width="48" Height="48" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Source="ms-appx:///Assets/Square150x150Logo.scale-200.png" />
                             </Border>
                             <TextBlock HorizontalAlignment="Center" FontFamily="Segoe UI Variable Display, Segoe UI"
                                        FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"

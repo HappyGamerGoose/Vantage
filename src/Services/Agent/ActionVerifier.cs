@@ -63,6 +63,21 @@ public static class ActionVerifier
     private static readonly Dictionary<string, Func<JsonElement, WorldSnapshot, WorldSnapshot, WorldDiff, ScreenshotDiff, VerificationResult>>
         _catalog = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["batch"] = (args, before, after, diff, screenDiff) =>
+        {
+            var changed = diff.ForegroundChanged
+                || diff.ForegroundProcessChanged
+                || diff.CursorMoved
+                || diff.ClipboardChanged
+                || diff.WindowsAddedCount > 0
+                || diff.WindowsRemovedCount > 0
+                || diff.FingerprintChanged
+                || screenDiff.IsSignificant(0.003);
+            return changed
+                ? new VerificationResult(true, "batch", $"batch produced observable change: {diff}; {screenDiff.HotRegionSummary}")
+                : new VerificationResult(false, "batch", "batch reported success but produced no observable desktop change");
+        },
+
         // ── click family ──────────────────────────────────────────
         ["click"]             = ClickVerify(focusRegionCheck: true),
         ["left_click"]        = ClickVerify(focusRegionCheck: true),

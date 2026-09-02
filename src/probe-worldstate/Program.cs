@@ -6,6 +6,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Vantage.Services;
 using Vantage.Services.Agent;
 
@@ -13,6 +15,96 @@ if (args.Contains("--input-self-test", StringComparer.OrdinalIgnoreCase))
 {
     var valid = WindowsAppManager.ValidateNativeInputLayout();
     Console.WriteLine($"SendInputLayoutValid={valid} PointerSize={IntPtr.Size}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    var messages = new List<JsonObject>
+    {
+        new() { ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "system" } } }
+    };
+    for (var turn = 1; turn <= 4; turn++)
+    {
+        messages.Add(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = new JsonArray
+            {
+                new JsonObject { ["type"] = "text", ["text"] = $"turn {turn}" },
+                new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = $"data:image/png;base64,{turn}" } }
+            }
+        });
+        messages.Add(new JsonObject
+        {
+            ["role"] = "assistant",
+            ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = $"action {turn}" } }
+        });
+    }
+
+    var compacted = ContextWindowCompactor.Compact(messages, keepRecentNonSystemMessages: 6, keepRecentImages: 2);
+    var retainedImages = messages
+        .SelectMany(message => (message["content"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+        .Count(block => block["type"]?.GetValue<string>() is "image" or "image_url");
+    var windowValid = compacted.RemovedMessages == 2
+        && compacted.RemovedImages == 1
+        && messages.Count == 7
+        && retainedImages == 2;
+
+    var directory = Path.Combine(Path.GetTempPath(), "vantage-context-test-" + Guid.NewGuid().ToString("N"));
+    var persistentValid = false;
+    try
+    {
+        var tracker = new PersistentTaskContext("conversation", directory);
+        tracker.BeginTask("Prepare a release");
+        var initialBlock = tracker.BuildPromptBlock();
+        persistentValid = initialBlock.Contains("Planning required", StringComparison.Ordinal)
+            && initialBlock.Contains("Include task_update in each action", StringComparison.Ordinal);
+        using var action = JsonDocument.Parse("""
+            { "description": "Open the release editor", "task_update": { "add": ["Draft release notes"], "complete": ["goal"] } }
+            """);
+        tracker.RecordAction("click", action.RootElement, new ActionResult(ActionOutcome.Success, "editor opened"));
+        using var failedAction = JsonDocument.Parse("""
+            { "description": "Publish the release", "task_update": { "complete": ["todo-1"] } }
+            """);
+        tracker.RecordAction("click", failedAction.RootElement, new ActionResult(ActionOutcome.Failed, "publish button unavailable"));
+
+        var reloaded = new PersistentTaskContext("conversation", directory);
+        var promptBlock = reloaded.BuildPromptBlock();
+        persistentValid = persistentValid
+            && promptBlock.Contains("Goal: Prepare a release", StringComparison.Ordinal)
+            && promptBlock.Contains("[ ] (goal)", StringComparison.Ordinal)
+            && promptBlock.Contains("[ ] (todo-1) Draft release notes", StringComparison.Ordinal)
+            && promptBlock.Contains("Last action: Publish the release failed: publish button unavailable.", StringComparison.Ordinal);
+
+        using var doneAction = JsonDocument.Parse("""{ "action": "done" }""");
+        reloaded.RecordAction("done", doneAction.RootElement, new ActionResult(ActionOutcome.Done, "release prepared"));
+        var completedBlock = new PersistentTaskContext("conversation", directory).BuildPromptBlock();
+        persistentValid = persistentValid
+            && completedBlock.Contains("[x] (goal)", StringComparison.Ordinal)
+            && completedBlock.Contains("[x] (todo-1)", StringComparison.Ordinal);
+
+        PersistentTaskContext.Delete("conversation", directory);
+        persistentValid = persistentValid
+            && !File.Exists(Path.Combine(directory, "conversation.json"));
+
+        var multiStep = new PersistentTaskContext("multi-step", directory);
+        multiStep.BeginTask("Open Edge, then navigate to the repository, then send the result");
+        var multiStepBlock = multiStep.BuildPromptBlock();
+        persistentValid = persistentValid
+            && multiStepBlock.Contains("[ ] (todo-1) Open Edge", StringComparison.Ordinal)
+            && multiStepBlock.Contains("[ ] (todo-2) navigate to the repository", StringComparison.Ordinal)
+            && multiStepBlock.Contains("[ ] (todo-3) send the result", StringComparison.Ordinal);
+        PersistentTaskContext.Delete("multi-step", directory);
+    }
+    finally
+    {
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+    }
+
+    var valid = windowValid && persistentValid;
+    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -30,6 +122,7 @@ if (args.Contains("--launch-match-self-test", StringComparer.OrdinalIgnoreCase))
         WindowsAppManager.WindowMatchesLaunchTarget(
             new WindowsAppManager.WindowInfo(IntPtr.Zero, 0, "Settings", "ApplicationFrameWindow"),
             "ms-settings:"),
+        ComputerUseSession.IsScopedAction(" CLICK_WINDOW_XY "),
         !WindowsAppManager.WindowMatchesLaunchTarget(
             new WindowsAppManager.WindowInfo(IntPtr.Zero, 0, "Downloads - File Explorer", "CabinetWClass"),
             "notepad"),
@@ -45,6 +138,9 @@ if (args.Contains("--powershell-self-test", StringComparer.OrdinalIgnoreCase))
     var quick = await WindowsAppManager.RunPowerShellAsync(
         "Write-Output vantage-self-test",
         timeoutMs: 5_000);
+    var internalTimeout = await WindowsAppManager.RunPowerShellAsync(
+        "Start-Sleep -Seconds 10",
+        timeoutMs: 1_000);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
     var sw = Stopwatch.StartNew();
@@ -64,6 +160,8 @@ if (args.Contains("--powershell-self-test", StringComparer.OrdinalIgnoreCase))
 
     var valid = quick.ExitCode == 0
         && quick.StdOut.Contains("vantage-self-test", StringComparison.Ordinal)
+        && internalTimeout.ExitCode == -1
+        && internalTimeout.StdErr.Contains("[timeout after 1000ms]", StringComparison.Ordinal)
         && canceled
         && sw.Elapsed < TimeSpan.FromSeconds(5);
     Console.WriteLine($"PowerShellExecutionValid={valid} CancellationObserved={canceled} CancelElapsedMs={sw.ElapsedMilliseconds}");
@@ -119,7 +217,8 @@ if (args.Contains("--computer-use-prompt-self-test", StringComparer.OrdinalIgnor
         "windows", 1920, 1080, Array.Empty<string>());
     var required = new[]
     {
-        "## list_windows", "## get_window_state", "## click_element",
+        "## batch", "small deterministic UI steps", "## list_windows",
+        "## get_window_state", "Never call get_window_state repeatedly", "## click_element",
         "## type_window_text", "## press_window_key", "## run_powershell",
         "## click_xy", "## press_key", "Windows-key shortcuts are available",
     };

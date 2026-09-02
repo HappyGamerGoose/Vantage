@@ -26,6 +26,7 @@ public sealed class AgentS3
         Vantage.Models.Provider provider,
         WindowsAutomationService.MonitorGeometry monitor,
         IRunHooks hooks,
+        string taskContextKey,
         bool enableReflection = true,
         double temperature = 0.0,
         string platform = "windows")
@@ -40,7 +41,7 @@ public sealed class AgentS3
             platform);
         _worker = new Worker(
             _engine, _aci, monitor, platform,
-            maxTrajectoryLength: 4,
+            taskContextKey,
             enableReflection: enableReflection,
             temperature: temperature);
     }
@@ -58,6 +59,7 @@ public sealed class AgentS3
     /// </summary>
     public async Task<ActionResult> RunAsync(string instruction, CancellationToken ct)
     {
+        _worker.BeginTask(instruction);
         await _hooks.OnRunStartedAsync(
             _monitor.LogicalWidth,
             _monitor.LogicalHeight,

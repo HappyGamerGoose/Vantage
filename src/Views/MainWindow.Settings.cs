@@ -3,11 +3,12 @@
 //
 // Settings persistence layer for MainWindow. Conversations go through
 // LocalHistoryStore (JSON file); everything else (selected model, theme
-// palette, theme mode, sidebar collapsed state) goes through LocalSettings.
+// palette, theme mode, sidebar collapsed state) goes through LocalPreferences.
 
 using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using Vantage.Models;
+using Vantage.Services;
 using Vantage.Services.Agent;
 
 namespace Vantage;
@@ -18,7 +19,8 @@ public sealed partial class MainWindow
     {
         try
         {
-            var version = Windows.ApplicationModel.Package.Current.Id.Version;
+            var version = typeof(App).Assembly.GetName().Version
+                ?? new Version(1, 5, 86);
             AboutVersionText.Text =
                 $"Vantage v{version.Major}.{version.Minor}.{version.Build} - Local-first AI control panel for Windows.";
         }
@@ -300,23 +302,17 @@ public sealed partial class MainWindow
             // theme if persisted state is corrupted.
         }
 
-        var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        if (localSettings.Values.TryGetValue("SidebarExpanded", out var se) && se is bool seb)
-        {
-            _sidebarExpanded = seb;
-        }
+        _sidebarExpanded = LocalPreferences.GetBool("SidebarExpanded", true);
         UpdateSidebarVisibility();
     }
 
     private bool GetSetting(string key, bool defaultValue)
     {
-        var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        return localSettings.Values.TryGetValue(key, out var val) && val is bool b ? b : defaultValue;
+        return LocalPreferences.GetBool(key, defaultValue);
     }
 
     private string GetSetting(string key, string defaultValue)
     {
-        var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
-        return localSettings.Values.TryGetValue(key, out var val) && val is string s ? s : defaultValue;
+        return LocalPreferences.GetString(key, defaultValue);
     }
 }

@@ -38,7 +38,7 @@ public sealed class Worker
     private readonly LmmAgent _reflector;
     private readonly VantageACI _aci;
     private readonly WindowsAutomationService.MonitorGeometry _monitor;
-    private readonly int _maxTrajectoryLength;
+    private readonly PersistentTaskContext _taskContext;
     private readonly double _temperature;
     private readonly bool _enableReflection;
     private int _turnCount;
@@ -67,12 +67,16 @@ public sealed class Worker
     // repeating the same mistake. Capped to 4 to keep the prompt compact.
     private readonly Queue<string> _verificationFeedback = new();
     private const int VerificationFeedbackKept = 4;
+    private const int InMemoryHistoryKept = 12;
 
     // Counts how many consecutive actions did not visibly land. Three in a
     // row triggers a recovery nudge — different from the stuck-detector on
     // _recentFailures, which tracks identical failed descriptions. Two
     // complementary signals: same description vs. consistent no-op.
     private int _noOpStreak;
+    private int _consecutiveObservationOnlyCount;
+    private int _sameObservationCount;
+    private string _lastObservationKey = "";
 
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
@@ -82,13 +86,13 @@ public sealed class Worker
         VantageACI aci,
         WindowsAutomationService.MonitorGeometry monitor,
         string platform,
-        int maxTrajectoryLength = 4,
+        string taskContextKey,
         bool enableReflection = true,
         double temperature = 0.0)
     {
         _aci = aci;
         _monitor = monitor;
-        _maxTrajectoryLength = maxTrajectoryLength;
+        _taskContext = new PersistentTaskContext(taskContextKey);
 
         // Prime the OS-wide context that's stable for the run — installed
         // apps and OS version — so we don't enumerate Start Menu every
@@ -101,9 +105,19 @@ public sealed class Worker
         var workerPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory(
             platform, monitor.LogicalWidth, monitor.LogicalHeight, skippedActions: Array.Empty<string>());
 
-        _generator = new LmmAgent(engine, workerPrompt);
-        _reflector = new LmmAgent(engine, PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY);
+        _generator = new LmmAgent(
+            engine,
+            workerPrompt,
+            activeTextHistoryMessages: 6,
+            activeVisualHistoryTurns: 2);
+        _reflector = new LmmAgent(
+            engine,
+            PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY,
+            activeTextHistoryMessages: 4,
+            activeVisualHistoryTurns: 2);
     }
+
+    public void BeginTask(string instruction) => _taskContext.BeginTask(instruction);
 
     /// <summary>
     /// Run one iteration of the worker loop: capture screenshot, prompt
@@ -181,6 +195,7 @@ public sealed class Worker
                 else
                     reflection = "ON_TRACK: " + answer;
                 Reflections.Add(reflection);
+                TrimHistory(Reflections);
             }
             catch (Exception rex) when (rex is OperationCanceledException)
             {
@@ -215,6 +230,7 @@ public sealed class Worker
         CommonUtils.LogDiagnostic("world-state-elapsed-ms",
             $"turn={_turnCount + 1} elapsed={worldSw.ElapsedMilliseconds}");
         sbGen.AppendLine(worldState.ToPromptBlock());
+        sbGen.AppendLine(_taskContext.BuildPromptBlock());
 
         // Stuck-state recovery: if we've now hit the same failing
         // description twice in a row, force a strategy pivot.
@@ -292,16 +308,19 @@ public sealed class Worker
         catch (LlmRateLimitException rlex) when (rlex.Kind == RateLimitKind.DailyQuota)
         {
             _turnCount++;
+            _taskContext.RecordSystemEvent("The provider daily quota stopped the prior turn before a desktop action ran");
             return new ActionResult(ActionOutcome.FailedFatal, rlex.Message);
         }
         catch (LlmRateLimitException rlex)
         {
             _turnCount++;
+            _taskContext.RecordSystemEvent("The provider rate limit stopped the prior turn before a desktop action ran");
             return new ActionResult(ActionOutcome.Failed, rlex.Message);
         }
         catch (LmmProviderException pex)
         {
             _turnCount++;
+            _taskContext.RecordSystemEvent("The provider rejected the prior turn before a desktop action ran");
             return new ActionResult(ActionOutcome.Failed,
                 $"Provider rejected the request (HTTP {pex.HttpStatus}): {pex.Message}");
         }
@@ -311,6 +330,7 @@ public sealed class Worker
         }
 
         WorkerHistory.Add(plan);
+        TrimHistory(WorkerHistory);
         _lastRawPlan = plan;
 
         // Diagnostic: dump the full raw model response. Includes the
@@ -333,6 +353,7 @@ public sealed class Worker
             _emptyResponseStreak++;
             _parseFailStreak = 0;
             _turnCount++;
+            _taskContext.RecordSystemEvent("The prior model response was empty; no desktop action ran");
             FlushHistory();
             CommonUtils.LogDiagnostic("worker-empty-plan",
                 $"turn={_turnCount} empty_streak={_emptyResponseStreak} last_outcome={_lastActionOutcome}");
@@ -353,6 +374,7 @@ public sealed class Worker
         {
             _parseFailStreak++;
             _turnCount++;
+            _taskContext.RecordSystemEvent("The prior model response could not be parsed; no desktop action ran");
             FlushHistory();
 
             // Give up after consecutive parse failures — prevents an
@@ -366,6 +388,21 @@ public sealed class Worker
                 $"worker response did not contain a parseable JSON action. Plan excerpt: {Truncate(plan!, 200)}");
         }
         _parseFailStreak = 0;
+
+        if (CheckObservationLoop(action) is { } observationLoopResult)
+        {
+            _lastActionOutcome = $"{observationLoopResult.Outcome}: {observationLoopResult.Description}";
+            _verificationFeedback.Enqueue(observationLoopResult.Description);
+            while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
+            _recentFailures.Enqueue(TryDescribeAction(action));
+            while (_recentFailures.Count > 6) _recentFailures.Dequeue();
+            _taskContext.RecordAction(action.Action, action.Raw, observationLoopResult);
+            _turnCount++;
+            FlushHistory();
+            CommonUtils.LogDiagnostic("worker-observation-loop-rejected",
+                $"turn={_turnCount} action={action.Action} consecutive={_consecutiveObservationOnlyCount} same={_sameObservationCount} outcome={observationLoopResult.Outcome}");
+            return observationLoopResult;
+        }
 
         // Dispatch via VantageACI (which grounds coordinates and calls
         // WindowsAutomationService). Before / after we snapshot the world
@@ -630,6 +667,15 @@ public sealed class Worker
             }
         }
 
+        var taskResult = effectiveFailure
+            && result.Outcome is ActionOutcome.Success or ActionOutcome.Done
+                ? new ActionResult(
+                    ActionOutcome.Failed,
+                    actionWasSanitized
+                        ? "the planned action was replaced because it could not be executed reliably"
+                        : $"verification did not confirm progress: {verdict.Reason}")
+                : result;
+        _taskContext.RecordAction(action.Action, action.Raw, taskResult);
         _turnCount++;
         FlushHistory();
         // Per-phase wall-clock log — the easiest way to attribute slow
@@ -710,39 +756,46 @@ public sealed class Worker
         while (_recentSuccesses.Count > RecentSuccessesKept) _recentSuccesses.Dequeue();
     }
 
-    /// <summary>
-    /// Keep only the latest `maxTrajectoryLength` images across the
-    /// generator's history. Also drops ANY non-image content items in
-    /// messages that ended up with only images removed, so we never
-    /// send Groq an empty content array. Mirrors Worker.flush_messages
-    /// from the S3 source.
-    /// </summary>
-    private void FlushHistory()
+    private ActionResult? CheckObservationLoop(AgentAction action)
     {
-        int imagesKept = 0;
-        for (var i = _generator.Messages.Count - 1; i >= 0; i--)
+        var isObservationOnly = action.Action.Equals("get_window_state", StringComparison.OrdinalIgnoreCase)
+            || action.Action.Equals("list_windows", StringComparison.OrdinalIgnoreCase);
+        if (!isObservationOnly)
         {
-            var msg = _generator.Messages[i];
-            if (msg["content"] is not JsonArray arr) continue;
-            for (var j = arr.Count - 1; j >= 0; j--)
-            {
-                var type = arr[j]?["type"]?.GetValue<string>();
-                if (type is "image" or "image_url")
-                {
-                    imagesKept++;
-                    if (imagesKept > _maxTrajectoryLength)
-                        arr.RemoveAt(j);
-                }
-            }
-            // If we drained all images from a message, leave the text
-            // items intact — that keeps content non-empty. (If we ever
-            // strip a message to zero items, we'll just drop it.)
-            if (arr.Count == 0)
-            {
-                _generator.Messages.RemoveAt(i);
-            }
+            _consecutiveObservationOnlyCount = 0;
+            _sameObservationCount = 0;
+            _lastObservationKey = "";
+            return null;
         }
+
+        _consecutiveObservationOnlyCount++;
+        var key = action.Action + "|" + (action.GetString("window_id") ?? "");
+        if (key.Equals(_lastObservationKey, StringComparison.OrdinalIgnoreCase))
+            _sameObservationCount++;
+        else
+        {
+            _lastObservationKey = key;
+            _sameObservationCount = 1;
+        }
+
+        var shouldReject = _sameObservationCount > 2 || _consecutiveObservationOnlyCount > 3;
+        if (!shouldReject) return null;
+
+        var fatal = _sameObservationCount >= 5 || _consecutiveObservationOnlyCount >= 6;
+        var message =
+            $"OBSERVATION_LOOP: `{action.Action}` was requested repeatedly without an intervening desktop action. " +
+            "The most recent window observation is still live. Use one returned element now, use a keyboard shortcut, " +
+            "or execute a deterministic batch; do not observe the same unchanged window again.";
+        return new ActionResult(fatal ? ActionOutcome.FailedFatal : ActionOutcome.Failed, message);
     }
+
+    private static void TrimHistory(List<string> history)
+    {
+        if (history.Count > InMemoryHistoryKept)
+            history.RemoveRange(0, history.Count - InMemoryHistoryKept);
+    }
+
+    private void FlushHistory() => _generator.CompactContextWindow();
 
     private static string Truncate(string s, int n) =>
         string.IsNullOrEmpty(s) || s.Length <= n ? s : s.Substring(0, n) + "…";

@@ -497,4 +497,26 @@ public sealed class AgentAction
             }
         return result;
     }
+
+    public List<AgentAction> GetActionList(string field)
+    {
+        var result = new List<AgentAction>();
+        if (!Raw.TryGetProperty(field, out var values) || values.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var value in values.EnumerateArray())
+        {
+            if (value.ValueKind != JsonValueKind.Object
+                || !value.TryGetProperty("action", out var actionValue)
+                || actionValue.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var actionName = actionValue.GetString();
+            if (!string.IsNullOrWhiteSpace(actionName))
+                result.Add(new AgentAction { Action = actionName, Raw = value.Clone() });
+        }
+        return result;
+    }
 }
