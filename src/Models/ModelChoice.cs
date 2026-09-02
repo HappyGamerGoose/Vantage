@@ -13,4 +13,10 @@ public sealed class ModelChoice
     public string ModelId { get; set; } = string.Empty;
     public string Display { get; set; } = string.Empty;
     public string Key { get; set; } = string.Empty;
+
+    public string ProviderDisplay => Provider?.Name ?? string.Empty;
+
+    public string Tooltip => string.IsNullOrWhiteSpace(ProviderDisplay)
+        ? ModelId
+        : $"{ProviderDisplay} · {ModelId}";
 }

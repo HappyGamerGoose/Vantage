@@ -475,21 +475,18 @@
         </Grid.Resources>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="80" />
+            <RowDefinition Height="64" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- Extended Windows 11 titlebar: Mica remains visible while the
              brand and local-state signal become part of the window chrome. -->
-        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="80" Background="{StaticResource ChatCanvasBrush}">
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="64" Background="{StaticResource ChatCanvasBrush}">
             <Border x:Name="TitlebarNavBackdrop" Width="292" HorizontalAlignment="Left"
                     Background="{StaticResource PaneBrush}" BorderBrush="{StaticResource PaneEdgeBrush}"
                     BorderThickness="0,0,1,0" />
-            <Image x:Name="BrandLogo" Width="24" Height="24" Margin="22,0,0,0"
-                   HorizontalAlignment="Left" VerticalAlignment="Center"
-                   Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
             <TextBlock x:Name="BrandText" FontFamily="Segoe UI Variable Display, Segoe UI"
-                       Margin="56,0,120,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"
+                       Margin="22,0,120,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"
                        Foreground="{StaticResource PrimaryTextBrush}" Text="Vantage" />
             <Button x:Name="PaneToggleButton" Width="32" Height="32" Margin="244,0,0,0"
                     HorizontalAlignment="Left" VerticalAlignment="Center" Padding="0"
@@ -510,7 +507,7 @@
             <Border Grid.Column="0" Background="{StaticResource PaneBrush}"
                     BorderBrush="{StaticResource PaneEdgeBrush}" BorderThickness="0,0,1,0">
                 <Grid>
-                    <Grid x:Name="ConversationPane" Padding="20,18,16,14">
+                    <Grid x:Name="ConversationPane" Padding="20,12,16,14">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -518,7 +515,7 @@
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Button x:Name="NewChatButton" Grid.Row="0" Height="48" Padding="14,0"
+                        <Button x:Name="NewChatButton" Grid.Row="0" Height="44" Padding="14,0"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                 Background="{StaticResource SurfaceElevatedBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
                                 BorderThickness="1" Click="NewChatButton_Click" CornerRadius="10"
@@ -529,7 +526,7 @@
                             </StackPanel>
                         </Button>
 
-                        <Grid Grid.Row="1" Margin="4,26,2,10">
+                        <Grid Grid.Row="1" Margin="4,18,2,8">
                             <TextBlock VerticalAlignment="Center" FontSize="12.5" FontWeight="SemiBold"
                                        Foreground="{StaticResource SecondaryTextBrush}" Text="Conversations" />
                             <Button HorizontalAlignment="Right" Width="30" Height="30" Padding="0"
@@ -1004,7 +1001,7 @@
                             CornerRadius="{StaticResource ComposerRadius}"
                             Shadow="{StaticResource ComposerShadow}"
                             Translation="0,0,18">
-                            <Grid Height="72" Padding="22,8,12,8" ColumnSpacing="10">
+                            <Grid Height="64" Padding="18,8,10,8" ColumnSpacing="8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
@@ -1013,23 +1010,36 @@
                                     <TextBox
                                         x:Name="InputBox"
                                         Grid.Column="0"
-                                        MinHeight="44"
-                                        MaxHeight="56"
+                                        MinHeight="40"
+                                        MaxHeight="48"
                                         Margin="0"
                                         VerticalAlignment="Center"
+                                        VerticalContentAlignment="Center"
                                         PlaceholderText="Message Vantage"
                                         KeyDown="InputBox_KeyDown"
                                         Style="{StaticResource ComposerTextBoxStyle}" />
-                                    <ComboBox x:Name="ModelSelector"
-                                              Grid.Column="1"
-                                              Width="168" Height="40"
-                                              Padding="12,1"
-                                              CornerRadius="14"
-                                              Background="{StaticResource SubtleSurfaceBrush}"
-                                              BorderBrush="{StaticResource SoftStrokeBrush}"
-                                              DisplayMemberPath="Display"
-                                              SelectionChanged="ModelSelector_SelectionChanged"
-                                              ToolTipService.ToolTip="Active model" />
+                                     <ComboBox x:Name="ModelSelector"
+                                               Grid.Column="1"
+                                               Width="196" Height="40"
+                                               Padding="10,0"
+                                               CornerRadius="12"
+                                               Background="{StaticResource SubtleSurfaceBrush}"
+                                               BorderBrush="{StaticResource SoftStrokeBrush}"
+                                               SelectionChanged="ModelSelector_SelectionChanged"
+                                               ToolTipService.ToolTip="Active model">
+                                         <ComboBox.ItemTemplate>
+                                             <DataTemplate>
+                                                 <StackPanel Spacing="0" ToolTipService.ToolTip="{Binding Tooltip}">
+                                                     <TextBlock FontSize="12.5" FontWeight="SemiBold"
+                                                                Foreground="{StaticResource PrimaryTextBrush}"
+                                                                Text="{Binding Display}" />
+                                                     <TextBlock FontSize="10.5"
+                                                                Foreground="{StaticResource MutedTextBrush}"
+                                                                Text="{Binding ProviderDisplay}" />
+                                                 </StackPanel>
+                                             </DataTemplate>
+                                         </ComboBox.ItemTemplate>
+                                     </ComboBox>
                                     <Grid Grid.Column="2" VerticalAlignment="Center">
                                         <Button x:Name="SendButton" Width="40" Height="40" Padding="0" Background="{StaticResource AccentBrush}" BorderThickness="0" Click="SendButton_Click" CornerRadius="20" Style="{StaticResource AccentFilledButtonStyle}" ToolTipService.ToolTip="Send message">
                                             <FontIcon FontSize="16" Foreground="White" Glyph="&#xE724;" />

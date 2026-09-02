@@ -99,7 +99,6 @@ public sealed partial class MainWindow
         {
             SidebarColumn.Width = new GridLength(292);
             TitlebarNavBackdrop.Width = 292;
-            BrandLogo.Visibility = Visibility.Visible;
             BrandText.Visibility = Visibility.Visible;
             PaneToggleButton.Margin = new Thickness(244, 0, 0, 0);
             ToolTipService.SetToolTip(PaneToggleButton, "Collapse sidebar");
@@ -111,7 +110,6 @@ public sealed partial class MainWindow
         {
             SidebarColumn.Width = new GridLength(64);
             TitlebarNavBackdrop.Width = 64;
-            BrandLogo.Visibility = Visibility.Collapsed;
             BrandText.Visibility = Visibility.Collapsed;
             PaneToggleButton.Margin = new Thickness(16, 0, 0, 0);
             ToolTipService.SetToolTip(PaneToggleButton, "Expand sidebar");

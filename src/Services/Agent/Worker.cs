@@ -320,9 +320,10 @@ public sealed class Worker
         catch (LmmProviderException pex)
         {
             _turnCount++;
-            _taskContext.RecordSystemEvent("The provider rejected the prior turn before a desktop action ran");
-            return new ActionResult(ActionOutcome.Failed,
-                $"Provider rejected the request (HTTP {pex.HttpStatus}): {pex.Message}");
+            _taskContext.RecordSystemEvent("The provider request failed before a desktop action ran");
+            var status = pex.HttpStatus > 0 ? $"HTTP {pex.HttpStatus}" : "no HTTP response";
+            return new ActionResult(ActionOutcome.FailedFatal,
+                $"Provider request failed ({status}): {pex.Message}");
         }
         finally
         {

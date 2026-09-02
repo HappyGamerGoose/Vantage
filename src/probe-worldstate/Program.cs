@@ -133,6 +133,21 @@ if (args.Contains("--launch-match-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--model-name-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    var cases = new Dictionary<string, string>
+    {
+        ["meta/muse-glimmer-30b"] = "Muse Glimmer",
+        ["anthropic/claude-sonnet-4-5"] = "Claude Sonnet",
+        ["qwen/qwen3-32b-instruct"] = "Qwen",
+        ["openai/gpt-4.1-mini"] = "GPT Mini",
+    };
+    var valid = cases.All(pair => ModelDisplayNameService.GetFriendlyName(pair.Key) == pair.Value);
+    Console.WriteLine($"ModelDisplayNamesValid={valid} Cases={cases.Count}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--powershell-self-test", StringComparer.OrdinalIgnoreCase))
 {
     var quick = await WindowsAppManager.RunPowerShellAsync(

@@ -62,7 +62,7 @@ public sealed partial class MainWindow
             {
                 Provider = provider,
                 ModelId = provider.DefaultModel,
-                Display = $"{provider.Name} · {provider.DefaultModel}",
+                Display = ModelDisplayNameService.GetFriendlyName(provider.DefaultModel),
                 Key = $"{provider.Id}|{provider.DefaultModel}"
             });
         }
@@ -107,7 +107,7 @@ public sealed partial class MainWindow
         if (ConversationSubtitleBlock is null) return;
         ConversationSubtitleBlock.Text = choice is null
             ? "Add a provider to start · Direct Windows desktop agent"
-            : $"{choice.ModelId} · {choice.Provider.Name}";
+            : $"{choice.Display} · {choice.Provider.Name}";
     }
 
     private void ModelSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)

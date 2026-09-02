@@ -27,6 +27,7 @@
     <Compile Include="..\Services\Agent\ComputerUseSession.cs" Link="ComputerUseSession.cs" />
     <Compile Include="..\Services\Agent\ContextWindowCompactor.cs" Link="ContextWindowCompactor.cs" />
     <Compile Include="..\Services\Agent\PersistentTaskContext.cs" Link="PersistentTaskContext.cs" />
+    <Compile Include="..\Services\ModelDisplayNameService.cs" Link="ModelDisplayNameService.cs" />
     <Compile Include="..\Services\Agent\PROCEDURAL_MEMORY.cs" Link="PROCEDURAL_MEMORY.cs" />
     <Compile Include="..\Services\WindowsAppManager.cs" Link="WindowsAppManager.cs" />
     <Compile Include="..\Services\WindowsAutomationService.cs" Link="WindowsAutomationService.cs" />

@@ -136,56 +136,70 @@ public sealed class AnthropicEngine : LMMEngine
         req.Headers.Add("anthropic-beta", "computer-use-2025-01-24");
         req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
 
-        using var resp = await _http.SendAsync(req, ct);
-        var bodyText = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var status = (int)resp.StatusCode;
-            // Always log the request body too so a 4xx that is "One of the
-            // identified items was invalid" can be traced to the specific
-            // message item the provider rejected.
-            var reqBody = body.ToJsonString();
-            if (reqBody.Length > 8_000) reqBody = reqBody[..8_000] + "…";
-            CommonUtils.LogDiagnostic("anthropic-http-error",
-                $"model={Model} status={status} body={bodyText}\n---request---\n{reqBody}");
-            if (status == 429 || status == 529)
+            using var resp = await _http.SendAsync(req, ct);
+            var bodyText = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
             {
-                var kind = RateLimitParser.DetectKind(status, bodyText);
-                var retry = RateLimitParser.ExtractRetryAfter(resp, bodyText);
-                throw new LlmRateLimitException(status, retry, Model, bodyText, kind);
+                var status = (int)resp.StatusCode;
+                // Always log the request body too so a 4xx that is "One of the
+                // identified items was invalid" can be traced to the specific
+                // message item the provider rejected.
+                var reqBody = body.ToJsonString();
+                if (reqBody.Length > 8_000) reqBody = reqBody[..8_000] + "…";
+                CommonUtils.LogDiagnostic("anthropic-http-error",
+                    $"model={Model} status={status} body={bodyText}\n---request---\n{reqBody}");
+                if (status == 429 || status == 529)
+                {
+                    var kind = RateLimitParser.DetectKind(status, bodyText);
+                    var retry = RateLimitParser.ExtractRetryAfter(resp, bodyText);
+                    throw new LlmRateLimitException(status, retry, Model, bodyText, kind);
+                }
+                throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
+                    LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from Anthropic",
+                    bodyText);
             }
-            throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
-                LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from Anthropic",
-                bodyText);
-        }
 
-        using var doc = JsonDocument.Parse(bodyText);
-        var root = doc.RootElement;
-        var sbText = new StringBuilder();
-        string? thinking = null;
-        foreach (var block in root.GetProperty("content").EnumerateArray())
-        {
-            var type = block.GetProperty("type").GetString();
-            if (type == "thinking")
-                thinking = block.GetProperty("thinking").GetString();
-            else if (type == "text")
-                sbText.AppendLine(block.GetProperty("text").GetString());
+            using var doc = JsonDocument.Parse(bodyText);
+            var root = doc.RootElement;
+            var sbText = new StringBuilder();
+            string? thinking = null;
+            foreach (var block in root.GetProperty("content").EnumerateArray())
+            {
+                var type = block.GetProperty("type").GetString();
+                if (type == "thinking")
+                    thinking = block.GetProperty("thinking").GetString();
+                else if (type == "text")
+                    sbText.AppendLine(block.GetProperty("text").GetString());
+            }
+            var usage = root.TryGetProperty("usage", out var u) ? u : default;
+            var text = sbText.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                var stopReason = root.TryGetProperty("stop_reason", out var sr) ? sr.GetString() : "?";
+                CommonUtils.LogDiagnostic("anthropic-empty-response",
+                    $"model={Model} status={(int)resp.StatusCode} stop_reason={stopReason} body={bodyText}");
+            }
+            return new LmmResponse
+            {
+                Text        = text,
+                Thinking    = thinking,
+                InputTokens = usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("input_tokens").GetInt32() : 0,
+                OutputTokens= usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("output_tokens").GetInt32() : 0
+            };
         }
-        var usage = root.TryGetProperty("usage", out var u) ? u : default;
-        var text = sbText.ToString().Trim();
-        if (string.IsNullOrWhiteSpace(text))
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            var stopReason = root.TryGetProperty("stop_reason", out var sr) ? sr.GetString() : "?";
-            CommonUtils.LogDiagnostic("anthropic-empty-response",
-                $"model={Model} status={(int)resp.StatusCode} stop_reason={stopReason} body={bodyText}");
+            CommonUtils.LogDiagnostic("llm-request-timeout",
+                $"protocol=anthropic model={Model} timeout={_http.Timeout.TotalSeconds:F0}s");
+            throw new LmmProviderException(
+                status: 408,
+                reason: "request-timeout",
+                message: $"The provider did not respond within {_http.Timeout.TotalSeconds:F0} seconds. " +
+                         "Check the provider endpoint or switch models, then try again.",
+                body: ex.Message);
         }
-        return new LmmResponse
-        {
-            Text        = text,
-            Thinking    = thinking,
-            InputTokens = usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("input_tokens").GetInt32() : 0,
-            OutputTokens= usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("output_tokens").GetInt32() : 0
-        };
     }
 }
 
@@ -221,55 +235,69 @@ public sealed class OpenAICompatEngine : LMMEngine
         req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {ApiKey}");
         req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
 
-        using var resp = await _http.SendAsync(req, ct);
-        var bodyText = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
+        try
         {
-            var status = (int)resp.StatusCode;
-            // Always log the request body too so a 4xx that says
-            // "One of the identified items was invalid" can be traced to
-            // the specific message item the provider rejected.
-            var reqBody = body.ToJsonString();
-            if (reqBody.Length > 8_000) reqBody = reqBody[..8_000] + "…";
-            CommonUtils.LogDiagnostic("openai-http-error",
-                $"model={Model} status={status} body={bodyText}\n---request---\n{reqBody}");
-            if (status == 429 || status == 529)
+            using var resp = await _http.SendAsync(req, ct);
+            var bodyText = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
             {
-                var kind = RateLimitParser.DetectKind(status, bodyText);
-                var retry = RateLimitParser.ExtractRetryAfter(resp, bodyText);
-                throw new LlmRateLimitException(status, retry, Model, bodyText, kind);
+                var status = (int)resp.StatusCode;
+                // Always log the request body too so a 4xx that says
+                // "One of the identified items was invalid" can be traced to
+                // the specific message item the provider rejected.
+                var reqBody = body.ToJsonString();
+                if (reqBody.Length > 8_000) reqBody = reqBody[..8_000] + "…";
+                CommonUtils.LogDiagnostic("openai-http-error",
+                    $"model={Model} status={status} body={bodyText}\n---request---\n{reqBody}");
+                if (status == 429 || status == 529)
+                {
+                    var kind = RateLimitParser.DetectKind(status, bodyText);
+                    var retry = RateLimitParser.ExtractRetryAfter(resp, bodyText);
+                    throw new LlmRateLimitException(status, retry, Model, bodyText, kind);
+                }
+                // Surface a cleaned-up provider error so the UI never shows
+                // raw Groq JSON. We extract the human-readable `error.message`
+                // from the body when present, and classify known Groq quirks
+                // (notably "invalid format" / "invalid_request_error") so
+                // downstream code can react rather than treat it as a fault.
+                throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
+                    LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from {BaseUrl}",
+                    bodyText);
             }
-            // Surface a cleaned-up provider error so the UI never shows
-            // raw Groq JSON. We extract the human-readable `error.message`
-            // from the body when present, and classify known Groq quirks
-            // (notably "invalid format" / "invalid_request_error") so
-            // downstream code can react rather than treat it as a fault.
-            throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
-                LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from {BaseUrl}",
-                bodyText);
+
+            using var doc = JsonDocument.Parse(bodyText);
+            var root = doc.RootElement;
+            var choice = root.GetProperty("choices")[0];
+            var msg    = choice.GetProperty("message");
+            var text   = msg.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
+                ? c.GetString() ?? "" : "";
+            var finish = choice.TryGetProperty("finish_reason", out var fr) ? fr.GetString() : "?";
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                CommonUtils.LogDiagnostic("openai-empty-response",
+                    $"model={Model} status={(int)resp.StatusCode} finish_reason={finish} body={bodyText}");
+            }
+
+            int inTok = 0, outTok = 0;
+            if (root.TryGetProperty("usage", out var u))
+            {
+                if (u.TryGetProperty("prompt_tokens", out var pt)) inTok = pt.GetInt32();
+                if (u.TryGetProperty("completion_tokens", out var ct2)) outTok = ct2.GetInt32();
+            }
+
+            return new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok };
         }
-
-        using var doc = JsonDocument.Parse(bodyText);
-        var root = doc.RootElement;
-        var choice = root.GetProperty("choices")[0];
-        var msg    = choice.GetProperty("message");
-        var text   = msg.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
-            ? c.GetString() ?? "" : "";
-        var finish = choice.TryGetProperty("finish_reason", out var fr) ? fr.GetString() : "?";
-
-        if (string.IsNullOrWhiteSpace(text))
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            CommonUtils.LogDiagnostic("openai-empty-response",
-                $"model={Model} status={(int)resp.StatusCode} finish_reason={finish} body={bodyText}");
+            CommonUtils.LogDiagnostic("llm-request-timeout",
+                $"protocol=openai-compatible model={Model} timeout={_http.Timeout.TotalSeconds:F0}s");
+            throw new LmmProviderException(
+                status: 408,
+                reason: "request-timeout",
+                message: $"The provider did not respond within {_http.Timeout.TotalSeconds:F0} seconds. " +
+                         "Check the provider endpoint or switch models, then try again.",
+                body: ex.Message);
         }
-
-        int inTok = 0, outTok = 0;
-        if (root.TryGetProperty("usage", out var u))
-        {
-            if (u.TryGetProperty("prompt_tokens", out var pt)) inTok = pt.GetInt32();
-            if (u.TryGetProperty("completion_tokens", out var ct2)) outTok = ct2.GetInt32();
-        }
-
-        return new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok };
     }
 }
