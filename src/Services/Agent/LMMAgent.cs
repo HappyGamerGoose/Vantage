@@ -13,11 +13,12 @@ namespace Vantage.Services.Agent;
 
 public sealed class LmmAgent
 {
-    private const long DefaultImageHistoryBudgetBytes = 25L * 1024 * 1024;
+    private const long DefaultImageHistoryBudgetBytes = 8L * 1024 * 1024;
 
     private readonly LMMEngine _engine;
     private readonly int _activeTextHistoryMessages;
     private readonly int _activeVisualHistoryTurns;
+    private string _contextSummary = string.Empty;
     public string SystemPrompt { get; private set; } = "You are a helpful assistant.";
     public List<JsonObject> Messages { get; private set; } = new();
     public bool UseThinking { get; set; }
@@ -34,14 +35,19 @@ public sealed class LmmAgent
         AddSystemPrompt(systemPrompt);
     }
 
-    public void Reset() => Messages = new List<JsonObject>
+    public void Reset()
     {
-        new JsonObject { ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = SystemPrompt } } }
-    };
+        _contextSummary = string.Empty;
+        Messages = new List<JsonObject>
+        {
+            new JsonObject { ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = SystemPrompt } } }
+        };
+    }
 
     public void AddSystemPrompt(string prompt)
     {
         SystemPrompt = prompt;
+        _contextSummary = string.Empty;
         if (Messages.Count > 0) Messages[0] = new JsonObject
         {
             ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = prompt } }
@@ -148,7 +154,8 @@ public sealed class LmmAgent
         if (compacted.RemovedMessages > 0 || compacted.RemovedImages > 0)
         {
             CommonUtils.LogDiagnostic("lmm-context-window-compacted",
-                $"messages={compacted.RemovedMessages} images={compacted.RemovedImages} retained={Messages.Count}");
+                $"messages={compacted.RemovedMessages} images={compacted.RemovedImages} " +
+                $"summary_chars={compacted.Summary.Length} retained={Messages.Count}");
         }
 
         // A byte-budget backstop remains for unusually large recent captures.
@@ -181,10 +188,38 @@ public sealed class LmmAgent
     public ContextWindowCompactor.Result CompactContextWindow(
         int? keepRecentNonSystemMessages = null,
         int? keepRecentImages = null) =>
-        ContextWindowCompactor.Compact(
-            Messages,
+        CompactAndRemember(
             keepRecentNonSystemMessages ?? _activeTextHistoryMessages,
             keepRecentImages ?? _activeVisualHistoryTurns);
+
+    private ContextWindowCompactor.Result CompactAndRemember(
+        int keepRecentNonSystemMessages,
+        int keepRecentImages)
+    {
+        var result = ContextWindowCompactor.Compact(
+            Messages,
+            keepRecentNonSystemMessages,
+            keepRecentImages,
+            _contextSummary);
+        _contextSummary = result.Summary;
+        ApplyContextSummaryToSystemMessage();
+        return result;
+    }
+
+    private void ApplyContextSummaryToSystemMessage()
+    {
+        if (Messages.Count == 0
+            || !string.Equals(Messages[0]["role"]?.GetValue<string>(), "system", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var text = SystemPrompt;
+        if (!string.IsNullOrWhiteSpace(_contextSummary))
+            text += "\n\n" + _contextSummary;
+        Messages[0]["content"] = new JsonArray
+        {
+            new JsonObject { ["type"] = "text", ["text"] = text }
+        };
+    }
 
     /// <summary>
     /// Walk the message history, measure the projected JSON byte size of all

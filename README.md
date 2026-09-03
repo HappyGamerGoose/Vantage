@@ -5,13 +5,15 @@ Vantage is a native Windows desktop control panel for an AI assistant. It combin
 - **UI**: WinUI 3, Windows App SDK 1.8, .NET 9, Windows 11 Mica, light and dark themes, and an eight-accent palette
 - **Computer use**: Win32 input, Windows UI Automation, screenshots, keyboard and mouse actions, dragging, scrolling, clipboard, PowerShell, processes, apps, and windows
 - **Efficient runs**: small deterministic UI sequences can be emitted as one `batch` action, while observations are consumed once so stale coordinates are not reused
+- **Fast computer-use loop**: deterministic UI actions can execute without fixed per-step sleeps; clear screenshot coordinates can bypass the extra grounding pass, while recovery actions still receive full verification
+- **Intelligent context compaction**: one current visual state is kept alongside a bounded text-only trajectory summary, with complete observation/action boundaries preserved as older screenshots are discarded
 - **Clear failures**: provider timeouts and request failures are surfaced as terminal errors instead of being mislabeled as user stops or retried forever
 - **Long-running tasks**: the multimodal context uses a bounded sliding window; older screenshots are discarded while a persistent text-only goal, to-do list, and last-action summary remain available
 - **Search**: every saved message and agent-run summary is searchable from the sidebar
 - **Model picker**: local display-only labels turn identifiers such as `meta/muse-glimmer-30b` into `Muse Glimmer`; the raw API model ID is preserved unchanged
 - **Local first**: history, settings, provider configuration, and task state stay under `%LOCALAPPDATA%\Vantage`; provider API keys are protected with Windows DPAPI
 - **Packaging**: self-contained x64 VeloPack installer and update packages
-- **Current version**: 1.5.93
+- **Current version**: 1.5.94
 
 > The current runtime sends computer-use input and runs requested PowerShell actions without per-action approval dialogs. Use only providers and instructions you trust. Stop or Escape cancels an active run.
 

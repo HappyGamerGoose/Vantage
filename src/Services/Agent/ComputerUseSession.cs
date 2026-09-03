@@ -583,7 +583,7 @@ internal sealed class ComputerUseSession
             if (normalized == "right") WindowsAutomationService.RightClick(x, y);
             else if (normalized == "middle") WindowsAutomationService.MiddleClick(x, y);
             else WindowsAutomationService.LeftClick(x, y);
-            if (i < clickCount - 1) await Task.Delay(80, ct);
+            if (i < clickCount - 1) await Task.Delay(25, ct);
         }
     }
 

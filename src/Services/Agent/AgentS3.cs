@@ -9,8 +9,6 @@
 // Emits lifecycle events back through IRunHooks so the existing
 // MainWindow chat surface can render progress.
 
-using System.Text;
-
 namespace Vantage.Services.Agent;
 
 public sealed class AgentS3
@@ -64,11 +62,10 @@ public sealed class AgentS3
             _monitor.LogicalWidth,
             _monitor.LogicalHeight,
             ct);
-        // Let the dispatcher/compositor present the sanitized chat workspace
-        // before Worker takes the first screenshot.
-        await Task.Delay(120, ct);
+        // Give the compositor one scheduling slice to present the workspace
+        // before the first capture. This avoids a fixed animation-sized wait.
+        await Task.Yield();
 
-        var sb = new StringBuilder();
         try
         {
             int step = 0;
@@ -82,19 +79,19 @@ public sealed class AgentS3
 
                 if (result.Outcome == ActionOutcome.Done)
                 {
-                    sb.AppendLine(result.Description);
                     _hooks.OnRunFinished($"done in {step} steps");
                     return result;
                 }
                 if (result.Outcome == ActionOutcome.FailedFatal)
                 {
-                    sb.AppendLine($"fail: {result.Description}");
                     _hooks.OnRunFinished($"failed at step {step}: {result.Description}");
                     return result;
                 }
 
-                // Give the desktop a beat to redraw between steps
-                await Task.Delay(120, ct);
+                // Input APIs are synchronous and the next step captures a
+                // fresh screen. Yield only to let pending UI work run; do not
+                // impose a fixed per-step sleep on the agent.
+                await Task.Yield();
             }
         }
         catch (OperationCanceledException)

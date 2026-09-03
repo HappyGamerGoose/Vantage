@@ -48,9 +48,11 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         .SelectMany(message => (message["content"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
         .Count(block => block["type"]?.GetValue<string>() is "image" or "image_url");
     var windowValid = compacted.RemovedMessages == 2
-        && compacted.RemovedImages == 1
+        && compacted.RemovedImages == 2
         && messages.Count == 7
-        && retainedImages == 2;
+        && retainedImages == 2
+        && compacted.Summary.Contains("The assistant planned: action 1.", StringComparison.Ordinal)
+        && compacted.Summary.Contains("Older screenshots were discarded", StringComparison.Ordinal);
 
     var directory = Path.Combine(Path.GetTempPath(), "vantage-context-test-" + Guid.NewGuid().ToString("N"));
     var persistentValid = false;

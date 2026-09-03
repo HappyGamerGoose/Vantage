@@ -305,7 +305,7 @@ public sealed class VantageACI
                     // agent loop recover — never bubble out.
                     failures.Add($"click #{i + 1}: {ex.Message}");
                 }
-                if (i < numClicks - 1) await Task.Delay(80, ct);
+                if (i < numClicks - 1) await Task.Delay(25, ct);
             }
         }
         finally
@@ -361,7 +361,7 @@ public sealed class VantageACI
             if (coords is null)
                 return new ActionResult(ActionOutcome.Failed, $"could not locate input field '{description}'");
             WindowsAutomationService.LeftClick(coords.Value.x, coords.Value.y);
-            await Task.Delay(120, ct);
+            await Task.Yield();
         }
 
         if (CheckForegroundTarget(action, "type") is { } targetFailure)
@@ -379,7 +379,7 @@ public sealed class VantageACI
                 WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Control);
             }
             WindowsAutomationService.SendKey(Windows.System.VirtualKey.Back);
-            await Task.Delay(60, ct);
+            await Task.Yield();
         }
 
         var typed = text.Length > 0
@@ -873,7 +873,7 @@ public sealed class VantageACI
                     WindowsAutomationService.LeftClick(x.Value, y.Value);
                     break;
             }
-            if (i < count - 1) await Task.Delay(80, ct);
+            if (i < count - 1) await Task.Delay(25, ct);
         }
         var label = count > 1 ? $"{count}-click" : "click";
         return new ActionResult(ActionOutcome.Success, $"{label} {btn} at ({x}, {y}) [ok]");
@@ -1084,7 +1084,7 @@ public sealed class VantageACI
             }
 
             if (index < steps.Count - 1)
-                await Task.Delay(100, ct);
+                await Task.Yield();
         }
 
         return new ActionResult(

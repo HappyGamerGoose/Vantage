@@ -22,6 +22,9 @@ namespace Vantage.Services;
 
 public sealed class WindowsAutomationService
 {
+    private const int InputSettleDelayMs = 1;
+    private const int DragStartDelayMs = 8;
+    private const int DragStepDelayMs = 4;
     // ── P/Invokes ────────────────────────────────────────────────
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int X, int Y);
     [DllImport("user32.dll")] private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -675,7 +678,7 @@ public sealed class WindowsAutomationService
     public static void LeftClick(int logicalX, int logicalY)
     {
         MoveMouse(logicalX, logicalY);
-        Thread.Sleep(8);
+        Thread.Sleep(InputSettleDelayMs);
         SendBatch(
             MakeMouseInput(MOUSEEVENTF_LEFTDOWN, 0, 0),
             MakeMouseInput(MOUSEEVENTF_LEFTUP,   0, 0));
@@ -693,7 +696,7 @@ public sealed class WindowsAutomationService
     public static void RightClick(int logicalX, int logicalY)
     {
         MoveMouse(logicalX, logicalY);
-        Thread.Sleep(8);
+        Thread.Sleep(InputSettleDelayMs);
         SendBatch(
             MakeMouseInput(MOUSEEVENTF_RIGHTDOWN, 0, 0),
             MakeMouseInput(MOUSEEVENTF_RIGHTUP,   0, 0));
@@ -703,7 +706,7 @@ public sealed class WindowsAutomationService
     public static void MiddleClick(int logicalX, int logicalY)
     {
         MoveMouse(logicalX, logicalY);
-        Thread.Sleep(8);
+        Thread.Sleep(InputSettleDelayMs);
         SendBatch(
             MakeMouseInput(MOUSEEVENTF_MIDDLEDOWN, 0, 0),
             MakeMouseInput(MOUSEEVENTF_MIDDLEUP,   0, 0));
@@ -730,7 +733,7 @@ public sealed class WindowsAutomationService
         CancellationToken ct)
     {
         MoveMouse(fromLogicalX, fromLogicalY);
-        await Task.Delay(25, ct);
+        await Task.Delay(DragStartDelayMs, ct);
 
         var (downFlag, upFlag) = button switch
         {
@@ -750,7 +753,7 @@ public sealed class WindowsAutomationService
                 var x = (int)Math.Round(fromLogicalX + (toLogicalX - fromLogicalX) * (step / (double)steps));
                 var y = (int)Math.Round(fromLogicalY + (toLogicalY - fromLogicalY) * (step / (double)steps));
                 MoveMouse(x, y);
-                await Task.Delay(12, ct);
+                await Task.Delay(DragStepDelayMs, ct);
             }
         }
         finally
@@ -906,14 +909,13 @@ public sealed class WindowsAutomationService
         foreach (var rune in text.EnumerateRunes())
         {
             TypeOneRune(rune);
-            Thread.Sleep(6);
         }
         MarkSyntheticInput();
     }
 
-    public static async Task<int> TypeAsync(string text, CancellationToken ct)
+    public static Task<int> TypeAsync(string text, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(text)) return 0;
+        if (string.IsNullOrEmpty(text)) return Task.FromResult(0);
         var typed = 0;
         try
         {
@@ -922,9 +924,8 @@ public sealed class WindowsAutomationService
                 ct.ThrowIfCancellationRequested();
                 TypeOneRune(rune);
                 typed++;
-                await Task.Delay(6, ct);
             }
-            return typed;
+            return Task.FromResult(typed);
         }
         finally
         {
@@ -1010,9 +1011,9 @@ public sealed class WindowsAutomationService
         KeyDown(modifier);
         try
         {
-            Thread.Sleep(8);
+            Thread.Sleep(InputSettleDelayMs);
             SendKey(key);
-            Thread.Sleep(8);
+            Thread.Sleep(InputSettleDelayMs);
         }
         finally
         {

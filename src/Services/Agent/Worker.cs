@@ -68,6 +68,9 @@ public sealed class Worker
     private readonly Queue<string> _verificationFeedback = new();
     private const int VerificationFeedbackKept = 4;
     private const int InMemoryHistoryKept = 12;
+    private const int VisionMaxLongestSide = 1152;
+    private const int GeneratorMaxNewTokens = 1536;
+    private const int ReflectionMaxNewTokens = 512;
 
     // Counts how many consecutive actions did not visibly land. Three in a
     // row triggers a recovery nudge — different from the stuck-detector on
@@ -109,12 +112,12 @@ public sealed class Worker
             engine,
             workerPrompt,
             activeTextHistoryMessages: 6,
-            activeVisualHistoryTurns: 2);
+            activeVisualHistoryTurns: 1);
         _reflector = new LmmAgent(
             engine,
             PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY,
             activeTextHistoryMessages: 4,
-            activeVisualHistoryTurns: 2);
+            activeVisualHistoryTurns: 1);
     }
 
     public void BeginTask(string instruction) => _taskContext.BeginTask(instruction);
@@ -144,7 +147,7 @@ public sealed class Worker
         // scale mismatch where every click landed ~20-50% off-target
         // on a 1920x1200 panel at 125% DPI.
         var captureSw = Stopwatch.StartNew();
-        var screenshotBytes = WindowsAutomationService.CaptureScreenPngLogical(maxLongestSide: 1280);
+        var screenshotBytes = WindowsAutomationService.CaptureScreenPngLogical(maxLongestSide: VisionMaxLongestSide);
         _aci.AssignScreenshot(screenshotBytes);
         var b64 = Convert.ToBase64String(screenshotBytes);
         captureSw.Stop();
@@ -165,13 +168,11 @@ public sealed class Worker
 
         // Per-step reflection — only when there's actual concern. Reflection
         // was firing EVERY step, doubling the per-step LLM latency even when
-        // the trajectory was clearly on-track. We now only fire when there's
-        // a stuck signal: two consecutive identical failed descriptions
-        // (StuckThreshold), or two consecutive no-op streaks. For healthy
-        // runs this saves ~10-15 s of LLM round-trip per step.
+        // the trajectory was clearly on-track. Reflection is now a last-resort
+        // recovery pass; the generator plans directly from the latest state.
         bool needsReflection = _enableReflection && _turnCount > 0 && (
-            _noOpStreak >= 2
-            || (_recentFailures.Count >= StuckThreshold
+            _noOpStreak >= 4
+            || (_recentFailures.Count >= 3
                 && _recentFailures.All(f => IsSameDescription(f, _recentFailures.First()))));
         string reflection = "";
         if (needsReflection)
@@ -184,7 +185,12 @@ public sealed class Worker
                 role: "user");
             try
             {
-                var reflectionText = await CommonUtils.CallLlmSafeAsync(_reflector, temperature: _temperature, ct: ct);
+                var reflectionText = await CommonUtils.CallLlmSafeAsync(
+                    _reflector,
+                    temperature: _temperature,
+                    maxNewTokens: ReflectionMaxNewTokens,
+                    maxRetries: 2,
+                    ct: ct);
                 var (thoughts, answer) = CommonUtils.SplitThoughtsAnswer(reflectionText);
                 // Detect the case label (1/2/3) from the reflection text
                 var lower = (thoughts + " " + answer).ToLowerInvariant();
@@ -303,7 +309,12 @@ public sealed class Worker
         string plan;
         try
         {
-            plan = await CommonUtils.CallLlmSafeAsync(_generator, temperature: _temperature, ct: ct);
+            plan = await CommonUtils.CallLlmSafeAsync(
+                _generator,
+                temperature: _temperature,
+                maxNewTokens: GeneratorMaxNewTokens,
+                maxRetries: 3,
+                ct: ct);
         }
         catch (LlmRateLimitException rlex) when (rlex.Kind == RateLimitKind.DailyQuota)
         {
@@ -406,14 +417,13 @@ public sealed class Worker
         }
 
         // Dispatch via VantageACI (which grounds coordinates and calls
-        // WindowsAutomationService). Before / after we snapshot the world
-        // + the screen — the ActionVerifier uses those to decide whether
-        // the action actually landed. For terminator actions (`done` /
-        // `fail`) the diff has no useful signal AND the run is wrapping
-        // up anyway, so we skip both captures entirely (saves 100-500 ms
-        // per step on the long tail). `wait`, `screenshot`, observation
-        // tools, pure-cursor movement, etc. are also skip-eligible: they
-        // don't modify the desktop state in a way the verifier can test.
+        // WindowsAutomationService). Full before/after visual verification
+        // is valuable after a miss, but redundant on a healthy run: the
+        // input layer already reports whether SendInput succeeded and the
+        // next turn always starts from a fresh screenshot. Fast-path ordinary
+        // UI actions to avoid two extra desktop captures per turn.
+        var (predicted, confidence) = ExtractExpectedState(action.Raw);
+        var fastPath = CanUseFastPath(action, predicted);
         var skipVerification =
             string.Equals(action.Action, "done", StringComparison.OrdinalIgnoreCase)
             || string.Equals(action.Action, "fail", StringComparison.OrdinalIgnoreCase)
@@ -436,7 +446,8 @@ public sealed class Worker
             // Clipboard READ — doesn't mutate UI state.
             || string.Equals(action.Action, "vantage_get_clipboard", StringComparison.OrdinalIgnoreCase)
             // save_to_knowledge only writes to our local knowledge DB.
-            || string.Equals(action.Action, "save_to_knowledge", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(action.Action, "save_to_knowledge", StringComparison.OrdinalIgnoreCase)
+            || fastPath;
 
         // the action actually landed. The first screenshot in this turn
         // (screenshotBytes) was captured BEFORE the reflection prompt
@@ -521,8 +532,10 @@ public sealed class Worker
         var verifySw = Stopwatch.StartNew();
         var verdict = !needVerify
             ? new VerificationResult(true, action.Action,
-                skipVerification
-                    ? "terminator — skipped verification"
+                fastPath
+                    ? "fast path — input dispatch succeeded; next turn supplies fresh visual state"
+                    : skipVerification
+                    ? "non-mutating action — skipped verification"
                     : "action dispatched with Failure result — verification not informative")
             : ActionVerifier.Verify(
                 action.Action,
@@ -539,7 +552,6 @@ public sealed class Worker
         // confidence but the verifier says it didn't land, that's the
         // strongest possible signal of a hallucination — surface it as
         // dedicated feedback.
-        var (predicted, confidence) = ExtractExpectedState(action.Raw);
         if (!verdict.Met && result.Outcome != ActionOutcome.Done && result.Outcome != ActionOutcome.FailedFatal)
         {
             // The dispatcher said "ok" but the world didn't agree. Capture
@@ -740,6 +752,29 @@ public sealed class Worker
         {
             return ("", "");
         }
+    }
+
+    private bool CanUseFastPath(AgentAction action, string predicted)
+    {
+        // Keep the first action and every recovery action fully observable.
+        // Once the run is healthy, a successful SendInput result is enough
+        // for these deterministic operations; the next model turn supplies
+        // the authoritative fresh screenshot.
+        if (_turnCount == 0
+            || _noOpStreak > 0
+            || _lastActionOutcome.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(predicted))
+            return false;
+
+        return action.Action.Trim().ToLowerInvariant() switch
+        {
+            "batch" or "click" or "click_xy" or "click_element" or "click_window_xy"
+                or "type" or "type_text" or "type_window_text" or "set_value"
+                or "key" or "press_key" or "press_window_key"
+                or "drag" or "drag_xy" or "drag_window"
+                or "scroll" or "scroll_xy" or "scroll_window" => true,
+            _ => false
+        };
     }
 
     private static string Normalize(string s)
