@@ -294,7 +294,7 @@ public sealed partial class MainWindow
         // PalettePicker_Loaded / ThemeModeCombo_SelectionChanged).
         try
         {
-            ApplyCurrentTheme();
+            ApplyCurrentTheme(animate: false);
         }
         catch
         {

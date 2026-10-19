@@ -67,7 +67,7 @@ public sealed partial class MainWindow
             {
                 if (this.DispatcherQueue is { } dq)
                 {
-                    dq.TryEnqueue(ApplyCurrentTheme);
+                    dq.TryEnqueue(() => ApplyCurrentTheme(animate: true));
                 }
             };
         }
@@ -223,7 +223,7 @@ public sealed partial class MainWindow
     /// AND the <see cref="StartOsThemeWatcher"/> callback keeps us in sync
     /// when the user changes the OS theme later.
     /// </summary>
-    private void ApplyCurrentTheme()
+    private void ApplyCurrentTheme(bool animate = true)
     {
         if (!LocalPreferences.GetBool(ReferenceDesignPaletteKey, false))
         {
@@ -240,7 +240,7 @@ public sealed partial class MainWindow
         };
         var useDark = mode == AppThemeMode.Dark
                    || (mode == AppThemeMode.System && IsOsDarkMode());
-        ThemeManager.Apply(RootGrid, paletteName, useDark);
+        ThemeManager.Apply(RootGrid, paletteName, useDark, animate);
         UpdateTitleBarColors(useDark);
         RootGrid.RequestedTheme = mode == AppThemeMode.System
             ? ElementTheme.Default

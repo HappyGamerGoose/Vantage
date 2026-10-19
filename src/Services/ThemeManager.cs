@@ -19,8 +19,9 @@
 //      grid (where every named brush lives) and replaces each entry
 //      in place. References already bound via {StaticResource *}
 //      update because SolidColorBrush is mutable: we change the
-//      brushes' Colors rather than tearing down the resources.
+//      brushes' Colors smoothly rather than tearing down the resources.
 
+using System;
 using System.Collections.Generic;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -74,17 +75,6 @@ public static class ThemeManager
         Background        : "#15171C");
 
     // ── Accent palettes ─────────────────────────────────────────────
-    // Eight palettes, each with a Light + Dark set. The Dark sets pick
-    // up a brighter / more saturated accent against the dark surface so
-    // the same hex stays readable in both modes. Each (Light, Dark)
-    // pair was calibrated to maintain the SAME colour identity across
-    // modes — picking Green looks "green" either way, not "bright green
-    // in dark, dark teal in light".
-    //
-    // Order is intentional: greens and cool colours first (Windows
-    // habits), warm colours last (less common UX choice). Reorder by
-    // editing this array — the PalettePicker UI is rebuilt from the
-    // array on each Settings page render.
     public static readonly IReadOnlyList<ThemePalette> Palettes = new ThemePalette[]
     {
         // 1. Green — Windows "Nature" emoji, classic Win10 start menu accent.
@@ -98,114 +88,124 @@ public static class ThemeManager
             new AccentSet("#968BFF", "#AAA1FF", "#7F72F0", "#292445", "#50968BFF")),
 
         // 3. Yellow — sunshine / amber. Reads warm without being alarm-orange.
-        //    Light accent stays in the "deep gold" range so dark text on it
-        //    still satisfies WCAG 4.5:1 contrast; dark accent is bright
-        //    lemon so it pops on the dark page.
         new ThemePalette("Yellow",
-            new AccentSet("#C49B00", "#E0B400", "#9D7B00", "#FBF3CC", "#26C49B00"),
-            new AccentSet("#FFD43B", "#FFE066", "#E0B022", "#3D3318", "#50FFD43B")),
+            new AccentSet("#B27B00", "#C88B00", "#9A6A00", "#FFF6DB", "#26B27B00"),
+            new AccentSet("#FFD54F", "#FFE082", "#FFCA28", "#332A15", "#50FFD54F")),
 
-        // 4. Blue — Windows 11 default-ish. The Office / Outlook accent.
+        // 4. Blue — Windows 11 default accent.
         new ThemePalette("Blue",
-            new AccentSet("#0078D4", "#1A86E0", "#0064B0", "#E8F1FB", "#260078D4"),
-            new AccentSet("#4CC2FF", "#6FCEFF", "#3CA0D7", "#15263B", "#504CC2FF")),
+            new AccentSet("#0078D4", "#1084D9", "#0064B0", "#E8F1FB", "#260078D4"),
+            new AccentSet("#4CC2FF", "#68CDFF", "#3AA8E8", "#172A3A", "#504CC2FF")),
 
-        // 5. Teal — the original Vantage accent. Keeps continuity.
+        // 5. Teal — classic Vantage brand accent.
         new ThemePalette("Teal",
-            new AccentSet("#007A74", "#0E8E87", "#00665F", "#E1F1F0", "#26007A74"),
-            new AccentSet("#26D6CC", "#34E2D9", "#1AB3AA", "#163838", "#5026D6CC")),
+            new AccentSet("#0E7A6E", "#148A7D", "#0A655B", "#E3F4F1", "#260E7A6E"),
+            new AccentSet("#4ED2C1", "#6DE0D1", "#3EBFAD", "#142F2B", "#504ED2C1")),
 
-        // 6. Orange — sunset / warm. The complementary warm to Yellow.
-        //    Light is a deep terracotta; dark lifts to a glowy peach.
+        // 6. Orange — warm sunset accent.
         new ThemePalette("Orange",
-            new AccentSet("#C2540D", "#D6601B", "#9C4408", "#FCE8D6", "#26C2540D"),
-            new AccentSet("#FB923C", "#FFA756", "#E07C2A", "#3D2614", "#50FB923C")),
+            new AccentSet("#C44E12", "#D45D1E", "#AA420E", "#FCEEE5", "#26C44E12"),
+            new AccentSet("#FF8A50", "#FFA06D", "#F47133", "#382319", "#50FF8A50")),
 
-        // 7. Pink — subtle, not Bubblegum-pink. Reads as a hint of magenta.
+        // 7. Pink — vibrant modern magenta hint.
         new ThemePalette("Pink",
-            new AccentSet("#C2185B", "#D6357A", "#9D1447", "#FCE4EC", "#26C2185B"),
-            new AccentSet("#F670A6", "#FF8DB8", "#D45A8A", "#3D1A2A", "#50F670A6")),
+            new AccentSet("#C2185B", "#D1286C", "#A8114D", "#FDE7F0", "#26C2185B"),
+            new AccentSet("#FF6599", "#FF82B0", "#F04D85", "#381724", "#50FF6599")),
 
-        // 8. Slate — neutral, friendly. Recedes into the chrome.
+        // 8. Slate — restrained, recedes into the background.
         new ThemePalette("Slate",
-            new AccentSet("#475569", "#5B6B83", "#394256", "#EEF2F6", "#26475569"),
-            new AccentSet("#94A3B8", "#B0BBD0", "#7C8DA3", "#20283A", "#5094A3B8")),
+            new AccentSet("#5A6B7C", "#687B8D", "#4C5B6B", "#EEF2F6", "#265A6B7C"),
+            new AccentSet("#9AAEC2", "#ADC0D3", "#879CB1", "#202730", "#509AAEC2")),
     };
 
-    public static ThemePalette GetPalette(string name) =>
-        Palettes.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-        ?? Palettes.First(p => p.Name == "Blue");
+    public static ThemePalette GetPalette(string name)
+    {
+        foreach (var p in Palettes)
+            if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                return p;
+        return Palettes[1]; // default Violet
+    }
+
+    private sealed class ColorTransition
+    {
+        public SolidColorBrush Brush { get; }
+        public Color StartColor { get; }
+        public Color TargetColor { get; }
+
+        public ColorTransition(SolidColorBrush brush, Color startColor, Color targetColor)
+        {
+            Brush = brush;
+            StartColor = startColor;
+            TargetColor = targetColor;
+        }
+    }
+
+    private static System.Diagnostics.Stopwatch? _colorAnimStopwatch;
+    private static List<ColorTransition>? _activeTransitions;
+    private static bool _colorAnimHooked;
+    private const double ColorAnimDurationMs = 240.0;
 
     /// <summary>
     /// Apply a palette + theme to the running window. Mutates the brush
-    /// colors in place so existing {StaticResource} bindings stay live.
-    /// Every SwapBrush is wrapped in a try/catch so a missing or unexpected
-    /// resource key can never crash the app on startup.
+    /// colors smoothly in place so existing {StaticResource} bindings stay live.
+    /// Supports fluid color interpolation across theme toggles and palette changes.
     /// </summary>
-    public static void Apply(FrameworkElement root, string paletteName, bool darkMode)
+    public static void Apply(FrameworkElement root, string paletteName, bool darkMode, bool animate = true)
     {
         if (root is null) return;
         var palette = GetPalette(paletteName);
         var accent  = darkMode ? palette.Dark : palette.Light;
         var neutral = darkMode ? DarkNeutral : LightNeutral;
 
-        // Neutrals — page surfaces, text, separators, the composer chrome.
-        TrySwapBrush(root, "PageBrush",              neutral.Page);
-        TrySwapBrush(root, "SurfaceBrush",           neutral.Surface);
-        TrySwapBrush(root, "SurfaceElevatedBrush",   neutral.SurfaceElevated);
-        TrySwapBrush(root, "SubtleSurfaceBrush",     neutral.SubtleSurface);
-        TrySwapBrush(root, "StrokeBrush",            neutral.Stroke);
-        TrySwapBrush(root, "SoftStrokeBrush",        neutral.SoftStroke);
-        TrySwapBrush(root, "HairlineBrush",          neutral.Hairline);
-        TrySwapBrush(root, "PrimaryTextBrush",       neutral.PrimaryText);
-        TrySwapBrush(root, "SecondaryTextBrush",     neutral.SecondaryText);
-        TrySwapBrush(root, "MutedTextBrush",         neutral.MutedText);
-        TrySwapBrush(root, "PaneBrush",              neutral.PaneStart);
-        TrySwapBrush(root, "RailBrush",              darkMode ? "#F0121820" : "#F8F9FD");
-        TrySwapBrush(root, "ChatCanvasBrush",        darkMode ? "#E8101217" : "#FCFCFE");
-        TrySwapBrush(root, "HoverBrush",             neutral.Hover);
-        TrySwapBrush(root, "ComposerBrush",          neutral.Composer);
-        TrySwapBrush(root, "ComposerBorderBrush",    neutral.ComposerBorder);
-        TrySwapBrush(root, "InputBrush",             neutral.Composer);
-        TrySwapBrush(root, "PendingBackgroundBrush", neutral.Page);
+        var targets = new List<(string Key, string ColorHex)>(42);
+        void Queue(string key, string hex) => targets.Add((key, hex));
 
-        // Accent palette — the user-chosen accent colours and their
-        // hover/pressed/soft variants.
-        TrySwapBrush(root, "AccentBrush",            accent.Accent);
-        TrySwapBrush(root, "AccentHoverBrush",       accent.AccentHover);
-        TrySwapBrush(root, "AccentPressedBrush",     accent.AccentPressed);
-        TrySwapBrush(root, "AccentSoftBrush",        accent.AccentSoft);
-        TrySwapBrush(root, "PaneEdgeBrush",          neutral.SoftStroke);
-        TrySwapBrush(root, "PanelTintBrush",         darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft);
+        // Neutrals — page surfaces, text, separators, composer chrome
+        Queue("PageBrush",              neutral.Page);
+        Queue("SurfaceBrush",           neutral.Surface);
+        Queue("SurfaceElevatedBrush",   neutral.SurfaceElevated);
+        Queue("SubtleSurfaceBrush",     neutral.SubtleSurface);
+        Queue("StrokeBrush",            neutral.Stroke);
+        Queue("SoftStrokeBrush",        neutral.SoftStroke);
+        Queue("HairlineBrush",          neutral.Hairline);
+        Queue("PrimaryTextBrush",       neutral.PrimaryText);
+        Queue("SecondaryTextBrush",     neutral.SecondaryText);
+        Queue("MutedTextBrush",         neutral.MutedText);
+        Queue("PaneBrush",              neutral.PaneStart);
+        Queue("RailBrush",              darkMode ? "#F0121820" : "#F8F9FD");
+        Queue("ChatCanvasBrush",        darkMode ? "#E8101217" : "#FCFCFE");
+        Queue("HoverBrush",             neutral.Hover);
+        Queue("ComposerBrush",          neutral.Composer);
+        Queue("ComposerBorderBrush",    neutral.ComposerBorder);
+        Queue("InputBrush",             neutral.Composer);
+        Queue("PendingBackgroundBrush", neutral.Page);
 
-        // Warm / Success / Danger families — these had hard-coded light-mode
-        // hexes before; dark mode now repaints them too. The light value
-        // is the same as the XAML default so behavior on light theme is
-        // unchanged.
-        var warmAccent   = darkMode ? WithAlpha(accent.Accent, "EA") : "#B66A42";
+        // Accent palette
+        Queue("AccentBrush",            accent.Accent);
+        Queue("AccentHoverBrush",       accent.AccentHover);
+        Queue("AccentPressedBrush",     accent.AccentPressed);
+        Queue("AccentSoftBrush",        accent.AccentSoft);
+        Queue("PaneEdgeBrush",          neutral.SoftStroke);
+        Queue("PanelTintBrush",         darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft);
+
+        // Warm / Success / Danger
+        var warmAccent    = darkMode ? WithAlpha(accent.Accent, "EA") : "#B66A42";
         var successAccent = darkMode ? "#6CD676" : "#237A4B";
-        var successSoft  = darkMode ? "#1B3326" : "#D8EFE2";
-        var dangerAccent = darkMode ? "#E67878" : "#A83232";
-        var warmHover    = darkMode ? WithAlpha(accent.Accent, "FF") : "#C77C58";
+        var successSoft   = darkMode ? "#1B3326" : "#D8EFE2";
+        var dangerAccent  = darkMode ? "#E67878" : "#A83232";
+        var warmHover     = darkMode ? WithAlpha(accent.Accent, "FF") : "#C77C58";
         var warmPressed   = darkMode ? WithAlpha(accent.Accent, "C0") : "#8E5030";
-        TrySwapBrush(root, "WarmBrush",              warmAccent);
-        TrySwapBrush(root, "WarmHoverBrush",         warmHover);
-        TrySwapBrush(root, "WarmPressedBrush",       warmPressed);
-        TrySwapBrush(root, "SuccessBrush",           successAccent);
-        TrySwapBrush(root, "SuccessSoftBrush",       successSoft);
-        TrySwapBrush(root, "DangerBrush",            dangerAccent);
+        Queue("WarmBrush",              warmAccent);
+        Queue("WarmHoverBrush",         warmHover);
+        Queue("WarmPressedBrush",       warmPressed);
+        Queue("SuccessBrush",           successAccent);
+        Queue("SuccessSoftBrush",       successSoft);
+        Queue("DangerBrush",            dangerAccent);
 
-        // ErrorTextBrush is declared once in XAML with `#B3261E`
-        // (mid-saturation red). In dark mode that hex keeps the same
-        // red, but loses contrast against a dark red-tinted surface.
-        // Brighten it on dark and keep it where it was on light.
         var errorText = darkMode ? "#F4836D" : "#B3261E";
-        TrySwapBrush(root, "ErrorTextBrush",         errorText);
+        Queue("ErrorTextBrush",         errorText);
 
-        // Message bubbles — adapt so the user/assistant/error bubbles
-        // stay legible against either light or dark chat background. The
-        // XAML defaults are light-mode; dark mode swaps them to dark
-        // surfaces with a hint of accent contrast.
+        // Message bubbles & avatars
         var bubbleUser          = darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft;
         var bubbleAssistant     = "#00FFFFFF";
         var bubbleError         = darkMode ? "#3A1F1C" : "#FBEEE8";
@@ -215,61 +215,120 @@ public static class ThemeManager
         var avatarUser          = darkMode ? "#262C32" : "#E2E9EE";
         var avatarAssistant     = darkMode ? WithAlpha(accent.Accent, "28") : accent.AccentSoft;
         var avatarError         = darkMode ? "#3A1F1C" : "#FBEEE8";
-        // AuthorTextBrush used to fall back to "#00D78CD4" in light mode —
-        // that's alpha=00 (fully transparent) so the "Vantage" author label
-        // was invisible against the white chat surface. Using the palette's
-        // accent direct (with a small saturation lift in light) makes the
-        // author label consistent across every palette.
         var authorText          = darkMode
                                     ? WithAlpha(accent.Accent, "FF")
                                     : WithAlpha(accent.AccentPressed, "FF");
-        TrySwapBrush(root, "BubbleUserBrush",            bubbleUser);
-        TrySwapBrush(root, "BubbleAssistantBrush",       bubbleAssistant);
-        TrySwapBrush(root, "BubbleErrorBrush",           bubbleError);
-        TrySwapBrush(root, "BubbleBorderUserBrush",      bubbleBorderUser);
-        TrySwapBrush(root, "BubbleBorderAssistantBrush", bubbleBorderAssist);
-        TrySwapBrush(root, "BubbleBorderErrorBrush",     bubbleBorderError);
-        TrySwapBrush(root, "AvatarUserBrush",            avatarUser);
-        TrySwapBrush(root, "AvatarAssistantBrush",       avatarAssistant);
-        TrySwapBrush(root, "AvatarErrorBrush",           avatarError);
-        TrySwapBrush(root, "AuthorTextBrush",            authorText);
+        Queue("BubbleUserBrush",            bubbleUser);
+        Queue("BubbleAssistantBrush",       bubbleAssistant);
+        Queue("BubbleErrorBrush",           bubbleError);
+        Queue("BubbleBorderUserBrush",      bubbleBorderUser);
+        Queue("BubbleBorderAssistantBrush", bubbleBorderAssist);
+        Queue("BubbleBorderErrorBrush",     bubbleBorderError);
+        Queue("AvatarUserBrush",            avatarUser);
+        Queue("AvatarAssistantBrush",       avatarAssistant);
+        Queue("AvatarErrorBrush",           avatarError);
+        Queue("AuthorTextBrush",            authorText);
+
+        ApplyBrushSwaps(root, targets, animate);
     }
 
-    private static void TrySwapBrush(FrameworkElement root, string key, string colorString)
+    private static void ApplyBrushSwaps(FrameworkElement root, List<(string Key, string ColorHex)> targets, bool animate)
     {
-        try
-        {
-            if (ParseColor(colorString) is not { } color) return;
-            if (root.Resources.TryGetValue(key, out var value) && value is SolidColorBrush brush)
-                brush.Color = color;
-        }
-        catch
-        {
-            // Swallow — never let a theme brush lookup crash the window.
-        }
-    }
+        StopColorAnimation();
 
-    private static void TrySwapGradient(FrameworkElement root, string key, string start, string end)
-    {
-        try
+        var transitions = new List<ColorTransition>(targets.Count);
+        foreach (var (key, hex) in targets)
         {
-            if (ParseColor(start) is not { } cStart || ParseColor(end) is not { } cEnd) return;
-            if (root.Resources.TryGetValue(key, out var value))
+            try
             {
-                if (value is LinearGradientBrush grad && grad.GradientStops.Count >= 2)
+                if (ParseColor(hex) is not { } targetColor) continue;
+                if (root.Resources.TryGetValue(key, out var val) && val is SolidColorBrush brush)
                 {
-                    grad.GradientStops[0].Color = cStart;
-                    grad.GradientStops[1].Color = cEnd;
-                }
-                else if (value is SolidColorBrush solid)
-                {
-                    solid.Color = cStart;
+                    if (!animate || !AreSystemAnimationsEnabled())
+                    {
+                        brush.Color = targetColor;
+                    }
+                    else if (brush.Color != targetColor)
+                    {
+                        transitions.Add(new ColorTransition(brush, brush.Color, targetColor));
+                    }
                 }
             }
+            catch
+            {
+                // Never let a theme lookup crash the process
+            }
+        }
+
+        if (!animate || !AreSystemAnimationsEnabled() || transitions.Count == 0) return;
+
+        _activeTransitions = transitions;
+        _colorAnimStopwatch ??= new System.Diagnostics.Stopwatch();
+        _colorAnimStopwatch.Restart();
+
+        if (!_colorAnimHooked)
+        {
+            CompositionTarget.Rendering += OnColorRendering;
+            _colorAnimHooked = true;
+        }
+    }
+
+    private static void OnColorRendering(object? sender, object e)
+    {
+        if (_colorAnimStopwatch is null || _activeTransitions is null)
+        {
+            StopColorAnimation();
+            return;
+        }
+
+        double elapsed = _colorAnimStopwatch.Elapsed.TotalMilliseconds;
+        double progress = Math.Clamp(elapsed / ColorAnimDurationMs, 0.0, 1.0);
+        double ease = -(Math.Cos(Math.PI * progress) - 1.0) / 2.0;
+
+        foreach (var trans in _activeTransitions)
+        {
+            trans.Brush.Color = LerpColor(trans.StartColor, trans.TargetColor, ease);
+        }
+
+        if (progress >= 1.0)
+        {
+            foreach (var trans in _activeTransitions)
+            {
+                trans.Brush.Color = trans.TargetColor;
+            }
+            StopColorAnimation();
+        }
+    }
+
+    public static void StopColorAnimation()
+    {
+        if (_colorAnimHooked)
+        {
+            CompositionTarget.Rendering -= OnColorRendering;
+            _colorAnimHooked = false;
+        }
+        _colorAnimStopwatch?.Stop();
+        _activeTransitions = null;
+    }
+
+    private static Color LerpColor(Color c1, Color c2, double t)
+    {
+        byte a = (byte)Math.Clamp(Math.Round(c1.A + (c2.A - c1.A) * t), 0, 255);
+        byte r = (byte)Math.Clamp(Math.Round(c1.R + (c2.R - c1.R) * t), 0, 255);
+        byte g = (byte)Math.Clamp(Math.Round(c1.G + (c2.G - c1.G) * t), 0, 255);
+        byte b = (byte)Math.Clamp(Math.Round(c1.B + (c2.B - c1.B) * t), 0, 255);
+        return Color.FromArgb(a, r, g, b);
+    }
+
+    private static bool AreSystemAnimationsEnabled()
+    {
+        try
+        {
+            return new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
         }
         catch
         {
-            // Swallow — never let a theme brush lookup crash the window.
+            return true;
         }
     }
 

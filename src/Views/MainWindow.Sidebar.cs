@@ -2,7 +2,8 @@
 // Vantage — MainWindow.Sidebar.cs
 //
 // Sidebar (pane) state, expand/collapse, page routing, Escape handler,
-// composer-focus styling, and the clear-history dialog.
+// composer-focus styling, and the clear-history dialog. Smooth animations
+// for page transitions and sidebar collapse/expand.
 
 using System;
 using Microsoft.UI.Xaml;
@@ -24,6 +25,13 @@ public sealed partial class MainWindow
     private bool _sidebarRenderingActive;
     private const double SidebarDurationMs = 260.0;
     private double _animDurationMs = SidebarDurationMs;
+
+    private string _currentPage = "chat";
+    private readonly System.Diagnostics.Stopwatch _pageAnimStopwatch = new();
+    private FrameworkElement? _incomingPage;
+    private FrameworkElement? _outgoingPage;
+    private bool _pageRenderingActive;
+    private const double PageDurationMs = 200.0;
 
     private void PaneToggleButton_Click(object sender, RoutedEventArgs e)
     {
@@ -50,17 +58,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!string.IsNullOrEmpty(SearchBox.Text))
-        {
-            SearchBox.Text = string.Empty;
-            SearchPanel.Visibility = Visibility.Collapsed;
-            InputBox.Focus(FocusState.Programmatic);
-            return;
-        }
-
         if (SearchPanel.Visibility == Visibility.Visible)
         {
-            SearchPanel.Visibility = Visibility.Collapsed;
+            CloseConversationSearch();
             InputBox.Focus(FocusState.Programmatic);
             return;
         }
@@ -72,12 +72,15 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ShowPage(string pageName)
+    private FrameworkElement GetPageElement(string pageName) => pageName switch
     {
-        Workspace.Visibility = pageName == "chat" ? Visibility.Visible : Visibility.Collapsed;
-        SettingsGrid.Visibility = pageName == "settings" ? Visibility.Visible : Visibility.Collapsed;
-        ProvidersGrid.Visibility = pageName == "providers" ? Visibility.Visible : Visibility.Collapsed;
+        "settings"  => SettingsGrid,
+        "providers" => ProvidersGrid,
+        _           => Workspace
+    };
 
+    private void ShowPage(string pageName, bool animate = true)
+    {
         ConversationList.SelectedItem = pageName == "chat" ? _activeConversation : null;
 
         if (RootGrid.Resources["AccentSoftBrush"] is Brush selected)
@@ -89,10 +92,104 @@ public sealed partial class MainWindow
             ProvidersButtonCollapsed.Background = pageName == "providers" ? selected : clear;
         }
 
-        // Settings page carries the palette picker; hidden WinUI subtrees
-        // don't always fire `Loaded`, so we kick the build when the user
-        // actually navigates here. The call is idempotent.
         if (pageName == "settings") BuildPalettePicker();
+
+        var targetElement = GetPageElement(pageName);
+        var currentElement = GetPageElement(_currentPage);
+
+        if (pageName == _currentPage && targetElement.Visibility == Visibility.Visible && _incomingPage is null)
+        {
+            return;
+        }
+
+        if (!animate || !AreSystemAnimationsEnabled() || targetElement == currentElement)
+        {
+            StopPageAnimation();
+            Workspace.Visibility = pageName == "chat" ? Visibility.Visible : Visibility.Collapsed;
+            SettingsGrid.Visibility = pageName == "settings" ? Visibility.Visible : Visibility.Collapsed;
+            ProvidersGrid.Visibility = pageName == "providers" ? Visibility.Visible : Visibility.Collapsed;
+            Workspace.Opacity = 1.0;
+            SettingsGrid.Opacity = 1.0;
+            ProvidersGrid.Opacity = 1.0;
+            Workspace.Translation = System.Numerics.Vector3.Zero;
+            SettingsGrid.Translation = System.Numerics.Vector3.Zero;
+            ProvidersGrid.Translation = System.Numerics.Vector3.Zero;
+            _currentPage = pageName;
+            return;
+        }
+
+        StartPageTransition(targetElement, currentElement, pageName);
+    }
+
+    private void StartPageTransition(FrameworkElement incoming, FrameworkElement outgoing, string newPageName)
+    {
+        StopPageAnimation();
+
+        _incomingPage = incoming;
+        _outgoingPage = outgoing;
+        _currentPage = newPageName;
+
+        incoming.Visibility = Visibility.Visible;
+        incoming.Opacity = 0.0;
+        incoming.Translation = new System.Numerics.Vector3(0, 16f, 0);
+
+        outgoing.Visibility = Visibility.Visible;
+        outgoing.Opacity = 1.0;
+
+        _pageAnimStopwatch.Restart();
+
+        if (!_pageRenderingActive)
+        {
+            CompositionTarget.Rendering += OnPageRendering;
+            _pageRenderingActive = true;
+        }
+    }
+
+    private void OnPageRendering(object? sender, object e)
+    {
+        double elapsed = _pageAnimStopwatch.Elapsed.TotalMilliseconds;
+        double progress = Math.Clamp(elapsed / PageDurationMs, 0.0, 1.0);
+        double ease = 1.0 - Math.Pow(1.0 - progress, 3.0);
+
+        if (_incomingPage is not null)
+        {
+            _incomingPage.Opacity = ease;
+            float offsetY = (float)(16.0 * (1.0 - ease));
+            _incomingPage.Translation = new System.Numerics.Vector3(0, offsetY, 0);
+        }
+
+        if (_outgoingPage is not null)
+        {
+            _outgoingPage.Opacity = Math.Clamp(1.0 - (progress * 1.5), 0.0, 1.0);
+        }
+
+        if (progress >= 1.0)
+        {
+            StopPageAnimation();
+            if (_outgoingPage is not null)
+            {
+                _outgoingPage.Visibility = Visibility.Collapsed;
+                _outgoingPage.Opacity = 1.0;
+                _outgoingPage.Translation = System.Numerics.Vector3.Zero;
+                _outgoingPage = null;
+            }
+            if (_incomingPage is not null)
+            {
+                _incomingPage.Opacity = 1.0;
+                _incomingPage.Translation = System.Numerics.Vector3.Zero;
+                _incomingPage = null;
+            }
+        }
+    }
+
+    internal void StopPageAnimation()
+    {
+        if (_pageRenderingActive)
+        {
+            CompositionTarget.Rendering -= OnPageRendering;
+            _pageRenderingActive = false;
+        }
+        _pageAnimStopwatch.Stop();
     }
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowPage("settings");

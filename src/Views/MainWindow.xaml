@@ -548,6 +548,12 @@
                                     Visibility="Collapsed">
                                 <ListView x:Name="SearchResultsList" IsItemClickEnabled="True"
                                           ItemClick="SearchResultsList_ItemClick" SelectionMode="None">
+                                    <ListView.ItemContainerTransitions>
+                                        <TransitionCollection>
+                                            <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="12" />
+                                            <RepositionThemeTransition />
+                                        </TransitionCollection>
+                                    </ListView.ItemContainerTransitions>
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Grid MinHeight="58" Padding="10,7">
@@ -569,6 +575,14 @@
                         <ListView x:Name="ConversationList" IsItemClickEnabled="True"
                                       ItemClick="ConversationList_ItemClick" SelectionMode="Single"
                                       ItemContainerStyle="{StaticResource ConversationListItemStyle}">
+                            <ListView.ItemContainerTransitions>
+                                <TransitionCollection>
+                                    <AddDeleteThemeTransition />
+                                    <ContentThemeTransition />
+                                    <ReorderThemeTransition />
+                                    <RepositionThemeTransition />
+                                </TransitionCollection>
+                            </ListView.ItemContainerTransitions>
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                         <Grid Height="60" Padding="10,6" ColumnSpacing="10">
@@ -970,6 +984,12 @@
 
                         <StackPanel x:Name="EmptyState" MaxWidth="640" Margin="32,0,32,90"
                                     HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="22">
+                            <StackPanel.Transitions>
+                                <TransitionCollection>
+                                    <EntranceThemeTransition FromVerticalOffset="20" />
+                                    <RepositionThemeTransition />
+                                </TransitionCollection>
+                            </StackPanel.Transitions>
                             <Border Width="72" Height="72" CornerRadius="14" HorizontalAlignment="Center"
                                     Background="{StaticResource SurfaceElevatedBrush}"
                                     BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1"
@@ -1061,6 +1081,12 @@
                     Visibility="Collapsed"
                     Background="{StaticResource PageBrush}">
                     <Grid Padding="36,28,36,40">
+                        <Grid.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="16" />
+                                <RepositionThemeTransition />
+                            </TransitionCollection>
+                        </Grid.ChildrenTransitions>
                         <Grid HorizontalAlignment="Stretch" MaxWidth="860">
                             <StackPanel Spacing="16">
                                 <Grid ColumnSpacing="12" Margin="0,0,0,10">
@@ -1162,6 +1188,12 @@
                     Visibility="Collapsed"
                     Background="{StaticResource PageBrush}">
                     <Grid Padding="36,28,36,40">
+                        <Grid.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="16" />
+                                <RepositionThemeTransition />
+                            </TransitionCollection>
+                        </Grid.ChildrenTransitions>
                         <Grid HorizontalAlignment="Stretch" MaxWidth="860">
                             <StackPanel Spacing="16">
                                 <Grid Margin="0,0,0,10">

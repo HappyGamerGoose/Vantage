@@ -96,6 +96,9 @@ public sealed partial class MainWindow : Window
             AppWindow.Closing += (sender, args) =>
             {
                 StopSidebarAnimation();
+                StopPageAnimation();
+                StopSearchAnimation();
+                ThemeManager.StopColorAnimation();
                 CommonUtils.LogDiagnostic("window-closing-flush",
                     "running PersistSync + SaveProviders before process exit");
                 FlushStateBeforeExit();
@@ -191,7 +194,7 @@ public sealed partial class MainWindow : Window
         // sidebar selection. Matches the README's flow: "The first
         // conversation is created when you send your first prompt."
         ActivateConversation(null);
-        ShowPage("chat");
+        ShowPage("chat", animate: false);
 
         RestoreComposerFocus();
     }
