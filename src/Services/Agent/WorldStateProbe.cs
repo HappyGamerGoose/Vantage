@@ -13,9 +13,9 @@
 
 using System.Diagnostics;
 using System.IO;
-using System.Management;
 using System.Runtime.Versioning;
 using System.Text;
+using Vantage.Common;
 using Vantage.Services;
 
 namespace Vantage.Services.Agent;
@@ -442,15 +442,18 @@ public sealed record WorldStateProbe(
     {
         try
         {
-            using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_Battery");
-            using var coll = searcher.Get();
-            foreach (ManagementObject o in coll)
+            if (NativeInterop.GetSystemPowerStatus(out var status))
             {
-                var pct = o["EstimatedChargeRemaining"]?.ToString();
-                var ac  = o["BatteryStatus"]?.ToString();
-                var s = $"AC={ac} pct={pct ?? "?"}";
-                o.Dispose();
-                return s;
+                // BatteryFlag 128 means no system battery installed (e.g. desktop PC)
+                if ((status.BatteryFlag & 128) != 0) return null;
+                var pct = status.BatteryLifePercent != 255 ? status.BatteryLifePercent.ToString() : "?";
+                var ac = status.ACLineStatus switch
+                {
+                    0 => "Offline",
+                    1 => "Online",
+                    _ => "?"
+                };
+                return $"AC={ac} pct={pct}";
             }
         }
         catch { }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Vantage.Common;
 
 namespace Vantage.Services;
 
@@ -35,9 +36,9 @@ public static class LocalPreferences
         }
     }
 
-    public static void SetBool(string key, bool value) => Set(key, JsonSerializer.SerializeToElement(value));
+    public static void SetBool(string key, bool value) => Set(key, JsonSerializer.SerializeToElement(value, JsonDefaults.Persist));
 
-    public static void SetString(string key, string value) => Set(key, JsonSerializer.SerializeToElement(value));
+    public static void SetString(string key, string value) => Set(key, JsonSerializer.SerializeToElement(value, JsonDefaults.Persist));
 
     private static Dictionary<string, JsonElement> Load()
     {
@@ -48,7 +49,8 @@ public static class LocalPreferences
             if (File.Exists(FilePath))
             {
                 _values = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                    File.ReadAllText(FilePath));
+                    File.ReadAllText(FilePath),
+                    JsonDefaults.Persist);
             }
         }
         catch
@@ -70,10 +72,7 @@ public static class LocalPreferences
             {
                 Directory.CreateDirectory(FolderPath);
                 var temporaryPath = FilePath + ".tmp";
-                File.WriteAllText(temporaryPath, JsonSerializer.Serialize(values, new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                }));
+                File.WriteAllText(temporaryPath, JsonSerializer.Serialize(values, JsonDefaults.Persist));
                 File.Move(temporaryPath, FilePath, true);
             }
             catch
