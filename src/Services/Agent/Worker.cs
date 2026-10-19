@@ -787,7 +787,8 @@ public sealed class Worker
                 or "key" or "press_key" or "press_window_key"
                 or "drag" or "drag_xy" or "drag_window"
                 or "scroll" or "scroll_xy" or "scroll_window"
-                or "launch_app" or "focus_app" or "resize_app" => true,
+                or "launch_app" or "focus_app" or "resize_app"
+                or "close_app" or "run_powershell" or "done" => true,
             _ => false
         };
     }

@@ -20,15 +20,16 @@ namespace Vantage.Services.Agent;
 
 public sealed class VantageACI
 {
-    private const int MaxBatchSteps = 8;
+    private const int MaxBatchSteps = 16;
     private static readonly HashSet<string> BatchableActions = new(StringComparer.OrdinalIgnoreCase)
     {
         "click", "click_xy", "type", "type_text", "key", "press_key",
         "scroll", "scroll_xy", "drag", "drag_xy", "move_mouse",
         "highlight_text_span", "activate_window", "click_element",
         "click_window_xy", "scroll_window", "drag_window", "set_value",
-        "type_window_text", "press_window_key", "focus_app", "wait",
-        "vantage_set_clipboard"
+        "type_window_text", "press_window_key", "launch_app", "focus_app",
+        "resize_app", "close_app", "wait", "run_powershell",
+        "vantage_set_clipboard", "done"
     };
     private readonly LMMEngine _groundingEngine;
     private readonly WindowsAutomationService.MonitorGeometry _monitor;
@@ -1119,8 +1120,8 @@ public sealed class VantageACI
         var steps = action.GetActionList("steps");
         if (steps.Count != rawSteps.GetArrayLength())
             return new ActionResult(ActionOutcome.Failed, "every batch step must be an object with a non-empty `action`");
-        if (steps.Count < 2)
-            return new ActionResult(ActionOutcome.Failed, "batch requires at least 2 steps; emit a single action directly");
+        if (steps.Count < 1)
+            return new ActionResult(ActionOutcome.Failed, "batch requires a non-empty `steps` array");
         if (steps.Count > MaxBatchSteps)
             return new ActionResult(ActionOutcome.Failed, $"batch is limited to {MaxBatchSteps} steps");
 
@@ -1146,6 +1147,12 @@ public sealed class VantageACI
 
             var result = await ExecuteCoreAsync(step, ct);
             summaries.Add($"{index + 1}:{step.Action}={result.Outcome}");
+            if (result.Outcome == ActionOutcome.Done)
+            {
+                return new ActionResult(
+                    ActionOutcome.Done,
+                    $"batch completed with done at step {index + 1}/{steps.Count}: {string.Join(", ", summaries)}");
+            }
             if (result.Outcome != ActionOutcome.Success)
             {
                 return new ActionResult(

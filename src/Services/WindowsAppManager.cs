@@ -187,6 +187,29 @@ public static class WindowsAppManager
         if (string.IsNullOrWhiteSpace(executable)) return false;
         try
         {
+            var trimmed = executable.Trim();
+            if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.Contains("://") ||
+                File.Exists(trimmed))
+            {
+                Process.Start(new ProcessStartInfo { FileName = trimmed, UseShellExecute = true });
+                return true;
+            }
+
+            var spaceIdx = trimmed.IndexOf(' ');
+            if (spaceIdx > 0 && !File.Exists(trimmed))
+            {
+                var file = trimmed.Substring(0, spaceIdx).Trim('"');
+                var args = trimmed.Substring(spaceIdx + 1).Trim();
+                try
+                {
+                    Process.Start(new ProcessStartInfo { FileName = file, Arguments = args, UseShellExecute = true });
+                    return true;
+                }
+                catch { /* fall back to direct start below */ }
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = executable,

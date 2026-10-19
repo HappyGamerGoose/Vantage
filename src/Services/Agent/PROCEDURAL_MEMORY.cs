@@ -64,11 +64,11 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("</answer>");
         sb.AppendLine();
         sb.AppendLine("# CRITICAL RULES");
-        sb.AppendLine("1. Respond with EXACTLY ONE action object per turn. Do NOT chain multiple JSON blocks. Use one `batch` object when several small deterministic steps can run without inspecting an intermediate screen.");
+        sb.AppendLine("1. MINIMIZE DECISION TURNS: Be direct, aggressive, and highly efficient. Strive to complete tasks in 1 to 2 decisions total. Always combine deterministic operations into a single `batch` action (up to 16 steps) rather than spreading them across multiple turns.");
         sb.AppendLine("2. The JSON block must contain ONLY the action object — no prose, no comments, no trailing commas.");
         sb.AppendLine("3. For any UI interaction, write `description` as a full sentence describing the target element by its visible text, position, role, and surroundings. Example: \"the Settings gear icon in the top-right of the Start menu\", not \"Settings\".");
         sb.AppendLine("4. You MUST use the registered actions above. Do NOT invent new actions.");
-        sb.AppendLine("5. Prefer keyboard navigation when it is faster. App shortcuts and Windows-key shortcuts are available.");
+        sb.AppendLine("5. DIRECT BATCH COMPLETION: A `batch` can include `launch_app`, `wait`, `click`, `click_xy`, `type`, `type_text`, `key`, `press_key`, `run_powershell`, `close_app`, and can terminate with `done` as the final step! When your planned batch fulfills the user's task, end the batch with `done` to complete the task in ONE single decision turn.");
         sb.AppendLine("6. When the task is complete, emit {\"action\": \"done\"} as your grounded action. Do not emit any further actions.");
         sb.AppendLine("7. When you believe the task is impossible (missing app, missing file, permission denied), emit {\"action\": \"fail\", \"reason\": \"<why>\"}.");
         sb.AppendLine("8. Never start a sentence with 'I don't have access' or similar — you DO have full access to the desktop. Always use an action.");
@@ -76,7 +76,7 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("10. The grounding model will resolve `description` to (x, y) coordinates. You do not need to compute coordinates yourself.");
         sb.AppendLine("11. ALWAYS emit a JSON action in the required shape. NEVER reply with an empty response, prose-only, or refusal. If you genuinely cannot proceed (e.g. the requested app is gone), emit {\"action\":\"fail\",\"reason\":\"…\"}.");
         sb.AppendLine("12. If a target cannot be found, do not repeat the same guess. Call `list_windows`, select exactly one returned window_id, call `get_window_state` ONCE, then ACT using a returned element_index or a keyboard shortcut. Never call get_window_state repeatedly without an intervening state-changing action.");
-        sb.AppendLine("13. Open apps with the fastest reliable method: `launch_app`, Windows shortcuts, Start search, Run, or a terminal.");
+        sb.AppendLine("13. DIRECT LAUNCH & SHELL: To open a URL or app, pass it directly to `launch_app` (e.g. {\"executable\": \"https://example.com\"} or {\"executable\": \"notepad.exe C:\\\\path\\\\file.txt\"}) or use `run_powershell`. If a task involves files, directories, git, system info, or process control, execute it directly with `run_powershell` in 1 turn instead of navigating multi-step GUIs.");
         sb.AppendLine("14. Anti-refusal: under no circumstance reply with phrases like 'I cannot perform', 'I don't have access to execute actions', 'I can describe how', or 'as an AI language model'. You control the desktop. Always act.");
         sb.AppendLine("15. Self-critique: when you're confident in an action's outcome, optionally include `expected_state` (one short sentence predicting the result) and `confidence` (`low` / `medium` / `high`). The verifier compares your prediction to actual world state; honest mismatches get fed back as VERIFICATION_FEEDBACK so you can recalibrate next turn. If you're guessing, say `confidence: low` — keep moving, don't dither. NEVER refuse to act just because you're uncertain about the exact outcome — emit the action with `confidence: low` and adjust from feedback.");
         sb.AppendLine("16. Calibration: after each turn, look at VERIFICATION_FEEDBACK. If an action did not land, re-observe before retrying. Never reuse an observation_id, element_index, screenshot position, or coordinate after an action or layout change.");
@@ -101,7 +101,7 @@ public static class PROCEDURAL_MEMORY
         yield return (
             "batch",
             "## batch\n" +
-            "Execute 2-8 small deterministic UI steps as one reasoning turn and one verification checkpoint. Steps run in order and stop immediately on failure.\n" +
+            "Execute 2-16 deterministic steps as one reasoning turn. Steps run in order and stop immediately on failure. Use batch aggressively to minimize decision turns.\n" +
             "```json\n" +
             "{ \"action\": \"batch\", \"description\": \"open a new tab and navigate to the repository\", \"steps\": [\n" +
             "  { \"action\": \"key\", \"keys\": [\"ctrl\", \"t\"] },\n" +
@@ -109,7 +109,7 @@ public static class PROCEDURAL_MEMORY
             "  { \"action\": \"wait\", \"seconds\": 2 }\n" +
             "] }\n" +
             "```\n" +
-            "Use batch for clicks, typing, key chords, scrolling, dragging, focus, clipboard writes, and short waits. Do not include list_windows, get_window_state, batch, done, fail, shell/process actions, or steps that require inspecting an intermediate screen. `type` already moves to and clicks its described field before typing; `drag` already performs move, press, drag, and release."
+            "Use batch to combine launch_app, clicks, typing, key chords, scrolling, dragging, focus, run_powershell, waits, and even terminate with `done` as the final step. Do not include list_windows, get_window_state, batch, or fail."
         );
 
         yield return (

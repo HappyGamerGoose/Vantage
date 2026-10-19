@@ -60,6 +60,7 @@ public static class ActionSanitizer
             ["launch_path"]         = new SanitizationRule("app-target", "launch_path"),
             ["focus_app"]           = new SanitizationRule("app-target", "focus_app"),
             ["focus_window"]        = new SanitizationRule("app-target", "focus_window"),
+            ["run_powershell"]      = new SanitizationRule("pwsh-cmd", "run_powershell"),
         };
 
     private sealed record SanitizationRule(string Requires, string DisplayName);
@@ -84,6 +85,7 @@ public static class ActionSanitizer
             "typed-text"  => HasTypedText(action, tool),
             "combo"       => HasCombo(action),
             "app-target"  => HasAppTarget(action),
+            "pwsh-cmd"    => !string.IsNullOrWhiteSpace(action.GetString("command")),
             _             => true,
         };
 
@@ -103,7 +105,7 @@ public static class ActionSanitizer
     private static bool HasDescription(AgentAction action)
     {
         var desc = action.GetString("description") ?? "";
-        return !string.IsNullOrWhiteSpace(desc);
+        return !string.IsNullOrWhiteSpace(desc) || action.GetPoint() is not null;
     }
 
     private static bool HasDragTarget(AgentAction action) =>
