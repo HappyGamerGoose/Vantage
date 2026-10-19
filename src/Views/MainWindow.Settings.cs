@@ -303,7 +303,7 @@ public sealed partial class MainWindow
         }
 
         _sidebarExpanded = LocalPreferences.GetBool("SidebarExpanded", true);
-        UpdateSidebarVisibility();
+        UpdateSidebarVisibility(animate: false);
     }
 
     private bool GetSetting(string key, bool defaultValue)

@@ -4,6 +4,7 @@
 // Sidebar (pane) state, expand/collapse, page routing, Escape handler,
 // composer-focus styling, and the clear-history dialog.
 
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -16,6 +17,12 @@ namespace Vantage;
 public sealed partial class MainWindow
 {
     private bool _sidebarExpanded = true;
+    private readonly System.Diagnostics.Stopwatch _sidebarAnimStopwatch = new();
+    private double _currentWidth = 292.0;
+    private double _startWidth = 292.0;
+    private double _targetWidth = 292.0;
+    private bool _sidebarRenderingActive;
+    private const double SidebarDurationMs = 240.0;
 
     private void PaneToggleButton_Click(object sender, RoutedEventArgs e)
     {
@@ -91,31 +98,166 @@ public sealed partial class MainWindow
 
     private void ProvidersButton_Click(object sender, RoutedEventArgs e) => ShowPage("providers");
 
-    private void UpdateSidebarVisibility()
+    private void UpdateSidebarVisibility(bool animate = true)
     {
         if (SidebarColumn is null) return;
 
-        if (_sidebarExpanded)
+        if (!animate || !AreSystemAnimationsEnabled())
         {
-            SidebarColumn.Width = new GridLength(292);
-            TitlebarNavBackdrop.Width = 292;
+            ApplySidebarImmediate(_sidebarExpanded);
+            return;
+        }
+
+        StartSidebarAnimation(_sidebarExpanded);
+    }
+
+    private void StartSidebarAnimation(bool expanding)
+    {
+        _targetWidth = expanding ? 292.0 : 64.0;
+        _startWidth = _currentWidth;
+
+        // If already at target width, snap directly to avoid redundant work
+        if (Math.Abs(_startWidth - _targetWidth) < 0.5)
+        {
+            ApplySidebarImmediate(expanding);
+            return;
+        }
+
+        ToolTipService.SetToolTip(PaneToggleButton, expanding ? "Collapse sidebar" : "Expand sidebar");
+        PaneToggleGlyph.Glyph = expanding ? "\uE76B" : "\uE76C";
+
+        ConversationPane.IsHitTestVisible = expanding;
+        CollapsedSidebarCommands.IsHitTestVisible = !expanding;
+
+        _sidebarAnimStopwatch.Restart();
+
+        if (!_sidebarRenderingActive)
+        {
+            CompositionTarget.Rendering += OnSidebarRendering;
+            _sidebarRenderingActive = true;
+        }
+    }
+
+    private void OnSidebarRendering(object? sender, object e)
+    {
+        double elapsed = _sidebarAnimStopwatch.Elapsed.TotalMilliseconds;
+        double progress = Math.Clamp(elapsed / SidebarDurationMs, 0.0, 1.0);
+        double ease = EaseOutCubic(progress);
+
+        double width = _startWidth + (_targetWidth - _startWidth) * ease;
+        ApplySidebarFrame(width);
+
+        if (progress >= 1.0)
+        {
+            StopSidebarAnimation();
+            ApplySidebarImmediate(_sidebarExpanded);
+        }
+    }
+
+    private void ApplySidebarFrame(double width)
+    {
+        if (SidebarColumn is null) return;
+
+        width = Math.Clamp(width, 64.0, 292.0);
+        _currentWidth = width;
+
+        SidebarColumn.Width = new GridLength(width);
+        TitlebarNavBackdrop.Width = width;
+
+        double margin = Math.Clamp(width - 48.0, 16.0, 244.0);
+        PaneToggleButton.Margin = new Thickness(margin, 0, 0, 0);
+
+        // BrandText: fades out below 220px, collapsed below 150px
+        if (width <= 150.0)
+        {
+            BrandText.Opacity = 0.0;
+            BrandText.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
             BrandText.Visibility = Visibility.Visible;
-            PaneToggleButton.Margin = new Thickness(244, 0, 0, 0);
-            ToolTipService.SetToolTip(PaneToggleButton, "Collapse sidebar");
-            PaneToggleGlyph.Glyph = "\uE76B";
+            BrandText.Opacity = Math.Clamp((width - 150.0) / (220.0 - 150.0), 0.0, 1.0);
+        }
+
+        // ConversationPane: fades out between 220px and 140px, collapsed below 140px
+        if (width <= 140.0)
+        {
+            ConversationPane.Opacity = 0.0;
+            ConversationPane.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
             ConversationPane.Visibility = Visibility.Visible;
+            ConversationPane.Opacity = Math.Clamp((width - 140.0) / (220.0 - 140.0), 0.0, 1.0);
+        }
+
+        // CollapsedSidebarCommands: visible below 140px, fades in between 140px and 80px
+        if (width >= 140.0)
+        {
+            CollapsedSidebarCommands.Opacity = 0.0;
             CollapsedSidebarCommands.Visibility = Visibility.Collapsed;
         }
         else
         {
-            SidebarColumn.Width = new GridLength(64);
-            TitlebarNavBackdrop.Width = 64;
-            BrandText.Visibility = Visibility.Collapsed;
-            PaneToggleButton.Margin = new Thickness(16, 0, 0, 0);
-            ToolTipService.SetToolTip(PaneToggleButton, "Expand sidebar");
-            PaneToggleGlyph.Glyph = "\uE76C";
-            ConversationPane.Visibility = Visibility.Collapsed;
             CollapsedSidebarCommands.Visibility = Visibility.Visible;
+            CollapsedSidebarCommands.Opacity = Math.Clamp((140.0 - width) / (140.0 - 80.0), 0.0, 1.0);
+        }
+    }
+
+    private void ApplySidebarImmediate(bool expanded)
+    {
+        StopSidebarAnimation();
+
+        _sidebarExpanded = expanded;
+        double targetWidth = expanded ? 292.0 : 64.0;
+        _currentWidth = targetWidth;
+
+        if (SidebarColumn is null) return;
+
+        SidebarColumn.Width = new GridLength(targetWidth);
+        TitlebarNavBackdrop.Width = targetWidth;
+        PaneToggleButton.Margin = new Thickness(expanded ? 244.0 : 16.0, 0, 0, 0);
+
+        ToolTipService.SetToolTip(PaneToggleButton, expanded ? "Collapse sidebar" : "Expand sidebar");
+        PaneToggleGlyph.Glyph = expanded ? "\uE76B" : "\uE76C";
+
+        BrandText.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        BrandText.Opacity = expanded ? 1.0 : 0.0;
+
+        ConversationPane.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        ConversationPane.Opacity = expanded ? 1.0 : 0.0;
+        ConversationPane.IsHitTestVisible = expanded;
+
+        CollapsedSidebarCommands.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
+        CollapsedSidebarCommands.Opacity = expanded ? 0.0 : 1.0;
+        CollapsedSidebarCommands.IsHitTestVisible = !expanded;
+    }
+
+    internal void StopSidebarAnimation()
+    {
+        if (_sidebarRenderingActive)
+        {
+            CompositionTarget.Rendering -= OnSidebarRendering;
+            _sidebarRenderingActive = false;
+        }
+        _sidebarAnimStopwatch.Stop();
+    }
+
+    private static double EaseOutCubic(double t)
+    {
+        double f = 1.0 - t;
+        return 1.0 - (f * f * f);
+    }
+
+    private static bool AreSystemAnimationsEnabled()
+    {
+        try
+        {
+            return new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
+        }
+        catch
+        {
+            return true;
         }
     }
 

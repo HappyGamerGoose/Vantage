@@ -95,6 +95,7 @@ public sealed partial class MainWindow : Window
         {
             AppWindow.Closing += (sender, args) =>
             {
+                StopSidebarAnimation();
                 CommonUtils.LogDiagnostic("window-closing-flush",
                     "running PersistSync + SaveProviders before process exit");
                 FlushStateBeforeExit();
@@ -162,7 +163,7 @@ public sealed partial class MainWindow : Window
         UpdateAboutVersionText();
         LoadProviders();
         RenderProviderCards();
-        UpdateSidebarVisibility();
+        UpdateSidebarVisibility(animate: false);
         UpdateComposerFocus();
 
         await LoadConversationsAsync();
