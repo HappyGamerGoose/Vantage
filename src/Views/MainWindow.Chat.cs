@@ -264,7 +264,8 @@ public sealed partial class MainWindow
                 .Where(m => !ReferenceEquals(m, assistantMessage)
                     && !m.IsAgentRun
                     && !string.IsNullOrWhiteSpace(m.Text))
-                .TakeLast(24);
+                .ToList();
+            agent.ActiveTaskGoal = conversation.Title;
             foreach (var message in history)
             {
                 token.ThrowIfCancellationRequested();

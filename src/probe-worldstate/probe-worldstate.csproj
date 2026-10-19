@@ -26,6 +26,7 @@
     <Compile Include="..\Services\Agent\ActionResult.cs" Link="ActionResult.cs" />
     <Compile Include="..\Services\Agent\ComputerUseSession.cs" Link="ComputerUseSession.cs" />
     <Compile Include="..\Services\Agent\ContextWindowCompactor.cs" Link="ContextWindowCompactor.cs" />
+    <Compile Include="..\Services\Agent\ContextWindowLimits.cs" Link="ContextWindowLimits.cs" />
     <Compile Include="..\Services\Agent\PersistentTaskContext.cs" Link="PersistentTaskContext.cs" />
     <Compile Include="..\Services\ModelDisplayNameService.cs" Link="ModelDisplayNameService.cs" />
     <Compile Include="..\Services\Agent\PROCEDURAL_MEMORY.cs" Link="PROCEDURAL_MEMORY.cs" />

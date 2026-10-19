@@ -43,16 +43,30 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         });
     }
 
+    // Inject entities and directives into messages to test practically-lossless extraction
+    messages[1]["content"]!.AsArray()[0]!["text"] = "Open C:\\Users\\Akshith\\Documents\\report.xlsx and navigate to https://github.com/vantage. Ensure PID: 4920 is verified and error 0x80070005 avoided.";
+
     var compacted = ContextWindowCompactor.Compact(messages, keepRecentNonSystemMessages: 6, keepRecentImages: 2);
     var retainedImages = messages
         .SelectMany(message => (message["content"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
         .Count(block => block["type"]?.GetValue<string>() is "image" or "image_url");
-    var windowValid = compacted.RemovedMessages == 2
+
+    var limitsValid = ContextWindowLimits.GetModelContextWindow("claude-3-5-sonnet") == 200_000
+        && ContextWindowLimits.GetModelContextWindow("gpt-4o") == 128_000
+        && ContextWindowLimits.GetModelContextWindow("llama-3.3-70b", "https://api.groq.com/openai/v1") == 24_000
+        && ContextWindowLimits.IsContextLimitExceeded(413, null, null)
+        && ContextWindowLimits.IsContextLimitExceeded(400, "{\"code\":\"context_length_exceeded\"}", null)
+        && ContextWindowLimits.IsContextLimitExceeded(400, "prompt is too long: 205000 tokens", null);
+
+    var windowValid = limitsValid
+        && compacted.RemovedMessages == 2
         && compacted.RemovedImages == 2
         && messages.Count == 7
         && retainedImages == 2
-        && compacted.Summary.Contains("The assistant planned: action 1.", StringComparison.Ordinal)
-        && compacted.Summary.Contains("Older screenshots were discarded", StringComparison.Ordinal);
+        && compacted.Summary.Contains("action 1", StringComparison.OrdinalIgnoreCase)
+        && compacted.Summary.Contains("C:\\Users\\Akshith\\Documents\\report.xlsx", StringComparison.OrdinalIgnoreCase)
+        && compacted.Summary.Contains("https://github.com/vantage", StringComparison.OrdinalIgnoreCase)
+        && compacted.Summary.Contains("0x80070005", StringComparison.OrdinalIgnoreCase);
 
     var directory = Path.Combine(Path.GetTempPath(), "vantage-context-test-" + Guid.NewGuid().ToString("N"));
     var persistentValid = false;

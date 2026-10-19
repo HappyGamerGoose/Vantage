@@ -273,6 +273,15 @@ public static class CommonUtils
             catch (OperationCanceledException) { throw; }
             catch (LmmProviderException pex)
             {
+                if (ContextWindowLimits.IsContextLimitExceeded(pex.HttpStatus, pex.RawBody, pex.Message) && attempt < maxRetries)
+                {
+                    LogDiagnostic("llm-context-limit-exceeded",
+                        $"status={pex.HttpStatus} msg={Truncate(pex.Message, 200)} initiating emergency context compaction and retrying");
+                    agent.EmergencyCompactOnLimitExceeded(maxNewTokens);
+                    await Task.Delay(200, ct);
+                    continue;
+                }
+
                 // Terminal-ish provider error (e.g. Groq's "invalid format"
                 // 4xx). Don't loop — same payload won't suddenly succeed.
                 lastPlan = pex.Message;

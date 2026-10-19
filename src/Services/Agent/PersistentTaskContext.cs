@@ -77,6 +77,34 @@ public sealed class PersistentTaskContext
         sb.AppendLine("# PERSISTENT TASK STATE");
         sb.AppendLine($"Goal: {Fallback(_snapshot.Goal, "Complete the requested task.")}");
         sb.AppendLine($"Last action: {Fallback(_snapshot.LastActionSummary, "No action has been taken yet.")}");
+        
+        if (_snapshot.DiscoveredEntities.Count > 0)
+        {
+            sb.AppendLine("Discovered entities & facts:");
+            foreach (var entity in _snapshot.DiscoveredEntities.TakeLast(8))
+            {
+                sb.Append("  * ").AppendLine(entity);
+            }
+        }
+
+        if (_snapshot.Milestones.Count > 0)
+        {
+            sb.AppendLine("Accomplished milestones (do not repeat):");
+            foreach (var milestone in _snapshot.Milestones.TakeLast(6))
+            {
+                sb.Append("  [✓] ").AppendLine(milestone);
+            }
+        }
+
+        if (_snapshot.FailedAttempts.Count > 0)
+        {
+            sb.AppendLine("Pitfalls to avoid (previous failed actions):");
+            foreach (var attempt in _snapshot.FailedAttempts.TakeLast(5))
+            {
+                sb.Append("  [!] ").AppendLine(attempt);
+            }
+        }
+
         sb.AppendLine("To-do list:");
         foreach (var item in _snapshot.Todos.Take(MaxTodoItems))
         {
@@ -88,6 +116,84 @@ public sealed class PersistentTaskContext
         sb.AppendLine("Include task_update in each action as {\"add\":[],\"complete\":[],\"reopen\":[]}. Add contains new step text; complete and reopen contain existing to-do IDs. Do not complete goal directly or mark any step complete until its action succeeded.");
         return sb.ToString().TrimEnd();
     }
+
+    public void RecordDiscoveredEntity(string entity)
+    {
+        if (string.IsNullOrWhiteSpace(entity)) return;
+        var normalized = Normalize(entity, 240);
+        if (!_snapshot.DiscoveredEntities.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            _snapshot.DiscoveredEntities.Add(normalized);
+            while (_snapshot.DiscoveredEntities.Count > 30) _snapshot.DiscoveredEntities.RemoveAt(0);
+            _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+        }
+    }
+
+    public void RecordDiscoveredEntities(IEnumerable<string> entities)
+    {
+        var changed = false;
+        foreach (var entity in entities)
+        {
+            if (string.IsNullOrWhiteSpace(entity)) continue;
+            var normalized = Normalize(entity, 240);
+            if (!_snapshot.DiscoveredEntities.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            {
+                _snapshot.DiscoveredEntities.Add(normalized);
+                changed = true;
+            }
+        }
+        while (_snapshot.DiscoveredEntities.Count > 30)
+        {
+            _snapshot.DiscoveredEntities.RemoveAt(0);
+            changed = true;
+        }
+        if (changed)
+        {
+            _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+        }
+    }
+
+    public void RecordMilestone(string milestone)
+    {
+        if (string.IsNullOrWhiteSpace(milestone)) return;
+        var normalized = Normalize(milestone, 240);
+        if (!_snapshot.Milestones.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            _snapshot.Milestones.Add(normalized);
+            while (_snapshot.Milestones.Count > 20) _snapshot.Milestones.RemoveAt(0);
+            _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+        }
+    }
+
+    public void RecordFailedAttempt(string description, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return;
+        var normalized = Normalize($"{description} -> {reason}", 240);
+        if (!_snapshot.FailedAttempts.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            _snapshot.FailedAttempts.Add(normalized);
+            while (_snapshot.FailedAttempts.Count > 15) _snapshot.FailedAttempts.RemoveAt(0);
+            _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+            Save();
+        }
+    }
+
+    public void SetCompactedMemorySummary(string summary)
+    {
+        _snapshot.CompactedMemorySummary = summary ?? string.Empty;
+        _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+        Save();
+    }
+
+    public string Goal => _snapshot.Goal;
+    public IReadOnlyList<TaskTodoItem> Todos => _snapshot.Todos;
+    public IReadOnlyList<string> DiscoveredEntities => _snapshot.DiscoveredEntities;
+    public IReadOnlyList<string> Milestones => _snapshot.Milestones;
+    public IReadOnlyList<string> FailedAttempts => _snapshot.FailedAttempts;
+    public string CompactedMemorySummary => _snapshot.CompactedMemorySummary;
 
     public void RecordAction(string actionName, JsonElement rawAction, ActionResult result)
     {
@@ -284,10 +390,14 @@ public sealed class PersistentTaskContext
         public string Goal { get; set; } = "";
         public string LastActionSummary { get; set; } = "";
         public List<TaskTodoItem> Todos { get; set; } = new();
+        public List<string> DiscoveredEntities { get; set; } = new();
+        public List<string> Milestones { get; set; } = new();
+        public List<string> FailedAttempts { get; set; } = new();
+        public string CompactedMemorySummary { get; set; } = "";
         public DateTimeOffset UpdatedAt { get; set; }
     }
 
-    private sealed class TaskTodoItem
+    public sealed class TaskTodoItem
     {
         public string Id { get; set; } = "";
         public string Text { get; set; } = "";

@@ -22,16 +22,23 @@ public sealed class LmmAgent
     public string SystemPrompt { get; private set; } = "You are a helpful assistant.";
     public List<JsonObject> Messages { get; private set; } = new();
     public bool UseThinking { get; set; }
+    public LMMEngine Engine => _engine;
+    public PersistentTaskContext? TaskContext { get; set; }
+    public string? ActiveTaskGoal { get; set; }
 
     public LmmAgent(
         LMMEngine engine,
         string systemPrompt = "You are a helpful assistant.",
         int activeTextHistoryMessages = int.MaxValue,
-        int activeVisualHistoryTurns = 6)
+        int activeVisualHistoryTurns = 6,
+        PersistentTaskContext? taskContext = null,
+        string? activeTaskGoal = null)
     {
         _engine = engine;
         _activeTextHistoryMessages = Math.Max(1, activeTextHistoryMessages);
         _activeVisualHistoryTurns = Math.Max(1, activeVisualHistoryTurns);
+        TaskContext = taskContext;
+        ActiveTaskGoal = activeTaskGoal;
         AddSystemPrompt(systemPrompt);
     }
 
@@ -147,15 +154,21 @@ public sealed class LmmAgent
     /// <summary>Plain text completion. For grounding/short prompts.</summary>
     public async Task<LmmResponse> GetResponseAsync(double temperature = 0.0, int maxTokens = 4096, CancellationToken ct = default)
     {
-        // Keep a fixed recent window. Durable task continuity is injected by
-        // Worker as text on every turn, so old prose and screenshots do not
-        // need to accumulate in the provider context.
-        var compacted = CompactContextWindow();
-        if (compacted.RemovedMessages > 0 || compacted.RemovedImages > 0)
+        // Proactively check if context window limits are reached or approaching
+        var estimate = ContextWindowLimits.EstimateTokens(
+            Messages,
+            maxTokens,
+            model: _engine.Model,
+            baseUrl: _engine.BaseUrl);
+
+        if (estimate.NeedsCompaction || Messages.Count > _activeTextHistoryMessages)
         {
-            CommonUtils.LogDiagnostic("lmm-context-window-compacted",
-                $"messages={compacted.RemovedMessages} images={compacted.RemovedImages} " +
-                $"summary_chars={compacted.Summary.Length} retained={Messages.Count}");
+            var compacted = CompactContextWindow();
+            if (compacted.RemovedMessages > 0 || compacted.RemovedImages > 0)
+            {
+                CommonUtils.LogDiagnostic("lmm-context-window-proactive-compacted",
+                    $"model={_engine.Model} before={estimate.TotalTokens} after={compacted.TokensAfter} limit={estimate.ContextLimit} threshold={estimate.CompactionThreshold} msgs_removed={compacted.RemovedMessages}");
+            }
         }
 
         // A byte-budget backstop remains for unusually large recent captures.
@@ -180,29 +193,50 @@ public sealed class LmmAgent
     }
 
     /// <summary>
-    /// Retains the system instruction, a small recent text window, and only
-    /// the newest visual turns. Older screenshots are removed rather than
-    /// represented as prompt text; <see cref="PersistentTaskContext"/>
-    /// carries the durable text state needed to continue the task.
+    /// Retains the system instruction, distilled persistent task state, and only
+    /// the newest visual turns. Older turns are practically losslessly compacted.
     /// </summary>
     public ContextWindowCompactor.Result CompactContextWindow(
         int? keepRecentNonSystemMessages = null,
-        int? keepRecentImages = null) =>
+        int? keepRecentImages = null,
+        bool isEmergency = false) =>
         CompactAndRemember(
-            keepRecentNonSystemMessages ?? _activeTextHistoryMessages,
-            keepRecentImages ?? _activeVisualHistoryTurns);
+            keepRecentNonSystemMessages ?? (isEmergency ? 1 : 2),
+            keepRecentImages ?? (isEmergency ? 1 : _activeVisualHistoryTurns),
+            isEmergency);
 
     private ContextWindowCompactor.Result CompactAndRemember(
         int keepRecentNonSystemMessages,
-        int keepRecentImages)
+        int keepRecentImages,
+        bool isEmergency = false)
     {
         var result = ContextWindowCompactor.Compact(
             Messages,
             keepRecentNonSystemMessages,
             keepRecentImages,
-            _contextSummary);
+            _contextSummary,
+            TaskContext,
+            ActiveTaskGoal,
+            isEmergency);
         _contextSummary = result.Summary;
         ApplyContextSummaryToSystemMessage();
+        return result;
+    }
+
+    /// <summary>
+    /// Reactively invoked when the provider returns a context length exceeded or 413 payload too large error.
+    /// Aggressively compacts history down to the distilled memory anchor + latest turn to clear the boundary.
+    /// </summary>
+    public ContextWindowCompactor.Result EmergencyCompactOnLimitExceeded(int maxTokens = 4096)
+    {
+        CommonUtils.LogDiagnostic("lmm-context-window-emergency-compact",
+            $"model={_engine.Model} initiating emergency compaction to clear limit exceeded error");
+
+        var result = CompactContextWindow(keepRecentNonSystemMessages: 1, keepRecentImages: 1, isEmergency: true);
+
+        // Downscale image budget to 4MB ceiling
+        CompactImageHistory(maxBodyBytes: 4L * 1024 * 1024, keepLastImageTurns: 1);
+
         return result;
     }
 

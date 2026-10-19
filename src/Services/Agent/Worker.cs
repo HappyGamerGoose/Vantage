@@ -111,8 +111,9 @@ public sealed class Worker
         _generator = new LmmAgent(
             engine,
             workerPrompt,
-            activeTextHistoryMessages: 6,
-            activeVisualHistoryTurns: 1);
+            activeTextHistoryMessages: 30,
+            activeVisualHistoryTurns: 1,
+            taskContext: _taskContext);
         _reflector = new LmmAgent(
             engine,
             PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY,
@@ -120,7 +121,11 @@ public sealed class Worker
             activeVisualHistoryTurns: 1);
     }
 
-    public void BeginTask(string instruction) => _taskContext.BeginTask(instruction);
+    public void BeginTask(string instruction)
+    {
+        _taskContext.BeginTask(instruction);
+        _generator.ActiveTaskGoal = instruction;
+    }
 
     /// <summary>
     /// Run one iteration of the worker loop: capture screenshot, prompt
@@ -689,6 +694,16 @@ public sealed class Worker
                         : $"verification did not confirm progress: {verdict.Reason}")
                 : result;
         _taskContext.RecordAction(action.Action, action.Raw, taskResult);
+        if (taskResult.Outcome is ActionOutcome.Success or ActionOutcome.Done)
+        {
+            var desc = action.GetString("description") ?? action.Action;
+            _taskContext.RecordMilestone($"{desc}: {taskResult.Description}");
+        }
+        else if (taskResult.Outcome is ActionOutcome.Failed or ActionOutcome.FailedFatal)
+        {
+            var desc = action.GetString("description") ?? action.Action;
+            _taskContext.RecordFailedAttempt(desc, taskResult.Description);
+        }
         _turnCount++;
         FlushHistory();
         // Per-phase wall-clock log — the easiest way to attribute slow
