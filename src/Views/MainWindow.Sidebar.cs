@@ -22,7 +22,8 @@ public sealed partial class MainWindow
     private double _startWidth = 292.0;
     private double _targetWidth = 292.0;
     private bool _sidebarRenderingActive;
-    private const double SidebarDurationMs = 240.0;
+    private const double SidebarDurationMs = 260.0;
+    private double _animDurationMs = SidebarDurationMs;
 
     private void PaneToggleButton_Click(object sender, RoutedEventArgs e)
     {
@@ -116,12 +117,16 @@ public sealed partial class MainWindow
         _targetWidth = expanding ? 292.0 : 64.0;
         _startWidth = _currentWidth;
 
+        double distance = Math.Abs(_startWidth - _targetWidth);
         // If already at target width, snap directly to avoid redundant work
-        if (Math.Abs(_startWidth - _targetWidth) < 0.5)
+        if (distance < 0.5)
         {
             ApplySidebarImmediate(expanding);
             return;
         }
+
+        // Dynamically scale duration if reversing mid-animation so speed remains natural
+        _animDurationMs = Math.Clamp(SidebarDurationMs * (distance / (292.0 - 64.0)), 120.0, SidebarDurationMs);
 
         ToolTipService.SetToolTip(PaneToggleButton, expanding ? "Collapse sidebar" : "Expand sidebar");
         PaneToggleGlyph.Glyph = expanding ? "\uE76B" : "\uE76C";
@@ -141,8 +146,8 @@ public sealed partial class MainWindow
     private void OnSidebarRendering(object? sender, object e)
     {
         double elapsed = _sidebarAnimStopwatch.Elapsed.TotalMilliseconds;
-        double progress = Math.Clamp(elapsed / SidebarDurationMs, 0.0, 1.0);
-        double ease = EaseOutCubic(progress);
+        double progress = Math.Clamp(elapsed / _animDurationMs, 0.0, 1.0);
+        double ease = EaseInOutSine(progress);
 
         double width = _startWidth + (_targetWidth - _startWidth) * ease;
         ApplySidebarFrame(width);
@@ -167,8 +172,20 @@ public sealed partial class MainWindow
         double margin = Math.Clamp(width - 48.0, 16.0, 244.0);
         PaneToggleButton.Margin = new Thickness(margin, 0, 0, 0);
 
-        // BrandText: fades out below 220px, collapsed below 150px
-        if (width <= 150.0)
+        double u = Math.Clamp((width - 64.0) / (292.0 - 64.0), 0.0, 1.0);
+
+        // Clip the sidebar content cleanly so ConversationPane never bleeds into the workspace
+        if (SidebarHost is not null)
+        {
+            double hostHeight = SidebarHost.ActualHeight > 0 ? SidebarHost.ActualHeight : 4000.0;
+            SidebarHost.Clip = new RectangleGeometry
+            {
+                Rect = new Windows.Foundation.Rect(0, 0, width, hostHeight)
+            };
+        }
+
+        // BrandText: fades in as the button glides across to the right
+        if (u <= 0.20)
         {
             BrandText.Opacity = 0.0;
             BrandText.Visibility = Visibility.Collapsed;
@@ -176,11 +193,11 @@ public sealed partial class MainWindow
         else
         {
             BrandText.Visibility = Visibility.Visible;
-            BrandText.Opacity = Math.Clamp((width - 150.0) / (220.0 - 150.0), 0.0, 1.0);
+            BrandText.Opacity = Math.Clamp((u - 0.20) / 0.60, 0.0, 1.0);
         }
 
-        // ConversationPane: fades out between 220px and 140px, collapsed below 140px
-        if (width <= 140.0)
+        // ConversationPane: fades in smoothly as the panel widens
+        if (u <= 0.05)
         {
             ConversationPane.Opacity = 0.0;
             ConversationPane.Visibility = Visibility.Collapsed;
@@ -188,11 +205,11 @@ public sealed partial class MainWindow
         else
         {
             ConversationPane.Visibility = Visibility.Visible;
-            ConversationPane.Opacity = Math.Clamp((width - 140.0) / (220.0 - 140.0), 0.0, 1.0);
+            ConversationPane.Opacity = Math.Clamp((u - 0.05) / 0.75, 0.0, 1.0);
         }
 
-        // CollapsedSidebarCommands: visible below 140px, fades in between 140px and 80px
-        if (width >= 140.0)
+        // CollapsedSidebarCommands: fades out as the panel widens
+        if (u >= 0.50)
         {
             CollapsedSidebarCommands.Opacity = 0.0;
             CollapsedSidebarCommands.Visibility = Visibility.Collapsed;
@@ -200,7 +217,7 @@ public sealed partial class MainWindow
         else
         {
             CollapsedSidebarCommands.Visibility = Visibility.Visible;
-            CollapsedSidebarCommands.Opacity = Math.Clamp((140.0 - width) / (140.0 - 80.0), 0.0, 1.0);
+            CollapsedSidebarCommands.Opacity = Math.Clamp((0.50 - u) / 0.45, 0.0, 1.0);
         }
     }
 
@@ -231,6 +248,11 @@ public sealed partial class MainWindow
         CollapsedSidebarCommands.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
         CollapsedSidebarCommands.Opacity = expanded ? 0.0 : 1.0;
         CollapsedSidebarCommands.IsHitTestVisible = !expanded;
+
+        if (SidebarHost is not null)
+        {
+            SidebarHost.Clip = null;
+        }
     }
 
     internal void StopSidebarAnimation()
@@ -243,10 +265,9 @@ public sealed partial class MainWindow
         _sidebarAnimStopwatch.Stop();
     }
 
-    private static double EaseOutCubic(double t)
+    private static double EaseInOutSine(double t)
     {
-        double f = 1.0 - t;
-        return 1.0 - (f * f * f);
+        return -(Math.Cos(Math.PI * t) - 1.0) / 2.0;
     }
 
     private static bool AreSystemAnimationsEnabled()

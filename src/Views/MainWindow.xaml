@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 <Window
     x:Class="Vantage.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -506,8 +506,8 @@
             <!-- ============ UNIFIED CONVERSATION SIDEBAR ============ -->
             <Border Grid.Column="0" Background="{StaticResource PaneBrush}"
                     BorderBrush="{StaticResource PaneEdgeBrush}" BorderThickness="0,0,1,0">
-                <Grid>
-                    <Grid x:Name="ConversationPane" Padding="20,12,16,14">
+                <Grid x:Name="SidebarHost">
+                    <Grid x:Name="ConversationPane" Width="292" HorizontalAlignment="Left" Padding="20,12,16,14">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -629,7 +629,7 @@
                         </Border>
                     </Grid>
 
-                    <Grid x:Name="CollapsedSidebarCommands" Visibility="Collapsed" Margin="0,14,0,14">
+                    <Grid x:Name="CollapsedSidebarCommands" Width="64" HorizontalAlignment="Left" Visibility="Collapsed" Margin="0,14,0,14">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
