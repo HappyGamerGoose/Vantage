@@ -67,7 +67,7 @@ public sealed class VantageACI
         // returns coords assuming the image is the screen, but the agent
         // treats them as logical-pixel coords on the actual monitor — a
         // 1.0-1.5× scale mismatch that drags every click off-target.
-        var (w, h) = ReadPngDimensions(jpegBytes);
+        var (w, h) = ReadImageDimensions(jpegBytes);
         _screenshotWidth  = w;
         _screenshotHeight = h;
     }
@@ -228,9 +228,18 @@ public sealed class VantageACI
 
     private async Task<ActionResult> DoClickAsync(AgentAction action, CancellationToken ct)
     {
+        var pt = action.GetPoint();
+        if (pt is not null)
+        {
+            if (!IsPointOnCapturedDisplay(pt.Value.X, pt.Value.Y))
+                return PointOutsideCapture("click", pt.Value.X, pt.Value.Y);
+            var desc = action.GetString("description") ?? $"({pt.Value.X}, {pt.Value.Y})";
+            return await DoClickDispatch(action, pt.Value.X, pt.Value.Y, ct, description: desc);
+        }
+
         var description = action.GetString("description");
         if (string.IsNullOrWhiteSpace(description))
-            return new ActionResult(ActionOutcome.Failed, "click requires `description`");
+            return new ActionResult(ActionOutcome.Failed, "click requires `description` or `x`/`y` coordinates");
 
         // FAST PATH: if the description is a substring of a currently visible
         // window's title (case-insensitive), click that window's center
@@ -355,7 +364,16 @@ public sealed class VantageACI
         var overwrite = action.GetBool("overwrite", false);
         var enter = action.GetBool("enter", false);
 
-        if (!string.IsNullOrWhiteSpace(description))
+        var pt = action.GetPoint();
+        if (pt is not null)
+        {
+            if (IsPointOnCapturedDisplay(pt.Value.X, pt.Value.Y))
+            {
+                WindowsAutomationService.LeftClick(pt.Value.X, pt.Value.Y);
+                await Task.Yield();
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(description))
         {
             var coords = await GroundAsync(description, ct);
             if (coords is null)
@@ -634,6 +652,59 @@ public sealed class VantageACI
     /// (4 big-endian) + height (4 big-endian). Returns (0, 0) on any
     /// malformed input — callers must treat that as "unknown".
     /// </summary>
+    /// <summary>
+    /// Reads width and height from PNG or JPEG byte array header without decoding pixel data.
+    /// Fast in-memory parse taking less than a microsecond.
+    /// </summary>
+    internal static (int Width, int Height) ReadImageDimensions(byte[] bytes)
+    {
+        if (bytes is null || bytes.Length < 24) return (0, 0);
+
+        // PNG: 89 50 4E 47
+        if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            return ReadPngDimensions(bytes);
+
+        // JPEG: FF D8
+        if (bytes[0] == 0xFF && bytes[1] == 0xD8)
+        {
+            int i = 2;
+            while (i < bytes.Length - 8)
+            {
+                if (bytes[i] != 0xFF) { i++; continue; }
+                while (i < bytes.Length && bytes[i] == 0xFF) i++;
+                if (i >= bytes.Length) break;
+                byte marker = bytes[i++];
+                if (marker == 0xD8 || marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+                if (i + 2 > bytes.Length) break;
+                int len = (bytes[i] << 8) | bytes[i + 1];
+                if (marker is 0xC0 or 0xC1 or 0xC2 or 0xC3 or 0xC5 or 0xC6 or 0xC7 or 0xC9 or 0xCA or 0xCB or 0xCD or 0xCE or 0xCF)
+                {
+                    if (i + 7 <= bytes.Length)
+                    {
+                        int h = (bytes[i + 3] << 8) | bytes[i + 4];
+                        int w = (bytes[i + 5] << 8) | bytes[i + 6];
+                        if (w > 0 && h > 0 && w <= 16384 && h <= 16384)
+                            return (w, h);
+                    }
+                    break;
+                }
+                if (len < 2) break;
+                i += len;
+            }
+        }
+
+        try
+        {
+            using var ms = new MemoryStream(bytes);
+            using var img = System.Drawing.Image.FromStream(ms, false, false);
+            return (img.Width, img.Height);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
+
     internal static (int Width, int Height) ReadPngDimensions(byte[] png)
     {
         if (png is null || png.Length < 24) return (0, 0);
@@ -740,7 +811,7 @@ public sealed class VantageACI
             ct.ThrowIfCancellationRequested();
             match = WindowsAppManager.FindWindowByTitle(title);
             if (match is not null) break;
-            await Task.Delay(150, ct);
+            await Task.Delay(25, ct);
         }
         if (match is null)
             return new ActionResult(ActionOutcome.Failed, $"no window matching \"{title}\" appeared within {timeout}s");

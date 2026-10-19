@@ -528,4 +528,24 @@ public sealed class AgentAction
         }
         return result;
     }
+
+    public (int X, int Y)? GetPoint(string xField = "x", string yField = "y")
+    {
+        var x = GetInt(xField);
+        var y = GetInt(yField);
+        if (x is not null && y is not null) return (x.Value, y.Value);
+        if (Raw.TryGetProperty("coordinate", out var c) && c.ValueKind == JsonValueKind.Array && c.GetArrayLength() >= 2)
+        {
+            var arr = c.EnumerateArray().ToArray();
+            if (arr[0].ValueKind == JsonValueKind.Number && arr[1].ValueKind == JsonValueKind.Number)
+                return (arr[0].GetInt32(), arr[1].GetInt32());
+        }
+        if (Raw.TryGetProperty("point", out var p) && p.ValueKind == JsonValueKind.Array && p.GetArrayLength() >= 2)
+        {
+            var arr = p.EnumerateArray().ToArray();
+            if (arr[0].ValueKind == JsonValueKind.Number && arr[1].ValueKind == JsonValueKind.Number)
+                return (arr[0].GetInt32(), arr[1].GetInt32());
+        }
+        return null;
+    }
 }

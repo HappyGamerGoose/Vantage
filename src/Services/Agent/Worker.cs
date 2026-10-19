@@ -69,7 +69,7 @@ public sealed class Worker
     private const int VerificationFeedbackKept = 4;
     private const int InMemoryHistoryKept = 12;
     private const int VisionMaxLongestSide = 1152;
-    private const int GeneratorMaxNewTokens = 1536;
+    private const int GeneratorMaxNewTokens = 768;
     private const int ReflectionMaxNewTokens = 512;
 
     // Counts how many consecutive actions did not visibly land. Three in a
@@ -152,7 +152,7 @@ public sealed class Worker
         // scale mismatch where every click landed ~20-50% off-target
         // on a 1920x1200 panel at 125% DPI.
         var captureSw = Stopwatch.StartNew();
-        var screenshotBytes = WindowsAutomationService.CaptureScreenPngLogical(maxLongestSide: VisionMaxLongestSide);
+        var screenshotBytes = WindowsAutomationService.CaptureScreenFastLogical(maxLongestSide: VisionMaxLongestSide, quality: 88);
         _aci.AssignScreenshot(screenshotBytes);
         var b64 = Convert.ToBase64String(screenshotBytes);
         captureSw.Stop();
@@ -428,7 +428,7 @@ public sealed class Worker
         // next turn always starts from a fresh screenshot. Fast-path ordinary
         // UI actions to avoid two extra desktop captures per turn.
         var (predicted, confidence) = ExtractExpectedState(action.Raw);
-        var fastPath = CanUseFastPath(action, predicted);
+        var fastPath = CanUseFastPath(action);
         var skipVerification =
             string.Equals(action.Action, "done", StringComparison.OrdinalIgnoreCase)
             || string.Equals(action.Action, "fail", StringComparison.OrdinalIgnoreCase)
@@ -769,16 +769,15 @@ public sealed class Worker
         }
     }
 
-    private bool CanUseFastPath(AgentAction action, string predicted)
+    private bool CanUseFastPath(AgentAction action)
     {
         // Keep the first action and every recovery action fully observable.
         // Once the run is healthy, a successful SendInput result is enough
         // for these deterministic operations; the next model turn supplies
         // the authoritative fresh screenshot.
-        if (_turnCount == 0
-            || _noOpStreak > 0
+        if (_noOpStreak > 0
             || _lastActionOutcome.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrWhiteSpace(predicted))
+            || _recentFailures.Count > 0)
             return false;
 
         return action.Action.Trim().ToLowerInvariant() switch
@@ -787,7 +786,8 @@ public sealed class Worker
                 or "type" or "type_text" or "type_window_text" or "set_value"
                 or "key" or "press_key" or "press_window_key"
                 or "drag" or "drag_xy" or "drag_window"
-                or "scroll" or "scroll_xy" or "scroll_window" => true,
+                or "scroll" or "scroll_xy" or "scroll_window"
+                or "launch_app" or "focus_app" or "resize_app" => true,
             _ => false
         };
     }

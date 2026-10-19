@@ -49,9 +49,9 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("# REQUIRED RESPONSE SHAPE");
         sb.AppendLine("Every response MUST contain exactly this structure:");
         sb.AppendLine("<thoughts>");
-        sb.AppendLine("(Previous action verification) — was the last action successful? If not, why?");
-        sb.AppendLine("(Screenshot analysis) — describe the current state, including any open apps, focused windows, cursor position, and visible text.");
-        sb.AppendLine("(Next action reasoning) — what should I do next, and why?");
+        sb.AppendLine("1-2 concise sentences ONLY: brief verification of previous step + immediate reason for next action. Be fast and direct; do not write lengthy screen descriptions or narrative prose.");
+
+
         sb.AppendLine("</thoughts>");
         sb.AppendLine("<answer>");
         sb.AppendLine("```json");
@@ -84,7 +84,7 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("18. Prefer `click_element` from accessibility state. If accessibility is weak, use `click_window_xy` with coordinates relative to the latest observed window. Desktop-wide coordinates are not available.");
         sb.AppendLine("19. Stay bound to the user's requested outcome and use visible context to decide the next useful action.");
         sb.AppendLine("20. Describe click and drag targets by their semantic effect, visible label, role, and surroundings.");
-        sb.AppendLine("21. Speed path: when the latest screenshot makes a target coordinate clear, prefer `click_xy`, `drag_xy`, or `scroll_xy` so the action can execute without a separate grounding pass. Use semantic `click` or `type` when the target is ambiguous. Combine click/focus + `type_text` + `press_key` in one batch when no intermediate screenshot is needed.");
+        sb.AppendLine("21. Speed path: when target coordinates are known, provide `x` and `y` directly in `click` or use `click_xy`, `drag_xy`, or `scroll_xy` to execute instantly without grounding. Use semantic `description` when coordinates need visual resolution. Combine click/focus + `type_text` + `press_key` in one batch when no intermediate screenshot is needed.");
         sb.AppendLine("21. PowerShell, direct coordinates, process controls, terminals, system settings, and Windows shortcuts are available when they are efficient.");
         sb.AppendLine("22. `target_title` is recommended when known. If focus changed, recover by focusing or relaunching the intended app and continue.");
         sb.AppendLine("23. Prefer the scoped window workflow for precise UI work, but use desktop actions directly when they are faster or accessibility is weak.");

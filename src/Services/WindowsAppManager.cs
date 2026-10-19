@@ -467,7 +467,7 @@ public static class WindowsAppManager
             if (lastCandidate is not null && FocusWindow(lastCandidate))
                 return new AppLaunchResult(true, true, lastCandidate);
 
-            await Task.Delay(100, ct);
+            await Task.Delay(25, ct);
         }
 
         return new AppLaunchResult(true, false, lastCandidate);
@@ -726,7 +726,7 @@ public static class WindowsAppManager
             if (i < count - 1)
             {
                 // brief pause between click halves
-                Thread.Sleep(60);
+                Thread.Sleep(5);
                 inputs = new[]
                 {
                     MakeMouse(ax, ay, downFlag),
@@ -736,7 +736,7 @@ public static class WindowsAppManager
             uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
             if (sent != inputs.Length) ok = false;
             // Gap between full click repetitions for double/triple
-            if (i < count - 1) Thread.Sleep(110);
+            if (i < count - 1) Thread.Sleep(15);
         }
         return ok;
     }
@@ -787,7 +787,7 @@ public static class WindowsAppManager
     public static bool Drag(int fromX, int fromY, int toX, int toY, ClickButton button = ClickButton.Left)
     {
         SetCursorPos(fromX, fromY);
-        Thread.Sleep(20);
+        Thread.Sleep(5);
         uint downFlag, upFlag;
         switch (button)
         {
@@ -802,7 +802,7 @@ public static class WindowsAppManager
         };
         var sentDown = SendInput(1, new[] { MakeMouse(0, 0, downFlag) }, Marshal.SizeOf<INPUT>());
         SetCursorPos(toX, toY);
-        Thread.Sleep(40);
+        Thread.Sleep(10);
         var sentUp = SendInput(1, new[] { MakeMouse(0, 0, upFlag) }, Marshal.SizeOf<INPUT>());
         return sentDown == 1 && sentUp == 1;
     }
