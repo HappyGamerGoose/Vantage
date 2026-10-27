@@ -242,6 +242,87 @@ if (args.Contains("--computer-use-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    // Mock OpenAI-compatible server that behaves like the hidden-reasoning
+    // models seen in the logs: thinking consumes the token budget and leaves
+    // `content` null unless the request disables thinking or allows more room.
+    var port = 18000 + Random.Shared.Next(1000);
+    var prefix = $"http://127.0.0.1:{port}/";
+    using var listener = new System.Net.HttpListener();
+    listener.Prefixes.Add(prefix);
+    listener.Start();
+    var seen = new List<(string Model, bool Flag, int MaxTokens)>();
+    var serverTask = Task.Run(async () =>
+    {
+        while (listener.IsListening)
+        {
+            System.Net.HttpListenerContext ctx;
+            try { ctx = await listener.GetContextAsync(); } catch { break; }
+            string raw;
+            using (var reader = new StreamReader(ctx.Request.InputStream)) raw = await reader.ReadToEndAsync();
+            var req = JsonNode.Parse(raw)!.AsObject();
+            var model = req["model"]!.GetValue<string>();
+            var flag = req["chat_template_kwargs"] is JsonObject k && k["enable_thinking"]?.GetValue<bool>() == false;
+            var max = req["max_tokens"]!.GetValue<int>();
+            lock (seen) seen.Add((model, flag, max));
+
+            string reply;
+            var status = 200;
+            if (model == "plain")
+                reply = "{\"choices\":[{\"message\":{\"content\":\"1 2\"},\"finish_reason\":\"stop\"}]}";
+            else if (model == "strict" && flag)
+            {
+                status = 400;
+                reply = "{\"message\":\"extra fields not permitted: chat_template_kwargs\"}";
+            }
+            else if ((model == "reasoner" && flag) || (model == "strict" && max >= 1024))
+                reply = "{\"choices\":[{\"message\":{\"content\":\"412 233\"},\"finish_reason\":\"stop\"}]}";
+            else
+                reply = "{\"choices\":[{\"message\":{\"content\":null,\"reasoning_content\":\"hmm let me think\"},\"finish_reason\":\"length\"}]}";
+
+            var bytes = Encoding.UTF8.GetBytes(reply);
+            ctx.Response.StatusCode = status;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.OutputStream.WriteAsync(bytes);
+            ctx.Response.Close();
+        }
+    });
+
+    async Task<(string Text, List<(string Model, bool Flag, int MaxTokens)> Requests)> Call(string model)
+    {
+        lock (seen) seen.Clear();
+        var engine = LMMEngine.Create(new Vantage.Models.Provider
+        {
+            Name = "mock", BaseUrl = prefix + "v1", ApiKey = "test", DefaultModel = model
+        });
+        var msg = new JsonObject { ["role"] = "user", ["content"] = "where is the button" };
+        var response = await engine.GenerateAsync(
+            new LmmRequest { Model = model, MaxTokens = 256, Messages = new List<JsonObject> { msg } },
+            CancellationToken.None);
+        List<(string, bool, int)> snapshot;
+        lock (seen) snapshot = seen.ToList();
+        return (response.Text, snapshot);
+    }
+
+    var r1 = await Call("reasoner");   // empty+reasoning -> learns flag, retries
+    var r2 = await Call("reasoner");   // now sends the flag up front
+    var s1 = await Call("strict");     // flag rejected -> falls back to a larger budget
+    var s2 = await Call("strict");     // remembers the rejection
+    var p1 = await Call("plain");      // non-reasoning model is untouched
+    listener.Stop();
+
+    var ok =
+        r1.Text == "412 233" && r1.Requests.Count == 2 && !r1.Requests[0].Flag && r1.Requests[1].Flag
+        && r2.Text == "412 233" && r2.Requests.Count == 1 && r2.Requests[0].Flag
+        && s1.Text == "412 233" && s1.Requests.Count == 3 && s1.Requests[^1].MaxTokens >= 1024 && !s1.Requests[^1].Flag
+        && s2.Text == "412 233" && s2.Requests.Count == 2 && s2.Requests.All(x => !x.Flag)
+        && p1.Text == "1 2" && p1.Requests.Count == 1 && !p1.Requests[0].Flag;
+    Console.WriteLine($"ReasoningModelHandlingValid={ok} learn={r1.Requests.Count} warm={r2.Requests.Count} strict={s1.Requests.Count}/{s2.Requests.Count} plain={p1.Requests.Count}");
+    Environment.ExitCode = ok ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--computer-use-prompt-self-test", StringComparer.OrdinalIgnoreCase))
 {
     var prompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory(

@@ -50,6 +50,7 @@ dotnet run --project $probe -- --context-self-test
 dotnet run --project $probe -- --launch-match-self-test
 dotnet run --project $probe -- --powershell-self-test
 dotnet run --project $probe -- --computer-use-prompt-self-test
+dotnet run --project $probe -- --reasoning-self-test
 ```
 
 ## License

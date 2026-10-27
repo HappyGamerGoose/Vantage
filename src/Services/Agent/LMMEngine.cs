@@ -217,15 +217,88 @@ public sealed class OpenAICompatEngine : LMMEngine
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
     }
 
+    /// <summary>
+    /// Per base-URL + model memory of whether to ask the server to skip its
+    /// hidden "thinking" phase. Reasoning models (nemotron, muse, qwen3, ...)
+    /// otherwise spend most of the token budget — and 10+ seconds — on
+    /// `reasoning_content` that Vantage never reads, and a short budget such as
+    /// the grounding call's can be consumed entirely, leaving `content` null.
+    /// true = send the flag, false = provider rejected it, missing = unknown.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SuppressThinking = new();
+
+    private const int ReasoningRetryMaxTokensCeiling = 4096;
+
+    private sealed record OpenAiReply(LmmResponse Response, bool HadReasoning, string? FinishReason);
+
     public override async Task<LmmResponse> GenerateAsync(LmmRequest request, CancellationToken ct)
+    {
+        var key = $"{BaseUrl}|{Model}";
+
+        // Sends with the thinking flag when it is known to work, and drops the
+        // flag for good if the provider rejects it as an unknown field.
+        async Task<OpenAiReply> SendAsync(int maxTokens, bool wantFlag)
+        {
+            var useFlag = wantFlag && !(SuppressThinking.TryGetValue(key, out var ok) && !ok);
+            try
+            {
+                return await SendOnceAsync(request, maxTokens, useFlag, ct);
+            }
+            catch (LmmProviderException pex) when (useFlag
+                && (pex.HttpStatus == 400 || pex.HttpStatus == 422)
+                && (pex.RawBody.Contains("chat_template_kwargs", StringComparison.OrdinalIgnoreCase)
+                    || pex.RawBody.Contains("enable_thinking", StringComparison.OrdinalIgnoreCase)))
+            {
+                SuppressThinking[key] = false;
+                CommonUtils.LogDiagnostic("llm-thinking-flag-rejected", $"model={Model} status={pex.HttpStatus}");
+                return await SendOnceAsync(request, maxTokens, false, ct);
+            }
+        }
+
+        var reply = await SendAsync(request.MaxTokens, SuppressThinking.TryGetValue(key, out var learned) && learned);
+
+        if (reply.HadReasoning && !SuppressThinking.ContainsKey(key))
+        {
+            // First sighting of a reasoning model: use the flag from now on.
+            SuppressThinking[key] = true;
+            CommonUtils.LogDiagnostic("llm-reasoning-model-detected",
+                $"model={Model} content_empty={string.IsNullOrWhiteSpace(reply.Response.Text)} finish={reply.FinishReason}; disabling thinking for later calls");
+        }
+
+        if (string.IsNullOrWhiteSpace(reply.Response.Text) && reply.HadReasoning)
+        {
+            // The reasoning phase ate the whole budget. Retry once, now with
+            // thinking disabled (when the provider allows it) and more room,
+            // instead of surfacing an empty reply that fails the whole step.
+            var retryFlag = !SuppressThinking.TryGetValue(key, out var allowed) || allowed;
+            var retryTokens = Math.Min(Math.Max(request.MaxTokens * 4, 1024), ReasoningRetryMaxTokensCeiling);
+            CommonUtils.LogDiagnostic("llm-reasoning-empty-retry",
+                $"model={Model} finish={reply.FinishReason} thinking_off={retryFlag} max_tokens={retryTokens}");
+            reply = await SendAsync(retryTokens, retryFlag);
+        }
+
+        return reply.Response;
+    }
+
+    private async Task<OpenAiReply> SendOnceAsync(LmmRequest request, int maxTokens, bool suppressThinking, CancellationToken ct)
     {
         var body = new JsonObject
         {
             ["model"]       = request.Model,
-            ["max_tokens"]  = request.MaxTokens,
+            ["max_tokens"]  = maxTokens,
             ["temperature"] = request.Temperature,
             ["messages"]    = new JsonArray(request.Messages.Select(m => m.DeepClone()).ToArray())
         };
+        if (suppressThinking)
+        {
+            // vLLM / NVIDIA NIM chat templates read these; templates that don't
+            // know a key ignore it.
+            body["chat_template_kwargs"] = new JsonObject
+            {
+                ["enable_thinking"] = false,
+                ["thinking"]        = false
+            };
+        }
 
         var bodyJson = body.ToJsonString();
         // Fail fast — see EnsureBodyUnderLimit. Compactor in LmmAgent.
@@ -286,7 +359,14 @@ public sealed class OpenAICompatEngine : LMMEngine
                 if (u.TryGetProperty("completion_tokens", out var ct2)) outTok = ct2.GetInt32();
             }
 
-            return new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok };
+            var hadReasoning =
+                (msg.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rc.GetString()))
+                || (msg.TryGetProperty("reasoning", out var rs) && rs.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rs.GetString()));
+
+            return new OpenAiReply(
+                new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok },
+                hadReasoning,
+                finish);
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {

@@ -33,6 +33,11 @@
     <Compile Include="..\Services\WindowsAppManager.cs" Link="WindowsAppManager.cs" />
     <Compile Include="..\Services\WindowsAutomationService.cs" Link="WindowsAutomationService.cs" />
     <Compile Include="..\Common\JsonDefaults.cs" Link="JsonDefaults.cs" />
+    <Compile Include="..\Services\Agent\LMMEngine.cs" Link="LMMEngine.cs" />
+    <Compile Include="..\Services\Agent\LMMAgent.cs" Link="LMMAgent.cs" />
+    <Compile Include="..\Services\Agent\CommonUtils.cs" Link="CommonUtils.cs" />
+    <Compile Include="..\Models\Provider.cs" Link="Provider.cs" />
+    <Compile Include="..\Common\LogWriter.cs" Link="LogWriter.cs" />
     <Compile Include="..\Common\NativeInterop.cs" Link="NativeInterop.cs" />
   </ItemGroup>
 </Project>
