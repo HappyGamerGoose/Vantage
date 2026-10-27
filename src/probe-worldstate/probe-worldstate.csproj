@@ -37,6 +37,7 @@
     <Compile Include="..\Services\Agent\LMMAgent.cs" Link="LMMAgent.cs" />
     <Compile Include="..\Services\Agent\CommonUtils.cs" Link="CommonUtils.cs" />
     <Compile Include="..\Models\Provider.cs" Link="Provider.cs" />
+    <Compile Include="..\Models\ProviderModel.cs" Link="ProviderModel.cs" />
     <Compile Include="..\Common\LogWriter.cs" Link="LogWriter.cs" />
     <Compile Include="..\Services\Agent\VantageACI.cs" Link="VantageACI.cs" />
     <Compile Include="..\Services\Agent\ActionSanitizer.cs" Link="ActionSanitizer.cs" />

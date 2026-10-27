@@ -53,18 +53,18 @@ public sealed partial class MainWindow
         // after rebuilding the list — survives providers being added /
         // removed / re-enabled without surprising the user.
         var persistedKey = GetSetting(SelectedModelSettingKey, string.Empty);
+        // Re-find the selection by the model object first so renaming a model
+        // id on its card doesn't bounce the selector back to the first entry.
+        var previousModel = (ModelSelector.SelectedItem as ModelChoice)?.Model;
 
         _modelChoices.Clear();
 
         foreach (var provider in _providers.Where(p => p.IsEnabled))
         {
-            _modelChoices.Add(new ModelChoice
+            foreach (var model in provider.Models.Where(m => !string.IsNullOrWhiteSpace(m.Id)))
             {
-                Provider = provider,
-                ModelId = provider.DefaultModel,
-                Display = ModelDisplayNameService.GetFriendlyName(provider.DefaultModel),
-                Key = $"{provider.Id}|{provider.DefaultModel}"
-            });
+                _modelChoices.Add(new ModelChoice { Provider = provider, Model = model });
+            }
         }
 
         ModelSelector.ItemsSource = null;
@@ -83,7 +83,14 @@ public sealed partial class MainWindow
         // Restore previously-persisted selection if the matching choice
         // survived; otherwise default to index 0.
         var idx = 0;
-        if (!string.IsNullOrEmpty(persistedKey))
+        var byReference = previousModel is null
+            ? -1
+            : _modelChoices.FindIndex(c => ReferenceEquals(c.Model, previousModel));
+        if (byReference >= 0)
+        {
+            idx = byReference;
+        }
+        else if (!string.IsNullOrEmpty(persistedKey))
         {
             for (var i = 0; i < _modelChoices.Count; i++)
             {
@@ -192,6 +199,7 @@ public sealed partial class MainWindow
             Host = RootGrid,
             VisionCapability = _visionCapability,
             SaveProviders = SaveProviders,
+            ModelsChanged = () => { SaveProviders(); RefreshModelSelector(); },
             TestProvider = TestProviderAsync,
             DeleteProvider = DeleteProviderAsync,
         };
@@ -215,10 +223,16 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(provider.ApiKey) || string.IsNullOrWhiteSpace(provider.DefaultModel))
+        // Test the model the user has selected when it belongs to this
+        // provider, otherwise the provider's primary model.
+        var testModel = (ModelSelector.SelectedItem as ModelChoice) is { } picked && picked.Provider.Id == provider.Id
+            ? picked.Model
+            : provider.PrimaryModel;
+
+        if (string.IsNullOrWhiteSpace(provider.ApiKey) || testModel is null)
         {
             provider.Status = ProviderStatus.Failed;
-            provider.LastTestMessage = "API key and model are required.";
+            provider.LastTestMessage = "API key and at least one model are required.";
             SaveProviders();
             RenderProviderCards();
             return;
@@ -227,18 +241,19 @@ public sealed partial class MainWindow
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var engine = LMMEngine.Create(provider);
+            var target = provider.ForModel(testModel);
+            var engine = LMMEngine.Create(target);
             var agent = new LmmAgent(engine, "Reply with OK.");
             agent.AddTextMessage("Connection test", role: "user");
             await agent.GetResponseAsync(temperature: 0, maxTokens: 8, timeout.Token);
 
-            var vision = await _visionCapability.SupportsAsync(provider);
+            var vision = await _visionCapability.SupportsAsync(target);
             provider.Status = vision == VisionVerdict.No ? ProviderStatus.Failed : ProviderStatus.Ok;
             provider.LastTestMessage = vision switch
             {
-                VisionVerdict.Yes => "Authenticated · vision ready.",
-                VisionVerdict.No => "Authenticated, but this model has no vision support.",
-                _ => "Authenticated · vision support could not be confirmed.",
+                VisionVerdict.Yes => $"{testModel.Label}: authenticated · vision ready.",
+                VisionVerdict.No => $"{testModel.Label}: authenticated, but this model has no vision support.",
+                _ => $"{testModel.Label}: authenticated · vision support could not be confirmed.",
             };
         }
         catch (OperationCanceledException)
@@ -310,11 +325,11 @@ public sealed partial class MainWindow
         var nameBox = new TextBox
         {
             PlaceholderText = "Mistral, LM Studio, vLLM…",
-            Header = "Display name",
+            Header = "Provider name",
         };
         var urlBox = new TextBox
         {
-            PlaceholderText = "api.example.com/v1",
+            PlaceholderText = "https://api.example.com/v1",
             Header = "Base URL",
         };
         var keyBox = new PasswordBox
@@ -322,10 +337,69 @@ public sealed partial class MainWindow
             PlaceholderText = "Paste your API key (stays on this PC)",
             Header = "API key",
         };
-        var modelBox = new TextBox
+
+        // Model rows: the id sent to the API plus an optional label for the
+        // model selector. Rows can be added by hand or picked from the
+        // provider's own model list.
+        var modelRows = new List<(TextBox Id, TextBox Label, Grid Row)>();
+        var modelsPanel = new StackPanel { Spacing = 8 };
+
+        void AddModelRow(string id = "", bool focus = false)
         {
-            PlaceholderText = "model-id",
-            Header = "Default model",
+            var idBox = new TextBox { Text = id, PlaceholderText = "model-id", MinWidth = 0 };
+            var labelBox = new TextBox { PlaceholderText = "Selector name", MinWidth = 0 };
+            var removeBtn = new Button
+            {
+                Width = 32, Height = 32, Padding = new Thickness(0),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Content = new FontIcon { FontSize = 13, Glyph = "", Foreground = errorBrush },
+            };
+            ToolTipService.SetToolTip(removeBtn, "Remove this model");
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+            Grid.SetColumn(idBox, 0);
+            Grid.SetColumn(labelBox, 1);
+            Grid.SetColumn(removeBtn, 2);
+            row.Children.Add(idBox);
+            row.Children.Add(labelBox);
+            row.Children.Add(removeBtn);
+
+            var entry = (idBox, labelBox, row);
+            removeBtn.Click += (_, _) =>
+            {
+                modelRows.Remove(entry);
+                modelsPanel.Children.Remove(row);
+            };
+            modelRows.Add(entry);
+            modelsPanel.Children.Add(row);
+            if (focus) idBox.Loaded += (_, _) => idBox.Focus(FocusState.Programmatic);
+        }
+        AddModelRow();
+
+        var addModelBtn = new Button { Content = "Add another model" };
+        addModelBtn.Click += (_, _) => AddModelRow(focus: true);
+
+        var browseBtn = new Button { Content = "Browse provider models" };
+        browseBtn.Click += async (_, _) =>
+        {
+            var picked = await ModelPickerDialog.ShowAsync(
+                RootGrid.XamlRoot, urlBox.Text, keyBox.Password,
+                modelRows.Select(r => r.Id.Text.Trim()));
+            if (picked is null) return;
+            foreach (var id in picked)
+            {
+                var blank = modelRows.FirstOrDefault(r => string.IsNullOrWhiteSpace(r.Id.Text));
+                if (blank.Row is not null)
+                {
+                    modelRows.Remove(blank);
+                    modelsPanel.Children.Remove(blank.Row);
+                }
+                AddModelRow(id);
+            }
         };
 
         // Inline error block — only visible after a failed Add attempt so
@@ -347,18 +421,35 @@ public sealed partial class MainWindow
             FontSize = 13,
             Foreground = secondaryTextBrush,
             TextWrapping = TextWrapping.Wrap,
-            Text = "Add your own OpenAI-compatible endpoint. All four fields are required so the provider can be saved and used.",
+            Text = "Add an OpenAI-compatible or Anthropic endpoint, then list the models you want to use. " +
+                   "Each model can have its own name in the model selector.",
         };
-        var fields = new StackPanel { Spacing = 14, Margin = new Thickness(0, 12, 0, 0) };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        buttons.Children.Add(addModelBtn);
+        buttons.Children.Add(browseBtn);
+
+        var fields = new StackPanel { Spacing = 14, Margin = new Thickness(0, 12, 0, 0), Width = 490, HorizontalAlignment = HorizontalAlignment.Left };
         fields.Children.Add(nameBox);
         fields.Children.Add(urlBox);
         fields.Children.Add(keyBox);
-        fields.Children.Add(modelBox);
+        fields.Children.Add(new TextBlock
+        {
+            Text = "Models",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 4, 0, -6),
+        });
+        fields.Children.Add(modelsPanel);
+        fields.Children.Add(buttons);
         fields.Children.Add(errorBlock);
 
         var stack = new StackPanel { Spacing = 4 };
         stack.Children.Add(description);
-        stack.Children.Add(fields);
+        stack.Children.Add(new ScrollViewer
+        {
+            Content = fields,
+            MaxHeight = 460,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        });
 
         var dialog = new ContentDialog
         {
@@ -381,39 +472,40 @@ public sealed partial class MainWindow
             // overlay → Result is None. Let those close.
             if (args.Result != ContentDialogResult.Primary) return;
 
-            var name  = nameBox.Text?.Trim()  ?? "";
-            var url   = urlBox.Text?.Trim()   ?? "";
-            var key   = keyBox.Password       ?? "";
-            var model = modelBox.Text?.Trim() ?? "";
+            var name = nameBox.Text?.Trim() ?? "";
+            var url  = urlBox.Text?.Trim()  ?? "";
+            var key  = keyBox.Password      ?? "";
+            var ids  = modelRows.Select(r => r.Id.Text.Trim()).Where(i => i.Length > 0).ToList();
 
-            var missing = new System.Collections.Generic.List<string>();
-            if (string.IsNullOrWhiteSpace(name))  missing.Add("Display name");
-            if (string.IsNullOrWhiteSpace(url))   missing.Add("Base URL");
-            if (string.IsNullOrWhiteSpace(key))   missing.Add("API key");
-            if (string.IsNullOrWhiteSpace(model)) missing.Add("Default model");
+            var missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(name)) missing.Add("Provider name");
+            if (string.IsNullOrWhiteSpace(url))  missing.Add("Base URL");
+            if (string.IsNullOrWhiteSpace(key))  missing.Add("API key");
+            if (ids.Count == 0)                  missing.Add("at least one model");
+
+            if (missing.Count == 0 && ids.Distinct(StringComparer.Ordinal).Count() != ids.Count)
+            {
+                errorBlock.Text = "Each model id can only be listed once.";
+                errorBlock.Visibility = Visibility.Visible;
+                args.Cancel = true;
+                return;
+            }
 
             if (missing.Count > 0)
             {
-                errorBlock.Text = "Please fill in every field. Missing: "
-                                  + string.Join(", ", missing)
-                                  + ".";
+                errorBlock.Text = "Please fill in: " + string.Join(", ", missing) + ".";
                 errorBlock.Visibility = Visibility.Visible;
                 args.Cancel = true;  // keep the dialog open
 
                 // Refocus the first missing field so the user can tab
                 // through instead of having to click each box.
-                FrameworkElement? firstMissing =
-                    string.IsNullOrWhiteSpace(name)  ? (FrameworkElement)nameBox  :
-                    string.IsNullOrWhiteSpace(url)   ? urlBox  :
-                    string.IsNullOrWhiteSpace(key)   ? keyBox  :
-                    modelBox;
+                FrameworkElement firstMissing =
+                    string.IsNullOrWhiteSpace(name) ? nameBox :
+                    string.IsNullOrWhiteSpace(url)  ? urlBox  :
+                    string.IsNullOrWhiteSpace(key)  ? keyBox  :
+                    modelRows[0].Id;
                 try { firstMissing.Focus(FocusState.Programmatic); } catch { }
-                return;
             }
-
-            // All filled — fall through and let the dialog close. We've
-            // already cached the trimmed values into Text via direct
-            // assignment below.
         };
 
         var result = await dialog.ShowAsync();
@@ -423,11 +515,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        // All four fields are guaranteed non-empty by the Closing handler.
+        // Required fields are guaranteed filled by the Closing handler.
         var name = nameBox.Text.Trim();
         var url = urlBox.Text.Trim();
         var key = keyBox.Password;
-        var model = modelBox.Text.Trim();
+        var models = modelRows
+            .Where(r => !string.IsNullOrWhiteSpace(r.Id.Text))
+            .Select(r => new ProviderModel { Id = r.Id.Text.Trim(), DisplayName = r.Label.Text.Trim() })
+            .ToList();
 
         var newProvider = new Provider
         {
@@ -435,7 +530,8 @@ public sealed partial class MainWindow
             Name = name,
             BaseUrl = url,
             ApiKey = key,
-            DefaultModel = model,
+            DefaultModel = models[0].Id,
+            Models = models,
             IsEnabled = true,
             Status = ProviderStatus.Untested,
         };
@@ -444,7 +540,7 @@ public sealed partial class MainWindow
         // collection update is committed, so the provider is persisted to
         // LocalSettings without a separate manual save call.
         CommonUtils.LogDiagnostic("provider-added",
-            $"name=\"{name}\" baseUrl=\"{url}\" model=\"{model}\"");
+            $"name=\"{name}\" baseUrl=\"{url}\" models={models.Count}");
     }
 
     private void AddKeyboardAccelerators()

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
@@ -75,6 +77,75 @@ public sealed class Provider : INotifyPropertyChanged
         get => _defaultModel;
         set { if (_defaultModel != value) { _defaultModel = value; OnPropertyChanged(); } }
     }
+
+    /// <summary>
+    /// Models offered by this endpoint. The first one is the primary model.
+    /// <see cref="DefaultModel"/> mirrors it on disk so older builds can
+    /// still read the file.
+    /// </summary>
+    public List<ProviderModel> Models { get; set; } = new();
+
+    [JsonIgnore]
+    public ProviderModel? PrimaryModel => Models.FirstOrDefault(m => !string.IsNullOrWhiteSpace(m.Id));
+
+    /// <summary>
+    /// Upgrades a provider saved before multi-model support: its single
+    /// <see cref="DefaultModel"/> becomes the first entry in <see cref="Models"/>,
+    /// and the provider-wide vision override moves onto that model so models
+    /// added later don't silently inherit it. Returns true when anything changed.
+    /// </summary>
+    public bool NormalizeModels(Func<string, string>? seedDisplayName = null)
+    {
+        var changed = false;
+
+        var cleaned = Models
+            .Where(m => !string.IsNullOrWhiteSpace(m.Id))
+            .GroupBy(m => m.Id.Trim(), StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+        foreach (var m in cleaned) m.Id = m.Id.Trim();
+        if (cleaned.Count != Models.Count) { Models = cleaned; changed = true; }
+
+        if (Models.Count == 0 && !string.IsNullOrWhiteSpace(DefaultModel))
+        {
+            var id = DefaultModel.Trim();
+            Models.Add(new ProviderModel
+            {
+                Id = id,
+                DisplayName = seedDisplayName?.Invoke(id) ?? string.Empty,
+                VisionOverride = VisionOverride,
+            });
+            VisionOverride = VisionOverride.Auto;
+            changed = true;
+        }
+
+        var primary = PrimaryModel?.Id ?? string.Empty;
+        if (DefaultModel != primary) { DefaultModel = primary; changed = true; }
+        return changed;
+    }
+
+    /// <summary>
+    /// A transient copy of this provider pinned to one model. The engines,
+    /// the vision classifier and its probe cache all read
+    /// <see cref="DefaultModel"/>, so handing them this copy makes every run
+    /// use exactly the model the user picked. Never persisted.
+    /// </summary>
+    public Provider ForModel(ProviderModel model) => new()
+    {
+        Id = Id,
+        Kind = Kind,
+        BuiltInKey = BuiltInKey,
+        Name = Name,
+        BaseUrl = BaseUrl,
+        ApiKey = ApiKey,
+        DefaultModel = model.Id,
+        Models = Models,
+        IsEnabled = IsEnabled,
+        Status = Status,
+        LastTestedAt = LastTestedAt,
+        LastTestMessage = LastTestMessage,
+        VisionOverride = model.VisionOverride != VisionOverride.Auto ? model.VisionOverride : VisionOverride,
+    };
 
     public bool IsEnabled
     {

@@ -24,6 +24,8 @@ public sealed class ProviderCardContext
     public required FrameworkElement Host { get; init; }
     public required VisionCapability VisionCapability { get; init; }
     public required Action SaveProviders { get; init; }
+    /// <summary>Models were added, removed or renamed: persist and refresh the selector.</summary>
+    public required Action ModelsChanged { get; init; }
     public required Func<Provider, Task> TestProvider { get; init; }
     public required Func<Provider, Task> DeleteProvider { get; init; }
 
@@ -123,24 +125,28 @@ public static class ProviderCardRenderer
         };
         titleStack.Children.Add(nameBlock);
 
-        // VISION / TEXT-ONLY badge — different fill so the user can see at
-        // a glance which providers drive the desktop agent.
-        var (visionLabel, visionBg, visionFg) = ComputeVisionBadge(provider, ctx.VisionCapability);
-        var visionBadge = new Border
+        // Model-count badge, e.g. "2 MODELS".
+        var countText = new TextBlock
+        {
+            FontSize = 9.5,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = accentBrush,
+        };
+        var countBadge = new Border
         {
             Padding = new Thickness(6, 1, 6, 1),
             CornerRadius = new CornerRadius(8),
             VerticalAlignment = VerticalAlignment.Center,
-            Background = visionBg,
-            Child = new TextBlock
-            {
-                FontSize = 9.5,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = visionFg,
-                Text = visionLabel
-            }
+            Background = accentSoftBrush,
+            Child = countText
         };
-        titleStack.Children.Add(visionBadge);
+        void UpdateCount()
+        {
+            var n = provider.Models.Count(m => !string.IsNullOrWhiteSpace(m.Id));
+            countText.Text = n == 1 ? "1 MODEL" : $"{n} MODELS";
+        }
+        UpdateCount();
+        titleStack.Children.Add(countBadge);
 
         // Test
         var testBtn = new Button
@@ -246,13 +252,12 @@ public static class ProviderCardRenderer
         };
         fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        fields.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
-        fields.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
-        fields.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
+        for (var i = 0; i < 3; i++)
+            fields.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Auto) });
 
         var nameField = new TextBox
         {
-            Header = "Display name",
+            Header = "Provider name",
             Text = provider.Name,
             Tag = ("Name", provider, nameBlock)
         };
@@ -269,6 +274,26 @@ public static class ProviderCardRenderer
         Grid.SetRow(nameField, 0);
         Grid.SetColumn(nameField, 0);
         fields.Children.Add(nameField);
+
+        var keyField = new PasswordBox
+        {
+            Header = "API key",
+            Password = provider.ApiKey,
+            PlaceholderText = "Paste your API key",
+            Tag = provider
+        };
+        keyField.PasswordChanged += (s, _) =>
+        {
+            if (s is PasswordBox pb && pb.Tag is Provider p)
+            {
+                p.ApiKey = pb.Password;
+                ctx.VisionCapability.InvalidateProvider(p.Id);
+                ctx.SaveProviders();
+            }
+        };
+        Grid.SetRow(keyField, 0);
+        Grid.SetColumn(keyField, 1);
+        fields.Children.Add(keyField);
 
         var urlField = new TextBox
         {
@@ -291,128 +316,224 @@ public static class ProviderCardRenderer
         Grid.SetColumnSpan(urlField, 2);
         fields.Children.Add(urlField);
 
-        var keyField = new PasswordBox
-        {
-            Header = "API key",
-            Password = provider.ApiKey,
-            PlaceholderText = "Paste your API key",
-            Tag = provider
-        };
-        keyField.PasswordChanged += (s, _) =>
-        {
-            if (s is PasswordBox pb && pb.Tag is Provider p)
-            {
-                p.ApiKey = pb.Password;
-                ctx.VisionCapability.InvalidateProvider(p.Id);
-                ctx.SaveProviders();
-            }
-        };
-        Grid.SetRow(keyField, 2);
-        Grid.SetColumn(keyField, 0);
-        fields.Children.Add(keyField);
+        // ── Models ──────────────────────────────────────────────────
+        // Each row: the label shown in the model selector, the id sent to
+        // the API, and a per-model vision setting. Text edits commit when
+        // the box loses focus (or on Enter) so half-typed ids never reach
+        // the selector or the saved file.
+        var modelsPanel = new StackPanel { Spacing = 8 };
 
-        var modelField = new TextBox
+        var modelsHeader = new Grid { ColumnSpacing = 8 };
+        modelsHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        modelsHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+        modelsHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        modelsHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        void HeaderCell(string text, int col)
         {
-            Header = "Default model",
-            Text = provider.DefaultModel,
-            PlaceholderText = "model-id",
-            Tag = provider
-        };
-        modelField.TextChanged += (s, _) =>
-        {
-            if (s is TextBox tb && tb.Tag is Provider p)
-            {
-                p.DefaultModel = tb.Text;
-                ctx.SaveProviders();
-                ctx.VisionCapability.InvalidateProvider(p.Id);
-            }
-        };
-        Grid.SetRow(modelField, 0);
-        Grid.SetColumn(modelField, 1);
-        fields.Children.Add(modelField);
+            var t = new TextBlock { Text = text, FontSize = 11.5, Foreground = secondaryTxt };
+            Grid.SetColumn(t, col);
+            modelsHeader.Children.Add(t);
+        }
+        HeaderCell("Shown in selector as", 0);
+        HeaderCell("Model id", 1);
+        HeaderCell("Vision", 2);
 
-        // Vision override (Auto / Force Yes / Force No) — bulletproof
-        // escape hatch when the heuristic can't classify a custom endpoint.
-        var visionCombo = new ComboBox
+        void AddModelRow(ProviderModel model, bool focus)
         {
-            Header = "Vision override",
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            MaxWidth = 360,
-            Tag = ("Vision", provider, visionBadge),
-            SelectedIndex = provider.VisionOverride switch
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.3, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+
+            var labelBox = new TextBox
+            {
+                Text = model.DisplayName,
+                PlaceholderText = string.IsNullOrWhiteSpace(model.Id) ? "Name to show" : model.Id,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var idBox = new TextBox
+            {
+                Text = model.Id,
+                PlaceholderText = "model-id",
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            void CommitLabel()
+            {
+                var v = labelBox.Text.Trim();
+                if (v == model.DisplayName) return;
+                model.DisplayName = v;
+                ctx.ModelsChanged();
+            }
+            void CommitId()
+            {
+                var v = idBox.Text.Trim();
+                if (v == model.Id) return;
+                var clash = v.Length > 0 && provider.Models.Any(m => !ReferenceEquals(m, model) && m.Id == v);
+                if (v.Length == 0 || clash)
+                {
+                    idBox.Text = model.Id;   // revert: a model needs a unique id
+                    return;
+                }
+                model.Id = v;
+                labelBox.PlaceholderText = v;
+                ctx.VisionCapability.InvalidateProvider(provider.Id);
+                UpdateCount();
+                ctx.ModelsChanged();
+            }
+            void OnEnter(object s, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+            {
+                if (e.Key != Windows.System.VirtualKey.Enter) return;
+                CommitLabel();
+                CommitId();
+                e.Handled = true;
+            }
+            labelBox.LostFocus += (_, _) => CommitLabel();
+            idBox.LostFocus += (_, _) => CommitId();
+            labelBox.KeyDown += OnEnter;
+            idBox.KeyDown += OnEnter;
+
+            var vision = new ComboBox
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            ToolTipService.SetToolTip(vision, "Auto detects image support from the model name and a live probe. Pin it if the detection is wrong.");
+            vision.Items.Add("Auto-detect");
+            vision.Items.Add("Accepts images");
+            vision.Items.Add("Text only");
+            vision.SelectedIndex = model.VisionOverride switch
             {
                 VisionOverride.ForceYes => 1,
                 VisionOverride.ForceNo  => 2,
                 _                       => 0,
-            }
-        };
-        visionCombo.SelectionChanged += (s, _) =>
-        {
-            if (s is not ComboBox cb || cb.Tag is not ValueTuple<string, Provider, Border> tag) return;
-            var (_, p, badge) = tag;
-            p.VisionOverride = cb.SelectedIndex switch
-            {
-                1 => VisionOverride.ForceYes,
-                2 => VisionOverride.ForceNo,
-                _ => VisionOverride.Auto,
             };
-            ctx.VisionCapability.InvalidateProvider(p.Id);
-            UpdateVisionBadge(p, badge, ctx.VisionCapability);
-            ctx.SaveProviders();
+            vision.SelectionChanged += (_, _) =>
+            {
+                model.VisionOverride = vision.SelectedIndex switch
+                {
+                    1 => VisionOverride.ForceYes,
+                    2 => VisionOverride.ForceNo,
+                    _ => VisionOverride.Auto,
+                };
+                ctx.VisionCapability.InvalidateProvider(provider.Id);
+                ctx.ModelsChanged();
+            };
+
+            var remove = new Button
+            {
+                Width = 32, Height = 32,
+                Padding = new Thickness(0),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(8),
+                VerticalAlignment = VerticalAlignment.Center,
+                Content = new FontIcon { FontSize = 13, Foreground = dangerBrush, Glyph = "" },
+            };
+            ToolTipService.SetToolTip(remove, "Remove this model");
+            remove.Click += (_, _) =>
+            {
+                provider.Models.Remove(model);
+                modelsPanel.Children.Remove(row);
+                UpdateCount();
+                ctx.ModelsChanged();
+            };
+
+            Grid.SetColumn(labelBox, 0);
+            Grid.SetColumn(idBox, 1);
+            Grid.SetColumn(vision, 2);
+            Grid.SetColumn(remove, 3);
+            row.Children.Add(labelBox);
+            row.Children.Add(idBox);
+            row.Children.Add(vision);
+            row.Children.Add(remove);
+            row.Tag = model;
+            modelsPanel.Children.Add(row);
+
+            if (focus) idBox.Loaded += (_, _) => idBox.Focus(FocusState.Programmatic);
+        }
+        foreach (var m in provider.Models) AddModelRow(m, focus: false);
+
+        Button ModelActionButton(string glyph, string text)
+        {
+            var b = new Button
+            {
+                Padding = new Thickness(10, 5, 10, 5),
+                Background = subtleBrush,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(8),
+            };
+            b.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    new FontIcon { FontSize = 12, Foreground = secondaryTxt, Glyph = glyph },
+                    new TextBlock { FontSize = 11.5, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = primaryTxt, Text = text },
+                }
+            };
+            return b;
+        }
+
+        var addModelBtn = ModelActionButton("", "Add model");
+        addModelBtn.Click += (_, _) =>
+        {
+            var m = new ProviderModel();
+            provider.Models.Add(m);
+            AddModelRow(m, focus: true);
         };
-        visionCombo.Items.Add("Auto (heuristic + probe)");
-        visionCombo.Items.Add("Force Yes — model accepts images");
-        visionCombo.Items.Add("Force No — model is text-only");
-        Grid.SetRow(visionCombo, 2);
-        Grid.SetColumn(visionCombo, 1);
-        fields.Children.Add(visionCombo);
+
+        var browseBtn = ModelActionButton("", "Browse provider models");
+        browseBtn.Click += async (_, _) =>
+        {
+            var picked = await ModelPickerDialog.ShowAsync(
+                ctx.Host.XamlRoot, provider.BaseUrl, provider.ApiKey,
+                provider.Models.Select(m => m.Id));
+            if (picked is null || picked.Count == 0) return;
+
+            foreach (var id in picked)
+            {
+                // Reuse an untouched empty row instead of leaving it behind.
+                var blank = provider.Models.FirstOrDefault(m => string.IsNullOrWhiteSpace(m.Id));
+                if (blank is not null)
+                {
+                    provider.Models.Remove(blank);
+                    var staleRow = modelsPanel.Children.OfType<Grid>().FirstOrDefault(g => ReferenceEquals(g.Tag, blank));
+                    if (staleRow is not null) modelsPanel.Children.Remove(staleRow);
+                }
+                var m = new ProviderModel { Id = id };
+                provider.Models.Add(m);
+                AddModelRow(m, focus: false);
+            }
+            UpdateCount();
+            ctx.ModelsChanged();
+        };
+
+        var modelButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        modelButtons.Children.Add(addModelBtn);
+        modelButtons.Children.Add(browseBtn);
+
+        var modelsSection = new StackPanel { Spacing = 8, Margin = new Thickness(0, 6, 0, 0) };
+        modelsSection.Children.Add(new TextBlock
+        {
+            Text = "Models",
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = primaryTxt,
+        });
+        modelsSection.Children.Add(modelsHeader);
+        modelsSection.Children.Add(modelsPanel);
+        modelsSection.Children.Add(modelButtons);
+        Grid.SetRow(modelsSection, 2);
+        Grid.SetColumnSpan(modelsSection, 2);
+        fields.Children.Add(modelsSection);
 
         Grid.SetRow(fields, 2);
         root.Children.Add(fields);
 
         card.Child = root;
         return card;
-    }
-
-    /// <summary>Re-stamps the vision badge with the latest verdict + override.</summary>
-    public static void UpdateVisionBadge(Provider provider, Border badge, VisionCapability capability)
-    {
-        var (label, bg, fg) = ComputeVisionBadge(provider, capability);
-        badge.Background = bg;
-        if (badge.Child is TextBlock tb) tb.Text = label;
-        else badge.Child = new TextBlock
-        {
-            FontSize = 10,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = fg,
-            Text = label
-        };
-    }
-
-    private static (string Label, Brush Background, Brush Foreground)
-        ComputeVisionBadge(Provider provider, VisionCapability capability)
-    {
-        var verdict = capability.Classify(provider);
-        var label = verdict switch
-        {
-            VisionVerdict.Yes => "VISION",
-            VisionVerdict.No  => "TEXT-ONLY",
-            VisionVerdict.Unknown when provider.VisionOverride == VisionOverride.ForceYes => "VISION (forced)",
-            VisionVerdict.Unknown when provider.VisionOverride == VisionOverride.ForceNo  => "TEXT-ONLY (forced)",
-            _ => "AUTO-DETECT"
-        };
-        var bg = verdict switch
-        {
-            VisionVerdict.Yes => new SolidColorBrush(Color.FromArgb(0xFF, 0xD8, 0xEF, 0xE2)),
-            VisionVerdict.No  => new SolidColorBrush(Color.FromArgb(0xFF, 0xEF, 0xE2, 0xE2)),
-            _                 => new SolidColorBrush(Color.FromArgb(0xFF, 0xE8, 0xEC, 0xF1))
-        };
-        var fg = verdict switch
-        {
-            VisionVerdict.Yes => new SolidColorBrush(Color.FromArgb(0xFF, 0x23, 0x7A, 0x4B)),
-            VisionVerdict.No  => new SolidColorBrush(Color.FromArgb(0xFF, 0xA8, 0x32, 0x32)),
-            _                 => new SolidColorBrush(Color.FromArgb(0xFF, 0x6D, 0x7D, 0x86))
-        };
-        return (label, bg, fg);
     }
 }

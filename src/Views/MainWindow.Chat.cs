@@ -444,21 +444,25 @@ public sealed partial class MainWindow
     /// </summary>
     private async Task<(Provider? Provider, string? BlockedReason)> PickActiveProviderAsync(bool requiresVision)
     {
+        // One candidate per (provider, model): the engines and the vision
+        // classifier read DefaultModel, so each candidate is a copy of its
+        // provider pinned to that model.
         var candidates = _providers
             .Where(p => p.IsEnabled && !string.IsNullOrWhiteSpace(p.ApiKey))
+            .SelectMany(p => p.Models.Where(m => !string.IsNullOrWhiteSpace(m.Id)).Select(p.ForModel))
             .ToList();
         if (candidates.Count == 0)
         {
-            return (null, "No active AI provider with an API key configured yet; please enable " +
+            return (null, "No active AI provider with an API key and a model configured yet; please enable " +
                          "and configure a provider in the AI Providers screen.");
         }
 
         // Honour the user's explicit composer selection when it's still enabled.
         Provider? activeProvider = null;
         if (ModelSelector?.SelectedItem is ModelChoice selectedChoice
-            && candidates.Any(p => p.Id == selectedChoice.Provider.Id))
+            && candidates.Any(p => p.Id == selectedChoice.Provider.Id && p.DefaultModel == selectedChoice.ModelId))
         {
-            activeProvider = selectedChoice.Provider;
+            activeProvider = selectedChoice.Provider.ForModel(selectedChoice.Model);
         }
         else if (!requiresVision)
         {

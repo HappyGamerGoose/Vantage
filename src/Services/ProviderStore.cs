@@ -88,20 +88,33 @@ public sealed class ProviderStore
 
             var providers = new List<Provider>(custom.Count);
             var foundLegacyPlaintextKey = false;
+            var upgradedModels = false;
             foreach (var provider in custom)
             {
                 provider.Kind = ProviderKind.Custom;
                 provider.ApiKey = UnprotectApiKey(provider.ApiKey, out var wasLegacyPlaintext);
                 foundLegacyPlaintextKey |= wasLegacyPlaintext;
+                // Files from before multi-model support only have DefaultModel;
+                // seed the selector label with the name the user already sees
+                // so nothing changes on screen until they edit it.
+                upgradedModels |= provider.NormalizeModels(ModelDisplayNameService.GetFriendlyName);
                 providers.Add(provider);
             }
 
-            if (foundLegacyPlaintextKey)
+            if (upgradedModels)
+            {
+                // One-time safety copy of the file exactly as the old build wrote it.
+                var preUpgrade = Path.Combine(DataFolder, "providers.pre-multimodel.json");
+                try { if (!File.Exists(preUpgrade)) File.Copy(ProviderFile, preUpgrade); } catch { }
+            }
+
+            if (foundLegacyPlaintextKey || upgradedModels)
             {
                 try
                 {
                     Save(providers);
-                    CommonUtils.LogDiagnostic("providers-key-migrated", $"count={providers.Count}");
+                    CommonUtils.LogDiagnostic("providers-key-migrated",
+                        $"count={providers.Count} models-upgraded={upgradedModels}");
                 }
                 catch (Exception ex)
                 {
@@ -171,7 +184,11 @@ public sealed class ProviderStore
             Name = provider.Name,
             BaseUrl = provider.BaseUrl,
             ApiKey = ProtectApiKey(provider.ApiKey),
-            DefaultModel = provider.DefaultModel,
+            DefaultModel = provider.PrimaryModel?.Id ?? provider.DefaultModel,
+            Models = provider.Models
+                .Where(m => !string.IsNullOrWhiteSpace(m.Id))
+                .Select(m => new ProviderModel { Id = m.Id, DisplayName = m.DisplayName, VisionOverride = m.VisionOverride })
+                .ToList(),
             IsEnabled = provider.IsEnabled,
             Status = provider.Status,
             LastTestedAt = provider.LastTestedAt,

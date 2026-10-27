@@ -164,6 +164,54 @@ if (args.Contains("--model-name-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--provider-models-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    // A providers.json written before multi-model support: one DefaultModel
+    // and a provider-wide ForceYes. It must load as a one-model provider
+    // that behaves identically.
+    const string legacy = """
+        [{ "Id": "abc", "Kind": 1, "Name": "NVIDIA", "BaseUrl": "https://integrate.api.nvidia.com/v1",
+           "ApiKey": "dpapi:v1:xxxx", "DefaultModel": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+           "IsEnabled": true, "Status": 1, "VisionOverride": 1 }]
+        """;
+    var loaded = System.Text.Json.JsonSerializer.Deserialize<List<Vantage.Models.Provider>>(legacy)!;
+    var p = loaded[0];
+    var upgraded = p.NormalizeModels(ModelDisplayNameService.GetFriendlyName);
+    var oneModel = p.Models.Count == 1
+        && p.Models[0].Id == "nvidia/nemotron-3.5-super-vl-120b-a12b"
+        && p.Models[0].DisplayName == "Nemotron Super VL"
+        && p.Models[0].VisionOverride == Vantage.Models.VisionOverride.ForceYes
+        && p.VisionOverride == Vantage.Models.VisionOverride.Auto
+        && p.DefaultModel == p.Models[0].Id
+        && p.ApiKey == "dpapi:v1:xxxx";
+    var idempotent = !p.NormalizeModels(ModelDisplayNameService.GetFriendlyName);
+
+    // Round trip with several models, a blank row and a duplicate.
+    p.Models.Add(new Vantage.Models.ProviderModel { Id = "meta/llama-3.3-70b", DisplayName = "Llama (fast)" });
+    p.Models.Add(new Vantage.Models.ProviderModel { Id = "  " });
+    p.Models.Add(new Vantage.Models.ProviderModel { Id = "meta/llama-3.3-70b" });
+    var cleaned = p.NormalizeModels();
+    var json = System.Text.Json.JsonSerializer.Serialize(loaded, Vantage.Common.JsonDefaults.Persist);
+    var back = System.Text.Json.JsonSerializer.Deserialize<List<Vantage.Models.Provider>>(json, Vantage.Common.JsonDefaults.Persist)![0];
+    var roundTrip = cleaned && back.Models.Count == 2
+        && back.Models[1].Label == "Llama (fast)"
+        && back.Models[0].Label == "Nemotron Super VL";
+
+    // A pinned copy drives the engine/vision cache: it must carry the model
+    // and its own override, and a blank label must fall back to the id.
+    var pinned = back.ForModel(back.Models[1]);
+    var pinnedOk = pinned.DefaultModel == "meta/llama-3.3-70b"
+        && pinned.Id == back.Id
+        && pinned.VisionOverride == Vantage.Models.VisionOverride.Auto
+        && back.ForModel(back.Models[0]).VisionOverride == Vantage.Models.VisionOverride.ForceYes
+        && new Vantage.Models.ProviderModel { Id = "gpt-4o" }.Label == "gpt-4o";
+
+    var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk;
+    Console.WriteLine($"ProviderModelsValid={valid} OneModel={oneModel} Idempotent={idempotent} RoundTrip={roundTrip} Pinned={pinnedOk}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--powershell-self-test", StringComparer.OrdinalIgnoreCase))
 {
     var quick = await WindowsAppManager.RunPowerShellAsync(

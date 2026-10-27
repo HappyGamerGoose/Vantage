@@ -10,9 +10,10 @@ namespace Vantage.Models;
 public sealed class ModelChoice
 {
     public Provider Provider { get; set; } = default!;
-    public string ModelId { get; set; } = string.Empty;
-    public string Display { get; set; } = string.Empty;
-    public string Key { get; set; } = string.Empty;
+    public ProviderModel Model { get; set; } = default!;
+    public string ModelId => Model.Id;
+    public string Display => Model.Label;
+    public string Key => $"{Provider.Id}|{Model.Id}";
 
     public string ProviderDisplay => Provider?.Name ?? string.Empty;
 
