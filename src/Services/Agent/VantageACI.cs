@@ -877,11 +877,18 @@ public sealed class VantageACI
 
         // Store compact output for the next step's context; truncate
         // aggressively so a verbose cmdlet doesn't blow the budget.
-        var outTrunc = r.StdOut.Length > 800 ? r.StdOut.Substring(0, 800) + "…" : r.StdOut;
-        var errTrunc = r.StdErr.Length > 400 ? r.StdErr.Substring(0, 400) + "…" : r.StdErr;
+        // Keep head and tail: the end of the output is where results, errors
+        // and timeout markers appear.
+        static string HeadTail(string s, int max) =>
+            s.Length <= max ? s : s.Substring(0, max / 2) + "\n…[truncated]…\n" + s.Substring(s.Length - max / 2);
+        var outTrunc = HeadTail(r.StdOut, 800);
+        var errTrunc = HeadTail(r.StdErr, 400);
         AddNote($"pwsh_exit={r.ExitCode}\nout:\n{outTrunc}\nerr:\n{errTrunc}".Trim());
-        return new ActionResult(r.ExitCode == 0 ? ActionOutcome.Success : ActionOutcome.Failed,
-            $"pwsh exit={r.ExitCode} out={outTrunc.Length}ch err={errTrunc.Length}ch");
+        var timedOut = r.StdErr.Contains("[timeout after", StringComparison.Ordinal);
+        var summary = $"pwsh exit={r.ExitCode} out={outTrunc.Length}ch err={errTrunc.Length}ch";
+        if (timedOut) summary += $" (timed out after {timeoutSeconds}s; retry with a larger timeout_seconds)";
+        else if (r.ExitCode != 0 && errTrunc.Length > 0) summary += $": {errTrunc.Trim().Split('\n')[0].Trim()}";
+        return new ActionResult(r.ExitCode == 0 ? ActionOutcome.Success : ActionOutcome.Failed, summary);
     }
 
     private static Windows.System.VirtualKey MapVirtualKey(string key) => key.ToLowerInvariant() switch

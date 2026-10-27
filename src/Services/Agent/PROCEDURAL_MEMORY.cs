@@ -68,7 +68,7 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("2. The JSON block must contain ONLY the action object — no prose, no comments, no trailing commas.");
         sb.AppendLine("3. For any UI interaction, write `description` as a full sentence describing the target element by its visible text, position, role, and surroundings. Example: \"the Settings gear icon in the top-right of the Start menu\", not \"Settings\".");
         sb.AppendLine("4. You MUST use the registered actions above. Do NOT invent new actions.");
-        sb.AppendLine("5. DIRECT BATCH COMPLETION: A `batch` can include `launch_app`, `wait`, `click`, `click_xy`, `type`, `type_text`, `key`, `press_key`, `run_powershell`, `close_app`, and can terminate with `done` as the final step! When your planned batch fulfills the user's task, end the batch with `done` to complete the task in ONE single decision turn.");
+        sb.AppendLine("5. Prefer keyboard navigation when it is faster. App shortcuts and Windows-key shortcuts are available. DIRECT BATCH COMPLETION:A `batch` can include `launch_app`, `wait`, `click`, `click_xy`, `type`, `type_text`, `key`, `press_key`, `run_powershell`, `close_app`, and can terminate with `done` as the final step! When your planned batch fulfills the user's task, end the batch with `done` to complete the task in ONE single decision turn.");
         sb.AppendLine("6. When the task is complete, emit {\"action\": \"done\"} as your grounded action. Do not emit any further actions.");
         sb.AppendLine("7. When you believe the task is impossible (missing app, missing file, permission denied), emit {\"action\": \"fail\", \"reason\": \"<why>\"}.");
         sb.AppendLine("8. Never start a sentence with 'I don't have access' or similar — you DO have full access to the desktop. Always use an action.");
@@ -101,7 +101,7 @@ public static class PROCEDURAL_MEMORY
         yield return (
             "batch",
             "## batch\n" +
-            "Execute 2-16 deterministic steps as one reasoning turn. Steps run in order and stop immediately on failure. Use batch aggressively to minimize decision turns.\n" +
+            "Execute 2-16 small deterministic UI steps as one reasoning turn. Steps run in order and stop immediately on failure. Use batch aggressively to minimize decision turns.\n" +
             "```json\n" +
             "{ \"action\": \"batch\", \"description\": \"open a new tab and navigate to the repository\", \"steps\": [\n" +
             "  { \"action\": \"key\", \"keys\": [\"ctrl\", \"t\"] },\n" +

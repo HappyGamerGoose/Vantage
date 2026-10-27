@@ -180,7 +180,9 @@ public static class ContextWindowLimits
             combined.Contains("request entity too large") ||
             combined.Contains("request body exceeds") ||
             combined.Contains("reduce the length of the messages") ||
-            combined.Contains("max_tokens"))
+            combined.Contains("maximum model length") ||
+            combined.Contains("max_model_len") ||
+            combined.Contains("longer than the maximum"))
         {
             return true;
         }

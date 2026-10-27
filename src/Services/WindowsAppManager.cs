@@ -318,29 +318,39 @@ public static class WindowsAppManager
             if (proc is null)
                 return new PowerShellResult(-1, "", "failed to start powershell.exe");
 
+            // Capture output incrementally so a timeout still returns whatever
+            // the command printed before it was killed.
+            var stdout = new StringBuilder();
+            var stderr = new StringBuilder();
+            proc.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (stdout) stdout.AppendLine(e.Data); };
+            proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data); };
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var effectiveTimeoutMs = Math.Clamp(timeoutMs, 1_000, 120_000);
+            var effectiveTimeoutMs = Math.Clamp(timeoutMs, 1_000, 600_000);
             timeoutCts.CancelAfter(effectiveTimeoutMs);
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            var stderrTask = proc.StandardError.ReadToEndAsync(timeoutCts.Token);
             try
             {
                 await proc.WaitForExitAsync(timeoutCts.Token);
+                // Parameterless WaitForExit lets the async readers drain.
+                proc.WaitForExit();
             }
             catch (OperationCanceledException)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
-                string partialStdout = "";
-                string partialStderr = "";
-                try { partialStdout = await stdoutTask; } catch { }
-                try { partialStderr = await stderrTask; } catch { }
                 if (ct.IsCancellationRequested) throw;
-                return new PowerShellResult(-1, partialStdout, partialStderr + $"[timeout after {effectiveTimeoutMs}ms]");
+                string partialStdout, partialStderr;
+                lock (stdout) partialStdout = stdout.ToString();
+                lock (stderr) partialStderr = stderr.ToString();
+                return new PowerShellResult(-1, partialStdout,
+                    partialStderr + $"[timeout after {effectiveTimeoutMs}ms] command was killed; use a longer timeout_seconds or run it detached");
             }
 
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-            return new PowerShellResult(proc.ExitCode, stdout, stderr);
+            string finalStdout, finalStderr;
+            lock (stdout) finalStdout = stdout.ToString();
+            lock (stderr) finalStderr = stderr.ToString();
+            return new PowerShellResult(proc.ExitCode, finalStdout, finalStderr);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

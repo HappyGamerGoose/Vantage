@@ -231,8 +231,10 @@ public static class CommonUtils
         int maxRetries = 8, CancellationToken ct = default)
     {
         string lastPlan = "";
+        var attemptsMade = 0;
         for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
+            attemptsMade = attempt;
             try
             {
                 var resp = await agent.GetResponseAsync(temperature, maxNewTokens, ct);
@@ -297,7 +299,7 @@ public static class CommonUtils
             }
         }
         if (!string.IsNullOrEmpty(lastPlan))
-            LogDiagnostic("llm-call-exhausted", $"attempts={maxRetries} last_error={lastPlan}");
+            LogDiagnostic("llm-call-exhausted", $"attempts={attemptsMade} last_error={lastPlan}");
         // If we stopped because of a terminal provider error, bubble its
         // message up so the UI gets a clean, single-line explanation
         // instead of an empty plan that triggers another retry.
