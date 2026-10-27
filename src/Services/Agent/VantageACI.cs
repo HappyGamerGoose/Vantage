@@ -1042,19 +1042,56 @@ public sealed class VantageACI
         if (string.IsNullOrWhiteSpace(target)) return null;
 
         var front = WindowsAppManager.GetFrontmostApp();
-        if (front is { } current
-            && (current.Window.Title.Contains(target, StringComparison.OrdinalIgnoreCase)
-                || current.ProcessName.Contains(target, StringComparison.OrdinalIgnoreCase)))
-        {
+        if (front is { } current && TargetMatches(target, current.Window.Title, current.ProcessName))
             return null;
+
+        // The intended window may simply not be in front yet (focus stolen by
+        // a popup, a launch still settling). Bring it forward and re-check
+        // rather than failing the step and costing a whole model round trip.
+        var candidate = WindowsAppManager.ListVisibleWindows()
+            .FirstOrDefault(w => !string.IsNullOrWhiteSpace(w.Title) && TargetMatches(target, w.Title, ""));
+        if (candidate is not null && WindowsAppManager.FocusWindow(candidate))
+        {
+            for (var poll = 0; poll < 8; poll++)
+            {
+                Thread.Sleep(40);
+                front = WindowsAppManager.GetFrontmostApp();
+                if (front is { } now && TargetMatches(target, now.Window.Title, now.ProcessName))
+                    return null;
+            }
         }
 
         var actual = front is { } value
             ? $"{value.ProcessName} — {value.Window.Title}"
             : "no foreground window";
+        var visible = string.Join("; ", WindowsAppManager.ListVisibleWindows()
+            .Where(w => !string.IsNullOrWhiteSpace(w.Title))
+            .Take(6)
+            .Select(w => $"\"{Truncate(w.Title, 50)}\""));
         return new ActionResult(
             ActionOutcome.Failed,
-            $"{operation} blocked because foreground was '{actual}', expected a window matching '{target}'");
+            $"{operation} blocked because foreground was '{actual}' and no visible window matches '{target}'" +
+            (visible.Length > 0 ? $" (visible windows: {visible}); use focus_app or launch_app first" : ""));
+    }
+
+    /// <summary>
+    /// Tolerant title match. Models paraphrase window titles, so a strict
+    /// substring test rejects correct targets. Accepts a case-insensitive
+    /// substring, or every significant word of the target appearing in the
+    /// title/process text.
+    /// </summary>
+    internal static bool TargetMatches(string target, string title, string processName)
+    {
+        if (title.Contains(target, StringComparison.OrdinalIgnoreCase)
+            || (processName.Length > 0 && processName.Contains(target, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        var haystack = $"{title} {processName}";
+        var words = Regex.Split(target, @"[^\p{L}\p{N}]+")
+            .Where(word => word.Length >= 3)
+            .ToList();
+        return words.Count > 0
+            && words.All(word => haystack.Contains(word, StringComparison.OrdinalIgnoreCase));
     }
 
     private ActionResult DoCursorPosition()
@@ -1132,6 +1169,18 @@ public sealed class VantageACI
         if (steps.Count > MaxBatchSteps)
             return new ActionResult(ActionOutcome.Failed, $"batch is limited to {MaxBatchSteps} steps");
 
+        // `task_update` is bookkeeping that belongs on the batch object, but
+        // models sometimes emit it as a step. Ignore it instead of failing.
+        steps = steps.Where(s => !string.Equals(s.Action, "task_update", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (steps.Count < 1)
+            return new ActionResult(ActionOutcome.Failed, "batch requires at least one executable step");
+
+        // Window observations are single-use (see ComputerUseSession), and any
+        // desktop-wide step invalidates them. Reject impossible batches up
+        // front instead of running half of them and then failing.
+        if (ValidateObservationUse(steps) is { } observationError)
+            return new ActionResult(ActionOutcome.Failed, observationError);
+
         var summaries = new List<string>(steps.Count);
         for (var index = 0; index < steps.Count; index++)
         {
@@ -1175,6 +1224,36 @@ public sealed class VantageACI
         return new ActionResult(
             ActionOutcome.Success,
             $"batch completed {steps.Count}/{steps.Count}: {string.Join(", ", summaries)}");
+    }
+
+    private static readonly HashSet<string> ObservationConsumers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "click_element", "click_window_xy", "scroll_window", "drag_window",
+        "set_value", "type_window_text", "press_window_key"
+    };
+
+    internal static string? ValidateObservationUse(IReadOnlyList<AgentAction> steps)
+    {
+        var consumed = 0;
+        for (var i = 0; i < steps.Count; i++)
+        {
+            var name = steps[i].Action;
+            if (ObservationConsumers.Contains(name))
+            {
+                if (++consumed > 1)
+                    return $"batch step {i + 1}/{steps.Count} `{name}` needs its own get_window_state observation; " +
+                           "each observation is single-use, so a batch may contain only one window-scoped action. " +
+                           "Use coordinate/keyboard actions for the other steps, or send the next window action in a new turn.";
+            }
+            else if (consumed == 0 && i + 1 < steps.Count
+                     && !ComputerUseSession.IsScopedAction(name)
+                     && steps.Skip(i + 1).Any(s => ObservationConsumers.Contains(s.Action)))
+            {
+                return $"batch step {i + 1}/{steps.Count} `{name}` is a desktop-wide action that invalidates the window observation " +
+                       "needed by a later window-scoped step. Put the window-scoped step first or split the batch.";
+            }
+        }
+        return null;
     }
 
     private ActionResult DoListWindows()

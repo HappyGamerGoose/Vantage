@@ -69,6 +69,11 @@ public sealed class Worker
     private const int VerificationFeedbackKept = 4;
     private const int InMemoryHistoryKept = 12;
     private const int VisionMaxLongestSide = 1152;
+    private const int MaxConsecutiveRateLimits = 5;
+    private int _consecutiveRateLimits;
+    private const int SettlePollLimit = 3;
+    private const int SettlePollDelayMs = 80;
+    private const double SettleChangeThreshold = 0.005;
     private const int GeneratorMaxNewTokens = 768;
     private const int ReflectionMaxNewTokens = 512;
 
@@ -331,6 +336,13 @@ public sealed class Worker
         {
             _turnCount++;
             _taskContext.RecordSystemEvent("The provider rate limit stopped the prior turn before a desktop action ran");
+            // Without a cap and a pause the run loop would re-issue the
+            // request immediately, forever, against a throttled provider.
+            if (++_consecutiveRateLimits >= MaxConsecutiveRateLimits)
+                return new ActionResult(ActionOutcome.FailedFatal,
+                    $"stopped after {_consecutiveRateLimits} consecutive provider rate limits: {rlex.Message}");
+            var pauseMs = (int)Math.Clamp(Math.Max(rlex.RetryAfterSeconds, 2) * 1000.0, 2_000, 15_000);
+            await Task.Delay(pauseMs, ct);
             return new ActionResult(ActionOutcome.Failed, rlex.Message);
         }
         catch (LmmProviderException pex)
@@ -346,6 +358,7 @@ public sealed class Worker
             generatorMs = generatorSw.ElapsedMilliseconds;
         }
 
+        _consecutiveRateLimits = 0;
         WorkerHistory.Add(plan);
         TrimHistory(WorkerHistory);
         _lastRawPlan = plan;
@@ -523,9 +536,26 @@ public sealed class Worker
         byte[]? postScreenshot = null;
         if (needVerify)
         {
-            postSnapshot = WorldSnapshot.Capture();
-            try { postScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
-            catch { /* diff falls back to world-only signal */ }
+            // UI reacts asynchronously: a capture taken the instant SendInput
+            // returns usually predates the redraw, which made correct clicks
+            // look like no-ops. Poll briefly and stop as soon as anything
+            // changes, so only genuine no-ops pay the (short) wait.
+            for (var settle = 0; ; settle++)
+            {
+                postSnapshot = WorldSnapshot.Capture();
+                try { postScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
+                catch { postScreenshot = null; /* diff falls back to world-only signal */ }
+
+                if (settle >= SettlePollLimit) break;
+                var interim = WorldDiff.Between(preSnapshot!, postSnapshot);
+                var screenMoved = preScreenshot is not null && postScreenshot is not null
+                    && ScreenshotDiffer.Diff(preScreenshot, postScreenshot).IsSignificant(SettleChangeThreshold);
+                if (interim.ForegroundChanged || interim.ForegroundProcessChanged
+                    || interim.WindowsAddedCount > 0 || interim.WindowsRemovedCount > 0
+                    || interim.FingerprintChanged || screenMoved)
+                    break;
+                await Task.Delay(SettlePollDelayMs, ct);
+            }
         }
         var worldDiff = needVerify
             ? WorldDiff.Between(preSnapshot!, postSnapshot!)

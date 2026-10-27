@@ -109,7 +109,7 @@ public static class PROCEDURAL_MEMORY
             "  { \"action\": \"wait\", \"seconds\": 2 }\n" +
             "] }\n" +
             "```\n" +
-            "Use batch to combine launch_app, clicks, typing, key chords, scrolling, dragging, focus, run_powershell, waits, and even terminate with `done` as the final step. Do not include list_windows, get_window_state, batch, or fail."
+            "Use batch to combine launch_app, clicks, typing, key chords, scrolling, dragging, focus, run_powershell, waits, and even terminate with `done` as the final step. Do not include list_windows, get_window_state, batch, or fail. A batch may contain at most one window-scoped action (click_element, set_value, type_window_text, press_window_key, click_window_xy, scroll_window, drag_window) because each get_window_state observation is single-use, and it must come before any coordinate/keyboard step."
         );
 
         yield return (

@@ -242,6 +242,33 @@ if (args.Contains("--computer-use-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--flow-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    // Window-title matching tolerates paraphrase but not unrelated windows.
+    var matchCases = new (string Target, string Title, string Process, bool Expected)[]
+    {
+        ("Vantage - Vantage - Antigravity", "Antigravity — Vantage - Vantage - Antigravity", "Antigravity", true),
+        ("Microsoft Edge", "New tab and 4 more pages - Personal - Microsoft​ Edge", "msedge", true),
+        ("edge", "Anything", "msedge", true),
+        ("Google Chrome", "GitHub - Microsoft Edge", "msedge", false),
+        ("Notepad", "Untitled - Notepad", "notepad", true),
+        ("Settings", "Microsoft Store", "ApplicationFrameHost", false),
+    };
+    var matchOk = matchCases.All(c => VantageACI.TargetMatches(c.Target, c.Title, c.Process) == c.Expected);
+
+    AgentAction Step(string action) => CommonUtils.ParseAgentAction($"{{\"action\":\"{action}\"}}")!;
+    var okBatch = VantageACI.ValidateObservationUse(new[] { Step("click_element"), Step("wait") }) is null
+        && VantageACI.ValidateObservationUse(new[] { Step("click_xy"), Step("type_text"), Step("press_key") }) is null;
+    var twoWindowSteps = VantageACI.ValidateObservationUse(new[] { Step("click_element"), Step("press_window_key") });
+    var legacyBeforeWindow = VantageACI.ValidateObservationUse(new[] { Step("click_xy"), Step("type_window_text") });
+    var batchOk = okBatch && twoWindowSteps is not null && legacyBeforeWindow is not null;
+
+    var valid = matchOk && batchOk;
+    Console.WriteLine($"FlowValid={valid} TitleMatching={matchOk} BatchObservationRules={batchOk}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
 {
     // Mock OpenAI-compatible server that behaves like the hidden-reasoning

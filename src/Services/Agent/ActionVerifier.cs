@@ -196,16 +196,17 @@ public static class ActionVerifier
                 "ground truth changed (window/foreground/process): " + diff);
 
         // No world-state change observed — count on the screen delta.
-        // Threshold is intentionally loose (1.5% of samples). Subtle clicks
+        // Threshold is intentionally loose (0.6% of samples). Subtle clicks
         // (focus change, hover, scroll-edge nudge) produce small but valid
         // screen deltas; strict thresholds would false-positive as "no
         // action" and confuse the model. A real no-op produces ~0% delta.
-        if (screenDiff.IsSignificant(0.015))
+        // The worker already waited briefly for the UI to settle.
+        if (screenDiff.IsSignificant(0.006))
             return new VerificationResult(true, "click",
                 $"screen changed ({screenDiff.TotalChangeRatio:P2} of samples): {screenDiff.HotRegionSummary}");
 
         return new VerificationResult(false, "click",
-            "no observable change — click may have landed on a dead region; try a different target",
+            "no observable change after a short wait — the click may have hit a dead region or a control with no visual feedback; confirm with a fresh screenshot before retrying",
             new Dictionary<string, string>
             {
                 ["before"] = before.Compact(),
