@@ -118,6 +118,7 @@
             <Style x:Key="BorderlessTextBoxStyle" TargetType="TextBox">
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="IsSpellCheckEnabled" Value="False" />
             </Style>
 
             <CornerRadius x:Key="ComposerRadius">16</CornerRadius>

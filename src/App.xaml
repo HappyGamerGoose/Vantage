@@ -10,7 +10,11 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+            <!-- No red spell-check squiggles in any text box: the fields hold
+                 model ids, URLs and names, which are never ordinary prose. -->
+            <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="IsSpellCheckEnabled" Value="False" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
