@@ -72,6 +72,54 @@
             <SolidColorBrush x:Key="HoverBrush" Color="#0A000000" />
             <SolidColorBrush x:Key="PendingBackgroundBrush" Color="#F7FAFB" />
 
+            <!--
+                Lightweight-styling overrides for every TextBox / PasswordBox
+                inside the window. WinUI's template switches to its own system
+                greys on hover/focus (TextControlBackground*), which painted a
+                mismatched slab inside the dark composer. ThemeManager keeps
+                these in step with the palette.
+            -->
+            <SolidColorBrush x:Key="TextControlBackground" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FFF2F2F2" />
+            <SolidColorBrush x:Key="TextControlBorderBrush" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#0078D4" />
+            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="TextControlForeground" Color="#101A24" />
+            <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#101A24" />
+            <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#101A24" />
+            <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#94A0A6" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#94A0A6" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#94A0A6" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#94A0A6" />
+            <SolidColorBrush x:Key="TextControlPlaceholderForegroundDisabled" Color="#94A0A6" />
+            <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="#0078D4" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#0078D4" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#1A86E0" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="#0064B0" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#0078D4" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="#1A86E0" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="#0064B0" />
+            <SolidColorBrush x:Key="ComboBoxBackground" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="#D8DEE3" />
+            <SolidColorBrush x:Key="TextControlButtonForeground" Color="#66708A" />
+            <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="#101A24" />
+
+            <!-- Borderless variant for boxes that sit inside their own card
+                 (composer, search): every state stays transparent so the card
+                 colour shows through and no inner rectangle appears. -->
+            <Style x:Key="BorderlessTextBoxStyle" TargetType="TextBox">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+            </Style>
+
             <CornerRadius x:Key="ComposerRadius">16</CornerRadius>
             <ThemeShadow x:Key="NewChatShadow" />
             <ThemeShadow x:Key="EmptyStateShadow" />
@@ -135,7 +183,7 @@
                 </Setter>
             </Style>
 
-            <Style x:Key="ComposerTextBoxStyle" TargetType="TextBox">
+            <Style x:Key="ComposerTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource BorderlessTextBoxStyle}">
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Padding" Value="0" />
@@ -540,8 +588,19 @@
                         <StackPanel x:Name="SearchPanel" Grid.Row="2" Spacing="8" Margin="0,0,0,8" Visibility="Collapsed">
                             <Border Height="36" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
                                     BorderThickness="1" CornerRadius="8">
-                                <TextBox x:Name="SearchBox" Padding="10,5" FontSize="13" Background="Transparent" BorderThickness="0"
-                                         PlaceholderText="Search every message" TextChanged="SearchBox_TextChanged" />
+                                <TextBox x:Name="SearchBox" Style="{StaticResource BorderlessTextBoxStyle}" Padding="10,5" FontSize="13" Background="Transparent" BorderThickness="0"
+                                         PlaceholderText="Search every message" TextChanged="SearchBox_TextChanged">
+                                    <TextBox.Resources>
+                                        <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                                        <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                                    </TextBox.Resources>
+                                </TextBox>
                             </Border>
                             <Border x:Name="SearchResultsHost" MaxHeight="220" Background="{StaticResource SurfaceElevatedBrush}"
                                     BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1" CornerRadius="10"
@@ -1037,7 +1096,18 @@
                                         VerticalContentAlignment="Center"
                                         PlaceholderText="Message Vantage"
                                         KeyDown="InputBox_KeyDown"
-                                        Style="{StaticResource ComposerTextBoxStyle}" />
+                                        Style="{StaticResource ComposerTextBoxStyle}">
+                                        <TextBox.Resources>
+                                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                                            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                                        </TextBox.Resources>
+                                    </TextBox>
                                      <ComboBox x:Name="ModelSelector"
                                                Grid.Column="1"
                                                Width="196" Height="40"

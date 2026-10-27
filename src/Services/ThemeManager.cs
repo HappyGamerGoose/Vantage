@@ -3,17 +3,15 @@
 //
 // Centralised palette + dark-mode management. Defines:
 //
-//   1. Six accent palettes (Teal · Blue · Green · Violet · Pink · Slate),
-//      each with Light + Dark brush sets. Picking a palette repaints
-//      only the accent family (Accent / AccentHover / AccentPressed /
-//      AccentSoft / PaneEdge) so the rest of the chrome (whites, ink,
-//      surface tints) stays cohesive.
+//   1. Eight accent palettes (Green · Violet · Yellow · Blue · Teal ·
+//      Orange · Pink · Slate), each with Light + Dark brush sets
+//      (Accent / AccentHover / AccentPressed / AccentSoft / PaneEdge).
 //
 //   2. A Light/Dark neutral set (Page / Surface / SurfaceElevated /
-//      SubtleSurface / text brushes / Sidebar gradient stops / Input
-//      background / Composer chrome). Toggling dark mode swaps the
-//      neutral brushes — the previously-selected accent palette rides
-//      along automatically.
+//      SubtleSurface / text brushes / Sidebar / Rail / Chat canvas /
+//      Composer chrome) generated per palette: each palette's hue tints
+//      the neutrals, so a palette changes the whole mood and not just
+//      the accent. Toggling dark mode swaps the lightness ladder.
 //
 //   3. Apply() walks ResourceDictionary on the MainWindow's content
 //      grid (where every named brush lives) and replaces each entry
@@ -32,90 +30,141 @@ namespace Vantage.Services;
 
 public static class ThemeManager
 {
-    // ── Light neutrals — match the existing pre-palette chrome so the
-    // existing app stays looking the same on first launch.
-    private static readonly ThemeNeutralSet LightNeutral = new(
-        Page              : "#FFFCFCFE",
-        Surface           : "#F8FFFFFF",
-        SurfaceElevated   : "#F7FFFFFF",
-        SubtleSurface     : "#F4F4F9",
-        Stroke            : "#1F182033",
-        SoftStroke        : "#14182033",
-        Hairline          : "#0D182033",
-        PrimaryText       : "#111522",
-        SecondaryText     : "#66708A",
-        MutedText         : "#9299AA",
-        PaneStart         : "#FAFAFD",
-        PaneEnd           : "#F6F7FC",
-        Composer          : "#FAFFFFFF",
-        ComposerBorder    : "#E3E5EC",
-        Hover             : "#0A5442F5",
-        Background        : "#FCFCFE");
+    // ── Neutrals ────────────────────────────────────────────────────
+    // Neutrals are no longer one shared grey set: each palette carries a hue
+    // and the page, sidebar, cards, strokes and text are tinted toward it.
+    // That is what makes switching palette feel like a different theme
+    // instead of a recoloured button. Lightness values are fixed so contrast
+    // stays predictable (primary text ≥ 12:1, secondary ≥ 6:1, muted ≥ 4:1).
+    private static ThemeNeutralSet BuildNeutral(ThemePalette p, bool dark)
+    {
+        var h = p.Hue;
+        // Warm hues (orange/amber) turn to chocolate-brown when tinted at the
+        // dark lightness levels, so they get a lighter touch there.
+        var t = p.TintStrength * (dark && h is >= 10 and <= 60 ? 0.6 : 1.0);
+        string C(double s, double l, string alpha = "") => Hsl(h, Math.Clamp(s * t, 0, 1), l, alpha);
 
-    // ── Dark neutrals — calibrated for late-night reading. We avoid
-    // pure #000 backgrounds because they look harsh next to a wide
-    // monitor; instead the page sits one notch below the system
-    // dark grey so chrome elements read as layered, not negative.
-    private static readonly ThemeNeutralSet DarkNeutral = new(
-        Page              : "#D20F1115",
-        Surface           : "#D91A1D23",
-        SurfaceElevated   : "#F022252B",
-        SubtleSurface     : "#E123262D",
-        Stroke            : "#40FFFFFF",
-        SoftStroke        : "#20FFFFFF",
-        Hairline          : "#12FFFFFF",
-        PrimaryText       : "#E7EAEC",
-        SecondaryText     : "#A4ADB5",
-        MutedText         : "#73787E",
-        PaneStart         : "#D916181E",
-        PaneEnd           : "#1F2128",
-        Composer          : "#F022252B",
-        ComposerBorder    : "#323640",
-        Hover             : "#14FFFFFF",
-        Background        : "#15171C");
+        if (!dark)
+        {
+            return new ThemeNeutralSet(
+                Page            : C(0.60, 0.975),
+                Surface         : C(0.40, 0.995, "FA"),
+                SurfaceElevated : "#FFFFFFFF",
+                SubtleSurface   : C(0.55, 0.950),
+                Stroke          : C(0.45, 0.20, "24"),
+                SoftStroke      : C(0.45, 0.20, "16"),
+                Hairline        : C(0.45, 0.20, "0E"),
+                PrimaryText     : C(0.40, 0.12),
+                SecondaryText   : C(0.20, 0.36),
+                MutedText       : C(0.15, 0.49),
+                PaneStart       : C(0.65, 0.955),
+                PaneEnd         : C(0.65, 0.935),
+                Composer        : "#FFFFFFFF",
+                ComposerBorder  : C(0.45, 0.87),
+                Hover           : C(0.60, 0.50, "14"),
+                Background      : C(0.60, 0.975),
+                Rail            : C(0.65, 0.940),
+                ChatCanvas      : C(0.55, 0.985));
+        }
+
+        return new ThemeNeutralSet(
+            Page            : C(0.42, 0.095, "F2"),
+            Surface         : C(0.36, 0.140, "F5"),
+            SurfaceElevated : C(0.34, 0.180),
+            SubtleSurface   : C(0.32, 0.205),
+            Stroke          : C(0.60, 0.88, "38"),
+            SoftStroke      : C(0.60, 0.88, "1E"),
+            Hairline        : C(0.60, 0.88, "12"),
+            PrimaryText     : C(0.30, 0.94),
+            SecondaryText   : C(0.18, 0.74),
+            MutedText       : C(0.14, 0.58),
+            PaneStart       : C(0.44, 0.120, "F2"),
+            PaneEnd         : C(0.40, 0.145),
+            Composer        : C(0.34, 0.180),
+            ComposerBorder  : C(0.30, 0.290),
+            Hover           : C(0.80, 0.80, "1C"),
+            Background      : C(0.42, 0.095),
+            Rail            : C(0.44, 0.110, "F2"),
+            ChatCanvas      : C(0.40, 0.085, "F0"));
+    }
+
+    /// <summary>HSL (h in degrees, s/l in 0..1) to the "#AARRGGBB" form ParseColor reads.</summary>
+    private static string Hsl(double hue, double s, double l, string alpha = "")
+    {
+        var h = (((hue % 360) + 360) % 360) / 360.0;
+        var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        var p = 2 * l - q;
+
+        static double Channel(double p, double q, double t)
+        {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1.0 / 6) return p + (q - p) * 6 * t;
+            if (t < 0.5) return q;
+            if (t < 2.0 / 3) return p + (q - p) * (2.0 / 3 - t) * 6;
+            return p;
+        }
+
+        var r = (byte)Math.Round(Channel(p, q, h + 1.0 / 3) * 255);
+        var g = (byte)Math.Round(Channel(p, q, h) * 255);
+        var b = (byte)Math.Round(Channel(p, q, h - 1.0 / 3) * 255);
+        return $"#{alpha}{r:X2}{g:X2}{b:X2}";
+    }
 
     // ── Accent palettes ─────────────────────────────────────────────
+    // Light accents are all ≥ 4.5:1 on white so they stay legible as text
+    // (they colour the "New chat" label and author names); dark accents are
+    // lifted to ≥ 7:1 on the dark surfaces. Hue/tint drive the neutrals.
     public static readonly IReadOnlyList<ThemePalette> Palettes = new ThemePalette[]
     {
-        // 1. Green — Windows "Nature" emoji, classic Win10 start menu accent.
+        // 1. Green — fresh and calm.
         new ThemePalette("Green",
-            new AccentSet("#107C10", "#1F8A1F", "#0C660C", "#E5F3E5", "#26107C10"),
-            new AccentSet("#6CCB5E", "#88D67B", "#5BAB4F", "#1B3326", "#506CCB5E")),
+            new AccentSet("#17853F", "#1F9A4C", "#106B31", "#E2F5E8", "#2617853F"),
+            new AccentSet("#5FDC8A", "#7DE7A1", "#46C070", "#12361F", "#505FDC8A"),
+            Hue: 142, TintStrength: 1.0),
 
-        // 2. Violet — Tailwind violet + Windows 11 Flow accent.
+        // 2. Violet — the default; vivid indigo-violet.
         new ThemePalette("Violet",
-            new AccentSet("#5442F5", "#6555FA", "#4534D9", "#EFEDFF", "#265442F5"),
-            new AccentSet("#968BFF", "#AAA1FF", "#7F72F0", "#292445", "#50968BFF")),
+            new AccentSet("#6A4DF4", "#7C63F7", "#5538D8", "#F0ECFF", "#266A4DF4"),
+            new AccentSet("#A99BFF", "#BBB0FF", "#8F7FF0", "#2A2250", "#50A99BFF"),
+            Hue: 252, TintStrength: 1.0),
 
-        // 3. Yellow — sunshine / amber. Reads warm without being alarm-orange.
+        // 3. Yellow — golden honey on a cream canvas (pure yellow is not
+        // readable as text, so the warmth lives in the surfaces).
         new ThemePalette("Yellow",
-            new AccentSet("#B27B00", "#C88B00", "#9A6A00", "#FFF6DB", "#26B27B00"),
-            new AccentSet("#FFD54F", "#FFE082", "#FFCA28", "#332A15", "#50FFD54F")),
+            new AccentSet("#A56700", "#BA7600", "#8A5500", "#FFF3D1", "#26A56700"),
+            new AccentSet("#FFCB47", "#FFD86F", "#F2B72A", "#3D2F0C", "#50FFCB47"),
+            Hue: 42, TintStrength: 1.0),
 
-        // 4. Blue — Windows 11 default accent.
+        // 4. Blue — clear cobalt.
         new ThemePalette("Blue",
-            new AccentSet("#0078D4", "#1084D9", "#0064B0", "#E8F1FB", "#260078D4"),
-            new AccentSet("#4CC2FF", "#68CDFF", "#3AA8E8", "#172A3A", "#504CC2FF")),
+            new AccentSet("#2468E8", "#3A7BF0", "#1B54C7", "#E7F0FF", "#262468E8"),
+            new AccentSet("#6AAEFF", "#86BEFF", "#4F97EE", "#14274A", "#506AAEFF"),
+            Hue: 220, TintStrength: 1.0),
 
-        // 5. Teal — classic Vantage brand accent.
+        // 5. Teal — the classic Vantage accent, brightened.
         new ThemePalette("Teal",
-            new AccentSet("#0E7A6E", "#148A7D", "#0A655B", "#E3F4F1", "#260E7A6E"),
-            new AccentSet("#4ED2C1", "#6DE0D1", "#3EBFAD", "#142F2B", "#504ED2C1")),
+            new AccentSet("#0B7F75", "#129186", "#08675F", "#E0F5F2", "#260B7F75"),
+            new AccentSet("#3FD6C2", "#62E2D1", "#2DBBA8", "#0F3A38", "#503FD6C2"),
+            Hue: 174, TintStrength: 1.0),
 
-        // 6. Orange — warm sunset accent.
+        // 6. Orange — warm sunset, vivid rather than brown.
         new ThemePalette("Orange",
-            new AccentSet("#C44E12", "#D45D1E", "#AA420E", "#FCEEE5", "#26C44E12"),
-            new AccentSet("#FF8A50", "#FFA06D", "#F47133", "#382319", "#50FF8A50")),
+            new AccentSet("#CC4509", "#E0540F", "#AD3905", "#FFEADB", "#26CC4509"),
+            new AccentSet("#FF9558", "#FFAA77", "#F57C37", "#43220F", "#50FF9558"),
+            Hue: 22, TintStrength: 1.0),
 
-        // 7. Pink — vibrant modern magenta hint.
+        // 7. Pink — raspberry.
         new ThemePalette("Pink",
-            new AccentSet("#C2185B", "#D1286C", "#A8114D", "#FDE7F0", "#26C2185B"),
-            new AccentSet("#FF6599", "#FF82B0", "#F04D85", "#381724", "#50FF6599")),
+            new AccentSet("#D01F6B", "#E0327D", "#AF1558", "#FFE6F1", "#26D01F6B"),
+            new AccentSet("#FF7DB1", "#FF98C2", "#F25F9A", "#431631", "#50FF7DB1"),
+            Hue: 336, TintStrength: 1.0),
 
-        // 8. Slate — restrained, recedes into the background.
+        // 8. Slate — restrained steel blue; tint is kept low on purpose.
         new ThemePalette("Slate",
-            new AccentSet("#5A6B7C", "#687B8D", "#4C5B6B", "#EEF2F6", "#265A6B7C"),
-            new AccentSet("#9AAEC2", "#ADC0D3", "#879CB1", "#202730", "#509AAEC2")),
+            new AccentSet("#4A5C78", "#5A6D8A", "#3B4A62", "#E9EEF6", "#264A5C78"),
+            new AccentSet("#9DB2CC", "#B2C4DA", "#869CB8", "#1F2A3A", "#509DB2CC"),
+            Hue: 218, TintStrength: 0.45),
     };
 
     public static ThemePalette GetPalette(string name)
@@ -155,9 +204,9 @@ public static class ThemeManager
         if (root is null) return;
         var palette = GetPalette(paletteName);
         var accent  = darkMode ? palette.Dark : palette.Light;
-        var neutral = darkMode ? DarkNeutral : LightNeutral;
+        var neutral = BuildNeutral(palette, darkMode);
 
-        var targets = new List<(string Key, string ColorHex)>(42);
+        var targets = new List<(string Key, string ColorHex)>(96);
         void Queue(string key, string hex) => targets.Add((key, hex));
 
         // Neutrals — page surfaces, text, separators, composer chrome
@@ -172,13 +221,48 @@ public static class ThemeManager
         Queue("SecondaryTextBrush",     neutral.SecondaryText);
         Queue("MutedTextBrush",         neutral.MutedText);
         Queue("PaneBrush",              neutral.PaneStart);
-        Queue("RailBrush",              darkMode ? "#F0121820" : "#F8F9FD");
-        Queue("ChatCanvasBrush",        darkMode ? "#E8101217" : "#FCFCFE");
+        Queue("RailBrush",              neutral.Rail);
+        Queue("ChatCanvasBrush",        neutral.ChatCanvas);
         Queue("HoverBrush",             neutral.Hover);
         Queue("ComposerBrush",          neutral.Composer);
         Queue("ComposerBorderBrush",    neutral.ComposerBorder);
         Queue("InputBrush",             neutral.Composer);
         Queue("PendingBackgroundBrush", neutral.Page);
+
+        // Text inputs: inset fill + themed border/placeholder in every state,
+        // so WinUI's system greys never show through (see MainWindow.xaml).
+        Queue("TextControlBackground",                       neutral.SubtleSurface);
+        Queue("TextControlBackgroundPointerOver",            neutral.SubtleSurface);
+        Queue("TextControlBackgroundFocused",                neutral.SubtleSurface);
+        Queue("TextControlBackgroundDisabled",               WithAlpha(neutral.SubtleSurface, "80"));
+        Queue("TextControlBorderBrush",                      neutral.ComposerBorder);
+        Queue("TextControlBorderBrushPointerOver",           neutral.Stroke);
+        Queue("TextControlBorderBrushFocused",               accent.Accent);
+        Queue("TextControlBorderBrushDisabled",              neutral.Hairline);
+        Queue("TextControlForeground",                       neutral.PrimaryText);
+        Queue("TextControlForegroundPointerOver",            neutral.PrimaryText);
+        Queue("TextControlForegroundFocused",                neutral.PrimaryText);
+        Queue("TextControlForegroundDisabled",               neutral.MutedText);
+        Queue("TextControlPlaceholderForeground",            neutral.MutedText);
+        Queue("TextControlPlaceholderForegroundPointerOver", neutral.MutedText);
+        Queue("TextControlPlaceholderForegroundFocused",     neutral.MutedText);
+        Queue("TextControlPlaceholderForegroundDisabled",    neutral.MutedText);
+        Queue("TextControlSelectionHighlightColor",          accent.Accent);
+        Queue("ToggleSwitchFillOn",                          accent.Accent);
+        Queue("ToggleSwitchFillOnPointerOver",               accent.AccentHover);
+        Queue("ToggleSwitchFillOnPressed",                   accent.AccentPressed);
+        Queue("ToggleSwitchStrokeOn",                        accent.Accent);
+        Queue("ToggleSwitchStrokeOnPointerOver",             accent.AccentHover);
+        Queue("ToggleSwitchStrokeOnPressed",                 accent.AccentPressed);
+        Queue("ComboBoxBackground",                          neutral.SubtleSurface);
+        Queue("ComboBoxBackgroundPointerOver",               neutral.SubtleSurface);
+        Queue("ComboBoxBackgroundPressed",                   neutral.SubtleSurface);
+        Queue("ComboBoxBackgroundFocused",                   neutral.SubtleSurface);
+        Queue("ComboBoxBorderBrush",                         neutral.ComposerBorder);
+        Queue("ComboBoxBorderBrushPointerOver",              neutral.Stroke);
+        Queue("ComboBoxBorderBrushPressed",                  neutral.Stroke);
+        Queue("TextControlButtonForeground",                 neutral.SecondaryText);
+        Queue("TextControlButtonForegroundPointerOver",      neutral.PrimaryText);
 
         // Accent palette
         Queue("AccentBrush",            accent.Accent);
@@ -189,12 +273,14 @@ public static class ThemeManager
         Queue("PanelTintBrush",         darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft);
 
         // Warm / Success / Danger
-        var warmAccent    = darkMode ? WithAlpha(accent.Accent, "EA") : "#B66A42";
-        var successAccent = darkMode ? "#6CD676" : "#237A4B";
-        var successSoft   = darkMode ? "#1B3326" : "#D8EFE2";
-        var dangerAccent  = darkMode ? "#E67878" : "#A83232";
-        var warmHover     = darkMode ? WithAlpha(accent.Accent, "FF") : "#C77C58";
-        var warmPressed   = darkMode ? WithAlpha(accent.Accent, "C0") : "#8E5030";
+        // "Warm" colours the Stop button: a clear coral-red in both modes so
+        // it reads as "interrupt" regardless of the chosen accent.
+        var warmAccent    = darkMode ? "#E5575F" : "#D9434A";
+        var successAccent = darkMode ? "#5FDC8A" : "#1E8A4C";
+        var successSoft   = darkMode ? "#12361F" : "#DDF4E6";
+        var dangerAccent  = darkMode ? "#FF8A90" : "#C62F36";
+        var warmHover     = darkMode ? "#F0707A" : "#E5595F";
+        var warmPressed   = darkMode ? "#C9444C" : "#B3343A";
         Queue("WarmBrush",              warmAccent);
         Queue("WarmHoverBrush",         warmHover);
         Queue("WarmPressedBrush",       warmPressed);
@@ -202,19 +288,19 @@ public static class ThemeManager
         Queue("SuccessSoftBrush",       successSoft);
         Queue("DangerBrush",            dangerAccent);
 
-        var errorText = darkMode ? "#F4836D" : "#B3261E";
+        var errorText = darkMode ? "#FF9A9A" : "#B3261E";
         Queue("ErrorTextBrush",         errorText);
 
         // Message bubbles & avatars
         var bubbleUser          = darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft;
         var bubbleAssistant     = "#00FFFFFF";
-        var bubbleError         = darkMode ? "#3A1F1C" : "#FBEEE8";
-        var bubbleBorderUser    = WithAlpha(accent.Accent, darkMode ? "55" : "32");
+        var bubbleError         = darkMode ? "#3F1E24" : "#FFECEE";
+        var bubbleBorderUser    = WithAlpha(accent.Accent, darkMode ? "55" : "38");
         var bubbleBorderAssist  = "#00000000";
-        var bubbleBorderError   = darkMode ? "#80E67878" : "#E9B9A7";
-        var avatarUser          = darkMode ? "#262C32" : "#E2E9EE";
-        var avatarAssistant     = darkMode ? WithAlpha(accent.Accent, "28") : accent.AccentSoft;
-        var avatarError         = darkMode ? "#3A1F1C" : "#FBEEE8";
+        var bubbleBorderError   = darkMode ? "#80FF8A90" : "#F2B4B8";
+        var avatarUser          = neutral.SubtleSurface;
+        var avatarAssistant     = darkMode ? WithAlpha(accent.Accent, "38") : accent.AccentSoft;
+        var avatarError         = darkMode ? "#3F1E24" : "#FFECEE";
         var authorText          = darkMode
                                     ? WithAlpha(accent.Accent, "FF")
                                     : WithAlpha(accent.AccentPressed, "FF");
@@ -371,7 +457,12 @@ public sealed record AccentSet(
     string AccentSoft,
     string PaneEdge);
 
-public sealed record ThemePalette(string Name, AccentSet Light, AccentSet Dark);
+public sealed record ThemePalette(
+    string Name,
+    AccentSet Light,
+    AccentSet Dark,
+    double Hue = 252,
+    double TintStrength = 1.0);
 
 public sealed record ThemeNeutralSet(
     string Page,
@@ -389,4 +480,6 @@ public sealed record ThemeNeutralSet(
     string Composer,
     string ComposerBorder,
     string Hover,
-    string Background);
+    string Background,
+    string Rail,
+    string ChatCanvas);
