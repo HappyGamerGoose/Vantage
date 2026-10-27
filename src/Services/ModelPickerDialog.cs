@@ -99,6 +99,7 @@ public static class ModelPickerDialog
             }
         };
 
+        if (xamlRoot.Content is FrameworkElement appRoot) DialogStyle.Apply(dialog, appRoot);
         var result = await dialog.ShowAsync();
         cts.Cancel();
         if (result != ContentDialogResult.Primary) return null;

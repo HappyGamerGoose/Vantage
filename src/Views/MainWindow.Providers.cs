@@ -288,9 +288,10 @@ public sealed partial class MainWindow
             PrimaryButtonText = "Remove",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
-            XamlRoot = RootGrid.XamlRoot
+            XamlRoot = RootGrid.XamlRoot,
         };
 
+        DialogStyle.Apply(dialog, RootGrid);
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
@@ -325,17 +326,17 @@ public sealed partial class MainWindow
         var nameBox = new TextBox
         {
             PlaceholderText = "Mistral, LM Studio, vLLM…",
-            Header = "Provider name",
+            Header = ProviderCardRenderer.FieldLabel("Provider name", secondaryTextBrush),
         };
         var urlBox = new TextBox
         {
             PlaceholderText = "https://api.example.com/v1",
-            Header = "Base URL",
+            Header = ProviderCardRenderer.FieldLabel("Base URL", secondaryTextBrush),
         };
         var keyBox = new PasswordBox
         {
             PlaceholderText = "Paste your API key (stays on this PC)",
-            Header = "API key",
+            Header = ProviderCardRenderer.FieldLabel("API key", secondaryTextBrush),
         };
 
         // Model rows: the id sent to the API plus an optional label for the
@@ -508,6 +509,7 @@ public sealed partial class MainWindow
             }
         };
 
+        DialogStyle.Apply(dialog, RootGrid);
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary)
         {

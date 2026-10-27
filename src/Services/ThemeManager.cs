@@ -314,6 +314,7 @@ public static class ThemeManager
         Queue("AvatarAssistantBrush",       avatarAssistant);
         Queue("AvatarErrorBrush",           avatarError);
         Queue("AuthorTextBrush",            authorText);
+        Queue("AuthorErrorBrush",           errorText);
 
         ApplyBrushSwaps(root, targets, animate);
     }

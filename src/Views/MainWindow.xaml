@@ -50,6 +50,7 @@
             <SolidColorBrush x:Key="AvatarAssistantBrush" Color="#D6E7F8" />
             <SolidColorBrush x:Key="AvatarErrorBrush" Color="#FBEEE8" />
             <SolidColorBrush x:Key="AuthorTextBrush" Color="#0078D4" />
+            <SolidColorBrush x:Key="AuthorErrorBrush" Color="#B3261E" />
             <!-- Keep the navigation quiet so conversations remain the focus. -->
             <SolidColorBrush x:Key="PaneBrush" Color="#F2F5F7" />
             <SolidColorBrush x:Key="RailBrush" Color="#E8EEF5" />
@@ -121,7 +122,7 @@
                 <Setter Property="IsSpellCheckEnabled" Value="False" />
             </Style>
 
-            <CornerRadius x:Key="ComposerRadius">16</CornerRadius>
+            <CornerRadius x:Key="ComposerRadius">24</CornerRadius>
             <ThemeShadow x:Key="NewChatShadow" />
             <ThemeShadow x:Key="EmptyStateShadow" />
             <ThemeShadow x:Key="ComposerShadow" />
@@ -213,8 +214,8 @@
                 <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource SoftStrokeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
-                <Setter Property="Padding" Value="18" />
+                <Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding" Value="22,20" />
             </Style>
 
             <!--
@@ -233,13 +234,14 @@
 
             <Style x:Key="ConversationListItemStyle" TargetType="ListViewItem">
                 <Setter Property="Padding" Value="0" />
-                <Setter Property="Margin" Value="0,2" />
+                <Setter Property="Margin" Value="0,1" />
                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ListViewItem">
-                            <Grid x:Name="ItemRoot" Background="Transparent" CornerRadius="10">
+                            <Grid x:Name="ItemRoot" Background="Transparent" CornerRadius="12"
+                                  BorderBrush="Transparent" BorderThickness="1">
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
                                                   HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -269,12 +271,18 @@
                                                 <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="(Panel.Background)">
                                                     <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource AccentSoftBrush}" />
                                                 </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="BorderBrush">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource BubbleBorderUserBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
                                             </Storyboard>
                                         </VisualState>
                                         <VisualState x:Name="SelectedUnfocused">
                                             <Storyboard>
                                                 <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="(Panel.Background)">
                                                     <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource AccentSoftBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="BorderBrush">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource BubbleBorderUserBrush}" />
                                                 </ObjectAnimationUsingKeyFrames>
                                             </Storyboard>
                                         </VisualState>
@@ -556,7 +564,7 @@
             <Border Grid.Column="0" Background="{StaticResource PaneBrush}"
                     BorderBrush="{StaticResource PaneEdgeBrush}" BorderThickness="0,0,1,0">
                 <Grid x:Name="SidebarHost">
-                    <Grid x:Name="ConversationPane" Width="292" HorizontalAlignment="Left" Padding="20,12,16,14">
+                    <Grid x:Name="ConversationPane" Width="292" HorizontalAlignment="Left" Padding="18,12,14,14">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
@@ -567,7 +575,7 @@
                         <Button x:Name="NewChatButton" Grid.Row="0" Height="44" Padding="14,0"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                 Background="{StaticResource SurfaceElevatedBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
-                                BorderThickness="1" Click="NewChatButton_Click" CornerRadius="10"
+                                BorderThickness="1" Click="NewChatButton_Click" CornerRadius="12"
                                 Shadow="{StaticResource NewChatShadow}" Translation="0,0,8">
                             <StackPanel Orientation="Horizontal" Spacing="13" VerticalAlignment="Center">
                                 <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE710;" />
@@ -645,7 +653,7 @@
                             </ListView.ItemContainerTransitions>
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                        <Grid Height="60" Padding="10,6" ColumnSpacing="10">
+                                        <Grid Height="58" Padding="10,6" ColumnSpacing="11">
                                             <Grid.ContextFlyout>
                                                 <MenuFlyout>
                                                     <MenuFlyoutItem Tag="{Binding}" Text="Rename" Click="RenameConversationMenuItem_Click">
@@ -661,13 +669,16 @@
                                                 <ColumnDefinition Width="36" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <Border Width="36" Height="36" CornerRadius="8" Background="{Binding IconBackgroundBrush}">
-                                                <FontIcon FontSize="16" Foreground="{Binding IconBrush}" Glyph="{Binding IconGlyph}" />
+                                            <!-- One calm tile for every conversation: the per-title
+                                                 rainbow of glyphs read as noise, and in dark mode the
+                                                 pale tiles glared against the pane. -->
+                                            <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource AccentSoftBrush}">
+                                                <FontIcon FontSize="14" Foreground="{StaticResource AccentBrush}" Glyph="&#xE8F2;" />
                                             </Border>
-                                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                                <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
+                                            <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                                <TextBlock FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
                                                            Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock FontSize="10.5" Foreground="{StaticResource SecondaryTextBrush}" Text="{Binding UpdatedLabel}" />
+                                                <TextBlock FontSize="11" Foreground="{StaticResource MutedTextBrush}" Text="{Binding UpdatedLabel}" />
                                             </StackPanel>
                                         </Grid>
                                 </DataTemplate>
@@ -774,7 +785,7 @@
                             </ListView.ItemContainerTransitions>
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Padding="0,7" HorizontalAlignment="Stretch">
+                                    <Grid Padding="0,6" HorizontalAlignment="Stretch">
                                         <Grid HorizontalAlignment="{Binding BubbleAlignment}" MaxWidth="800">
                                             <Grid ColumnSpacing="{Binding MessageColumnSpacing}">
                                                 <Grid.ColumnDefinitions>
@@ -788,7 +799,7 @@
                                                     to each message and removes
                                                     the cramped 12px label.
                                                 -->
-                                                <Border Width="32" Height="32" CornerRadius="8"
+                                                <Border Width="32" Height="32" CornerRadius="16"
                                                         Background="{Binding AvatarBrush}"
                                                         VerticalAlignment="Top" Visibility="{Binding AvatarVisibility}">
                                                     <Image Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -801,8 +812,8 @@
                                                     EmitPlainReply, error cards, and any other
                                                     non-agent assistant message.
                                                 -->
-                                                <Border CornerRadius="8"
-                                                        Padding="12,9,14,10"
+                                                <Border CornerRadius="16"
+                                                        Padding="15,10,16,11"
                                                         Background="{Binding BubbleBrush}"
                                                         BorderBrush="{Binding BubbleBorderBrush}"
                                                         BorderThickness="1"
@@ -826,9 +837,9 @@
                                                                 Visibility="{Binding ImageVisibility}">
                                                             <Image MaxHeight="300" Source="{Binding ImageSource}" Stretch="Uniform" />
                                                         </Border>
-                                                        <TextBlock FontSize="14.5"
+                                                        <TextBlock FontSize="15"
                                                                    Foreground="{StaticResource PrimaryTextBrush}"
-                                                                   LineHeight="23"
+                                                                   LineHeight="24"
                                                                    Text="{Binding CleanText}"
                                                                    TextWrapping="Wrap"
                                                                    Visibility="{Binding TextVisibility}" />
@@ -840,7 +851,7 @@
                                                     step log with a structured stepper, progress
                                                     bar, live counter strip, and an animated dot.
                                                 -->
-                                                <Border CornerRadius="8"
+                                                <Border CornerRadius="14"
                                                         Padding="0"
                                                         Background="{Binding BubbleBrush}"
                                                         BorderBrush="{Binding BubbleBorderBrush}"
@@ -1020,16 +1031,17 @@
                                                     CopyButtonVisibility on ChatMessage.
                                                 -->
                                                 <Button HorizontalAlignment="Right"
-                                                        Margin="0,4,2,0"
+                                                        Margin="0,2,2,0"
                                                         Padding="0"
-                                                        Width="28" Height="28"
-                                                        CornerRadius="8"
+                                                        Width="26" Height="26"
+                                                        Opacity="0.55"
+                                                        CornerRadius="13"
                                                         Click="CopyMessageButton_Click"
                                                         Tag="{Binding}"
                                                         ToolTipService.ToolTip="Copy message"
                                                         Style="{StaticResource GhostIconButtonStyle}"
                                                         Visibility="{Binding CopyButtonVisibility}">
-                                                    <FontIcon FontSize="13"
+                                                    <FontIcon FontSize="12"
                                                               Foreground="{StaticResource SecondaryTextBrush}"
                                                               Glyph="&#xE8C8;" />
                                                 </Button>
@@ -1069,9 +1081,9 @@
                     <Border
                         x:Name="ComposerHost"
                         Grid.Row="2"
-                        Padding="32,0,32,36"
+                        Padding="32,4,32,32"
                         HorizontalAlignment="Stretch"
-                        MaxWidth="980">
+                        MaxWidth="900">
                         <Border
                             x:Name="ComposerCard"
                             HorizontalAlignment="Stretch"
@@ -1081,7 +1093,7 @@
                             CornerRadius="{StaticResource ComposerRadius}"
                             Shadow="{StaticResource ComposerShadow}"
                             Translation="0,0,18">
-                            <Grid Height="64" Padding="18,8,10,8" ColumnSpacing="8">
+                            <Grid Height="68" Padding="22,8,12,8" ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
@@ -1111,9 +1123,9 @@
                                     </TextBox>
                                      <ComboBox x:Name="ModelSelector"
                                                Grid.Column="1"
-                                               Width="196" Height="40"
-                                               Padding="10,0"
-                                               CornerRadius="12"
+                                               Width="200" Height="44"
+                                               Padding="12,0"
+                                               CornerRadius="16"
                                                Background="{StaticResource SubtleSurfaceBrush}"
                                                BorderBrush="{StaticResource SoftStrokeBrush}"
                                                SelectionChanged="ModelSelector_SelectionChanged"
@@ -1132,10 +1144,10 @@
                                          </ComboBox.ItemTemplate>
                                      </ComboBox>
                                     <Grid Grid.Column="2" VerticalAlignment="Center">
-                                        <Button x:Name="SendButton" Width="40" Height="40" Padding="0" Background="{StaticResource AccentBrush}" BorderThickness="0" Click="SendButton_Click" CornerRadius="20" Style="{StaticResource AccentFilledButtonStyle}" ToolTipService.ToolTip="Send message">
+                                        <Button x:Name="SendButton" Width="44" Height="44" Padding="0" Background="{StaticResource AccentBrush}" BorderThickness="0" Click="SendButton_Click" CornerRadius="22" Style="{StaticResource AccentFilledButtonStyle}" ToolTipService.ToolTip="Send message">
                                             <FontIcon FontSize="16" Foreground="White" Glyph="&#xE724;" />
                                         </Button>
-                                        <Button x:Name="StopButton" Width="40" Height="40" Padding="0" Background="{StaticResource WarmBrush}" BorderThickness="0" Click="StopButton_Click" CornerRadius="20" Visibility="Collapsed" Style="{StaticResource WarmFilledButtonStyle}" ToolTipService.ToolTip="Stop response">
+                                        <Button x:Name="StopButton" Width="44" Height="44" Padding="0" Background="{StaticResource WarmBrush}" BorderThickness="0" Click="StopButton_Click" CornerRadius="22" Visibility="Collapsed" Style="{StaticResource WarmFilledButtonStyle}" ToolTipService.ToolTip="Stop response">
                                             <FontIcon FontSize="14" Foreground="White" Glyph="&#xE15B;" />
                                         </Button>
                                     </Grid>
@@ -1165,7 +1177,7 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource AccentSoftBrush}">
+                                    <Border Width="40" Height="40" CornerRadius="12" Background="{StaticResource AccentSoftBrush}">
                                         <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE713;" />
                                     </Border>
                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
@@ -1190,14 +1202,13 @@
                                             stack here keeps the markup simple
                                             and the cards identical).
                                         -->
-                                        <ScrollViewer HorizontalScrollMode="Enabled"
-                                                      HorizontalScrollBarVisibility="Hidden"
-                                                      VerticalScrollMode="Disabled"
-                                                      VerticalScrollBarVisibility="Disabled">
-                                            <StackPanel x:Name="PalettePicker"
-                                                        Loaded="PalettePicker_Loaded"
-                                                        Orientation="Horizontal" Spacing="8" />
-                                        </ScrollViewer>
+                                        <!-- Wraps into a tidy 4-column grid so every palette is
+                                             visible at once (the old single row clipped the last ones). -->
+                                        <VariableSizedWrapGrid x:Name="PalettePicker"
+                                                               Loaded="PalettePicker_Loaded"
+                                                               Orientation="Horizontal"
+                                                               MaximumRowsOrColumns="4"
+                                                               ItemWidth="166" ItemHeight="58" />
 
                                         <StackPanel Spacing="8">
                                             <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" Text="Theme mode" />
@@ -1273,7 +1284,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                                        <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource AccentSoftBrush}">
+                                        <Border Width="40" Height="40" CornerRadius="12" Background="{StaticResource AccentSoftBrush}">
                                             <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE967;" />
                                         </Border>
                                         <StackPanel Spacing="4" VerticalAlignment="Center">

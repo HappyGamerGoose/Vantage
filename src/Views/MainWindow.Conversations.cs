@@ -163,9 +163,10 @@ public sealed partial class MainWindow
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = RootGrid.XamlRoot
+            XamlRoot = RootGrid.XamlRoot,
         };
 
+        DialogStyle.Apply(dialog, RootGrid);
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 

@@ -10,10 +10,22 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <!-- Other merged dictionaries here -->
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Rounder, softer shapes everywhere: every stock control reads
+                 ControlCornerRadius and every dialog / flyout reads
+                 OverlayCornerRadius, so one value here restyles the app. -->
+            <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">14</CornerRadius>
+
+
             <!-- No red spell-check squiggles in any text box: the fields hold
                  model ids, URLs and names, which are never ordinary prose. -->
             <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
                 <Setter Property="IsSpellCheckEnabled" Value="False" />
+                <Setter Property="MinHeight" Value="38" />
+            </Style>
+            <Style TargetType="PasswordBox" BasedOn="{StaticResource DefaultPasswordBoxStyle}">
+                <Setter Property="MinHeight" Value="38" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

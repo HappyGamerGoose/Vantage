@@ -34,6 +34,16 @@ public sealed class ProviderCardContext
 
 public static class ProviderCardRenderer
 {
+    /// <summary>Small, quiet label used above form fields instead of a body-sized header.</summary>
+    public static TextBlock FieldLabel(string text, Brush foreground) => new()
+    {
+        Text = text,
+        FontSize = 12,
+        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        Foreground = foreground,
+        Margin = new Thickness(0, 0, 0, 2),
+    };
+
     public static UIElement Build(Provider provider, ProviderCardContext ctx)
     {
         var strokeBrush     = ctx.Brush("SoftStrokeBrush");
@@ -51,7 +61,7 @@ public static class ProviderCardRenderer
             Background = ctx.Brush("SurfaceElevatedBrush"),
             BorderBrush = strokeBrush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(14),
             Padding = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -75,9 +85,9 @@ public static class ProviderCardRenderer
 
         var providerIcon = new Border
         {
-            Width = 32,
-            Height = 32,
-            CornerRadius = new CornerRadius(8),
+            Width = 38,
+            Height = 38,
+            CornerRadius = new CornerRadius(11),
             Background = accentSoftBrush,
             Child = new FontIcon { FontSize = 15, Foreground = accentBrush, Glyph = "\uE967" },
         };
@@ -217,7 +227,7 @@ public static class ProviderCardRenderer
         };
         var statusBorder = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(8, 0, 0, 0)),
+            Background = subtleBrush,
             Padding = new Thickness(16, 6, 14, 6),
             BorderBrush = strokeBrush,
             BorderThickness = new Thickness(0, 1, 0, 0)
@@ -257,7 +267,7 @@ public static class ProviderCardRenderer
 
         var nameField = new TextBox
         {
-            Header = "Provider name",
+            Header = FieldLabel("Provider name", secondaryTxt),
             Text = provider.Name,
             Tag = ("Name", provider, nameBlock)
         };
@@ -277,7 +287,7 @@ public static class ProviderCardRenderer
 
         var keyField = new PasswordBox
         {
-            Header = "API key",
+            Header = FieldLabel("API key", secondaryTxt),
             Password = provider.ApiKey,
             PlaceholderText = "Paste your API key",
             Tag = provider
@@ -297,7 +307,7 @@ public static class ProviderCardRenderer
 
         var urlField = new TextBox
         {
-            Header = "Base URL",
+            Header = FieldLabel("Base URL", secondaryTxt),
             Text = provider.BaseUrl,
             PlaceholderText = "https://api.example.com/v1",
             Tag = ("BaseUrl", provider)
@@ -398,6 +408,7 @@ public static class ProviderCardRenderer
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Center,
+                MinHeight = 38,
             };
             ToolTipService.SetToolTip(vision, "Auto detects image support from the model name and a live probe. Pin it if the detection is wrong.");
             vision.Items.Add("Auto-detect");

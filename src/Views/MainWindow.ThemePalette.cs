@@ -122,12 +122,12 @@ public sealed partial class MainWindow
     {
         var card = new Border
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(12),
             Background   = (Brush)RootGrid.Resources["SurfaceElevatedBrush"],
             BorderBrush  = (Brush)RootGrid.Resources["SoftStrokeBrush"],
             BorderThickness = new Thickness(1),
-            Padding      = new Thickness(10, 6, 12, 6),
-            Margin       = new Thickness(0, 0, 0, 0),
+            Padding      = new Thickness(12, 8, 12, 8),
+            Margin       = new Thickness(0, 0, 10, 10),
             Tag          = palette.Name,
         };
         var inner = new Grid { ColumnSpacing = 8 };
@@ -136,8 +136,8 @@ public sealed partial class MainWindow
 
         var dot = new Border
         {
-            Width = 18, Height = 18,
-            CornerRadius = new CornerRadius(9),
+            Width = 22, Height = 22,
+            CornerRadius = new CornerRadius(11),
             Background   = new SolidColorBrush(swatchColor),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -151,14 +151,14 @@ public sealed partial class MainWindow
         };
         text.Children.Add(new TextBlock
         {
-            FontSize = 12,
+            FontSize = 12.5,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Brush)RootGrid.Resources["PrimaryTextBrush"],
             Text = palette.Name,
         });
         text.Children.Add(new TextBlock
         {
-            FontSize = 10,
+            FontSize = 10.5,
             Foreground = (Brush)RootGrid.Resources["MutedTextBrush"],
             Text = PaletteTagline(palette.Name),
         });
@@ -192,14 +192,14 @@ public sealed partial class MainWindow
 
     private static string PaletteTagline(string name) => name switch
     {
-        "Green"  => "Windows nature · calm",
-        "Violet" => "Flow accent · playful",
+        "Green"  => "Calm · nature",
+        "Violet" => "Flow · playful",
         "Yellow" => "Sunshine · bold",
-        "Blue"   => "Windows 11 default",
-        "Teal"   => "Vantage classic · focused",
+        "Blue"   => "Windows default",
+        "Teal"   => "Vantage classic",
         "Orange" => "Sunset · warm",
-        "Pink"   => "Magenta hint · soft",
-        "Slate"  => "Neutral · recedes",
+        "Pink"   => "Soft magenta",
+        "Slate"  => "Neutral · quiet",
         _        => string.Empty
     };
 

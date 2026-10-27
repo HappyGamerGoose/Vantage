@@ -401,9 +401,10 @@ public sealed partial class MainWindow
             PrimaryButtonText = "Delete All",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
-            XamlRoot = RootGrid.XamlRoot
+            XamlRoot = RootGrid.XamlRoot,
         };
 
+        DialogStyle.Apply(dialog, RootGrid);
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
