@@ -29,6 +29,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Vantage.Common;
 
 namespace Vantage.Services.Agent;
 
@@ -74,6 +75,7 @@ public sealed class Worker
     private const int SettlePollLimit = 3;
     private const int SettlePollDelayMs = 80;
     private const double SettleChangeThreshold = 0.005;
+    private const int ControlsBudgetMs = 700;
     private const int GeneratorMaxNewTokens = 768;
     private const int ReflectionMaxNewTokens = 512;
 
@@ -246,6 +248,24 @@ public sealed class Worker
         CommonUtils.LogDiagnostic("world-state-elapsed-ms",
             $"turn={_turnCount + 1} elapsed={worldSw.ElapsedMilliseconds}");
         sbGen.AppendLine(worldState.ToPromptBlock());
+
+        // Named controls of the foreground window. The same list backs the
+        // grounding step, so a control the model names is clicked exactly.
+        var controlsSw = Stopwatch.StartNew();
+        var controls = await UiControlGrounding.SnapshotAsync(
+            NativeInterop.GetForegroundWindow(), TimeSpan.FromMilliseconds(ControlsBudgetMs));
+        _aci.AssignControls(controls);
+        if (controls.Count > 0)
+        {
+            var scale = WindowsAutomationService.GetPrimaryMonitor().LogicalToPhysicalScale;
+            var block = UiControlGrounding.BuildPromptBlock(
+                controls, worldState.ForegroundTitle, _monitor.LogicalWidth, _monitor.LogicalHeight, scale);
+            if (block.Length > 0) sbGen.AppendLine(block);
+        }
+        controlsSw.Stop();
+        CommonUtils.LogDiagnostic("controls-snapshot",
+            $"turn={_turnCount + 1} controls={controls.Count} elapsed={controlsSw.ElapsedMilliseconds}ms");
+
         sbGen.AppendLine(_taskContext.BuildPromptBlock());
 
         // Stuck-state recovery: if we've now hit the same failing
@@ -254,7 +274,8 @@ public sealed class Worker
         {
             sbGen.AppendLine(
                 "STUCK_RECOVERY: Your last few attempts failed with the same description. " +
-                "Pivot NOW. Do NOT repeat the same description. Try a totally different approach: " +
+                "Pivot NOW. Do NOT repeat the same description. If FOREGROUND_CONTROLS lists the target, " +
+                "copy that control's exact name into `description`; otherwise try a totally different approach: " +
                 "call `list_windows`, select exactly one returned window_id, then call `get_window_state`. " +
                 "Use a returned accessibility element, or use app-local Tab/Shift+Tab/Enter/Escape only " +
                 "through `press_window_key` after a fresh observation.");
@@ -810,17 +831,11 @@ public sealed class Worker
             || _recentFailures.Count > 0)
             return false;
 
-        return action.Action.Trim().ToLowerInvariant() switch
-        {
-            "batch" or "click" or "click_xy" or "click_element" or "click_window_xy"
-                or "type" or "type_text" or "type_window_text" or "set_value"
-                or "key" or "press_key" or "press_window_key"
-                or "drag" or "drag_xy" or "drag_window"
-                or "scroll" or "scroll_xy" or "scroll_window"
-                or "launch_app" or "focus_app" or "resize_app"
-                or "close_app" or "run_powershell" or "done" => true,
-            _ => false
-        };
+        // Targets chosen by a guess (a description resolved to coordinates, or
+        // coordinates the model estimated) are always verified. Skipping the
+        // check there recorded missed clicks as progress and let the same
+        // click repeat for dozens of turns.
+        return FastPathPolicy.IsEligible(action);
     }
 
     private static string Normalize(string s)

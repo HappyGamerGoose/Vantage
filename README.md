@@ -53,6 +53,7 @@ dotnet run --project $probe -- --computer-use-prompt-self-test
 dotnet run --project $probe -- --reasoning-self-test
 dotnet run --project $probe -- --flow-self-test
 dotnet run --project $probe -- --provider-models-self-test
+dotnet run --project $probe -- --agent-accuracy-self-test
 ```
 
 ## License

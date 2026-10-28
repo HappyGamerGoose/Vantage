@@ -604,7 +604,7 @@ internal sealed class ComputerUseSession
         }
     }
 
-    private static (int X, int Y) PhysicalToLogical(int x, int y)
+    internal static (int X, int Y) PhysicalToLogical(int x, int y)
     {
         var scale = WindowsAutomationService.GetPrimaryMonitor().LogicalToPhysicalScale;
         return ((int)Math.Round(x / scale), (int)Math.Round(y / scale));

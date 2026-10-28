@@ -113,7 +113,7 @@ public sealed class PersistentTaskContext
         }
         if (_snapshot.Todos.Count == 1 && !_snapshot.Todos[0].IsCompleted)
             sb.AppendLine("Planning required: add 1-5 concrete remaining steps with task_update.add in your next action.");
-        sb.AppendLine("Include task_update in each action as {\"add\":[],\"complete\":[],\"reopen\":[]}. Add contains new step text; complete and reopen contain existing to-do IDs. Do not complete goal directly or mark any step complete until its action succeeded.");
+        sb.AppendLine("Include task_update in each action as {\"add\":[],\"complete\":[],\"reopen\":[]}. Add contains new step text; complete and reopen contain existing to-do IDs (such as todo-2) or their exact text. Do not complete goal directly or mark any step complete until its action succeeded.");
         return sb.ToString().TrimEnd();
     }
 
@@ -286,8 +286,51 @@ public sealed class PersistentTaskContext
         // The root goal represents the whole run and is completed only by
         // the terminal `done` result in RecordAction.
         if (complete && id.Trim().Equals("goal", StringComparison.OrdinalIgnoreCase)) return;
-        var todo = _snapshot.Todos.FirstOrDefault(item => item.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+        var todo = ResolveTodo(id);
         if (todo is not null) todo.IsCompleted = complete;
+    }
+
+    /// <summary>
+    /// Models usually refer to a step by its wording ("Open Windows Settings")
+    /// rather than its id ("todo-1"). Accept an id, the exact text, or text
+    /// that clearly contains / is contained by exactly one step.
+    /// </summary>
+    internal TaskTodoItem? ResolveTodo(string key)
+    {
+        var trimmed = key.Trim();
+        if (trimmed.Length == 0) return null;
+
+        var byId = _snapshot.Todos.FirstOrDefault(item => item.Id.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+        if (byId is not null) return byId;
+
+        var wanted = NormalizeKey(trimmed);
+        if (wanted.Length == 0) return null;
+
+        var exact = _snapshot.Todos.Where(item => NormalizeKey(item.Text) == wanted).ToList();
+        if (exact.Count == 1) return exact[0];
+        if (exact.Count > 1) return exact.FirstOrDefault(item => !item.IsCompleted) ?? exact[0];
+
+        // Containment needs enough text to be meaningful; "open" must not
+        // complete every step that mentions opening something.
+        if (wanted.Length < 8) return null;
+        var partial = _snapshot.Todos.Where(item =>
+        {
+            var text = NormalizeKey(item.Text);
+            return text.Length >= 8 && (text.Contains(wanted, StringComparison.Ordinal) || wanted.Contains(text, StringComparison.Ordinal));
+        }).ToList();
+        return partial.Count == 1 ? partial[0] : null;
+    }
+
+    private static string NormalizeKey(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        var lastSpace = true;
+        foreach (var ch in value)
+        {
+            if (char.IsLetterOrDigit(ch)) { sb.Append(char.ToLowerInvariant(ch)); lastSpace = false; }
+            else if (!lastSpace) { sb.Append(' '); lastSpace = true; }
+        }
+        return sb.ToString().Trim();
     }
 
     private TaskContextSnapshot Load()

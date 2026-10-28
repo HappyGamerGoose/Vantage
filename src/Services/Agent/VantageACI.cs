@@ -60,6 +60,21 @@ public sealed class VantageACI
         Platform = platform;
     }
 
+    // Controls of the foreground window as the model saw them this turn.
+    // They describe the screen only until something acts on it, so a batch
+    // marks them stale after its first step.
+    private IReadOnlyList<UiControl> _controls = Array.Empty<UiControl>();
+    private bool _controlsFresh;
+    private int _accessibilityHits;
+
+    public int AccessibilityHits => _accessibilityHits;
+
+    internal void AssignControls(IReadOnlyList<UiControl> controls)
+    {
+        _controls = controls;
+        _controlsFresh = controls.Count > 0;
+    }
+
     public void AssignScreenshot(byte[] jpegBytes)
     {
         _screenshotJpeg = jpegBytes;
@@ -518,8 +533,8 @@ public sealed class VantageACI
         if (string.IsNullOrWhiteSpace(startPhrase) || string.IsNullOrWhiteSpace(endPhrase))
             return new ActionResult(ActionOutcome.Failed, "highlight_text_span requires both phrases");
 
-        var startCoords = await GroundAsync($"the start of the text: {startPhrase}", ct);
-        var endCoords = await GroundAsync($"the end of the text: {endPhrase}", ct);
+        var startCoords = await GroundAsync($"the start of the text: {startPhrase}", ct, useControls: false);
+        var endCoords = await GroundAsync($"the end of the text: {endPhrase}", ct, useControls: false);
         if (startCoords is null || endCoords is null) return new ActionResult(ActionOutcome.Failed, "phrase endpoints not found");
 
         var button = (action.GetString("button") ?? "left").ToLowerInvariant();
@@ -559,11 +574,27 @@ public sealed class VantageACI
     /// Doesn't lose the last description — it stays available for logging.</summary>
     public void ResetGroundFailureTracking() => _consecutiveGroundFailures = 0;
 
-    private async Task<(int x, int y)?> GroundAsync(string description, CancellationToken ct)
+    private async Task<(int x, int y)?> GroundAsync(string description, CancellationToken ct, bool useControls = true)
     {
         var groundSw = Stopwatch.StartNew();
         try
         {
+            // A named control in the accessibility tree is exact and free;
+            // only fall back to the vision model when no control fits.
+            if (useControls && _controlsFresh
+                && UiControlGrounding.Match(description, _controls) is { } control)
+            {
+                var (cx, cy) = ComputerUseSession.PhysicalToLogical(control.CenterX, control.CenterY);
+                cx = Math.Clamp(cx, 0, _monitor.LogicalWidth - 1);
+                cy = Math.Clamp(cy, 0, _monitor.LogicalHeight - 1);
+                _accessibilityHits++;
+                _lastGroundDescription = description;
+                _consecutiveGroundFailures = 0;
+                CommonUtils.LogDiagnostic("grounding-accessibility-hit",
+                    $"target=\"{description}\" control=\"{control.Name}\" role={control.Role} at=({cx},{cy})");
+                return (cx, cy);
+            }
+
             _groundingAgent.Reset();
             // Tell the LLM exactly what space its coords should be in.
             // Without this the LLM picks one (often the image's pixel
@@ -1202,6 +1233,8 @@ public sealed class VantageACI
             }
 
             var result = await ExecuteCoreAsync(step, ct);
+            // The screen the controls were read from may have changed.
+            _controlsFresh = false;
             summaries.Add($"{index + 1}:{step.Action}={result.Outcome}");
             if (result.Outcome == ActionOutcome.Done)
             {

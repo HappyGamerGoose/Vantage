@@ -317,6 +317,120 @@ if (args.Contains("--flow-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    // Fix 1: only deterministic actions may skip verification; guessed targets are always checked.
+    AgentAction Parse(string json) => CommonUtils.ParseAgentAction(json)!;
+    var verified = new[]
+    {
+        "{\"action\":\"click\",\"description\":\"the Windows Update option\"}",
+        "{\"action\":\"click\",\"x\":80,\"y\":829}",
+        "{\"action\":\"click_xy\",\"x\":80,\"y\":829}",
+        "{\"action\":\"drag\",\"start_description\":\"a\",\"end_description\":\"b\"}",
+        "{\"action\":\"scroll\",\"description\":\"the list\",\"clicks\":3}",
+        "{\"action\":\"type\",\"description\":\"the search box\",\"text\":\"hi\"}",
+        "{\"action\":\"click_window_xy\",\"x\":4,\"y\":5}",
+        "{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"win\"]},{\"action\":\"click\",\"description\":\"x\"}]}",
+    };
+    var fast = new[]
+    {
+        "{\"action\":\"key\",\"keys\":[\"win\",\"i\"]}",
+        "{\"action\":\"type\",\"text\":\"hello\"}",
+        "{\"action\":\"launch_app\",\"name\":\"notepad\"}",
+        "{\"action\":\"run_powershell\",\"script\":\"Get-Date\"}",
+        "{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"win\",\"i\"]},{\"action\":\"wait\",\"seconds\":1}]}",
+    };
+    var verifyOk = verified.All(j => !FastPathPolicy.IsEligible(Parse(j)))
+        && fast.All(j => FastPathPolicy.IsEligible(Parse(j)));
+
+    // Fixes 2 and 3: accessibility-first grounding picks the named control and refuses to guess.
+    UiControl Ctl(string name, string role, int x, int y, bool enabled = true) =>
+        new(name, role, enabled, false, x, y, 160, 40);
+    var settings = new List<UiControl>
+    {
+        Ctl("Home", "list-item", 40, 160),
+        Ctl("Windows Update", "list-item", 40, 800),          // left sidebar
+        Ctl("Windows Update", "button", 1400, 120),            // top-right card
+        Ctl("Bluetooth & devices", "list-item", 40, 300),
+        Ctl("Check for updates", "button", 700, 400),
+        Ctl("Search", "edit", 300, 20),
+        Ctl("Delete", "button", 900, 500, enabled: false),
+    };
+    var sidebar = UiControlGrounding.Match("the Windows Update option at the bottom of the left sidebar in Settings", settings);
+    var card = UiControlGrounding.Match("the Windows Update card in the top right", settings);
+    var ambiguous = UiControlGrounding.Match("Windows Update", settings);
+    var longest = UiControlGrounding.Match("the Check for updates button", settings);
+    var disabled = UiControlGrounding.Match("the Delete button", settings);
+    var missing = UiControlGrounding.Match("the Network & internet option", settings);
+    var searchBox = UiControlGrounding.Match("the Search box at the top", settings);
+    var groundOk = sidebar is { Role: "list-item" } && sidebar.Left == 40 && sidebar.Top == 800
+        && card is { Role: "button" } && card.Left == 1400
+        && ambiguous is null
+        && longest?.Name == "Check for updates"
+        && disabled is null
+        && missing is null
+        && searchBox?.Role == "edit";
+    var block = UiControlGrounding.BuildPromptBlock(settings, "Settings", 1536, 960, 1.25);
+    var blockOk = block.Contains("\"Windows Update\" list-item @", StringComparison.Ordinal)
+        && !block.Contains("Delete", StringComparison.Ordinal);
+
+    // Fix 4: task_update accepts step wording as well as ids.
+    var taskRoot = Path.Combine(Path.GetTempPath(), "vantage-accuracy-" + Guid.NewGuid().ToString("N"));
+    bool todoOk;
+    try
+    {
+        var ctx = new PersistentTaskContext("accuracy-test", taskRoot);
+        ctx.BeginTask("Open settings and check for windows updates.");
+        var add = CommonUtils.ParseAgentAction(
+            "{\"action\":\"wait\",\"task_update\":{\"add\":[\"Open Windows Settings\",\"Navigate to Windows Update section\",\"Click Check for updates\"],\"complete\":[],\"reopen\":[]}}")!;
+        ctx.RecordAction("wait", add.Raw, new ActionResult(ActionOutcome.Success, "ok"));
+        var byText = CommonUtils.ParseAgentAction(
+            "{\"action\":\"wait\",\"task_update\":{\"add\":[],\"complete\":[\"open windows settings\"],\"reopen\":[]}}")!;
+        ctx.RecordAction("wait", byText.Raw, new ActionResult(ActionOutcome.Success, "ok"));
+        var byId = ctx.Todos.First(t => t.Text.Equals("Click Check for updates", StringComparison.OrdinalIgnoreCase)).Id;
+        var idUpdate = CommonUtils.ParseAgentAction(
+            $"{{\"action\":\"wait\",\"task_update\":{{\"add\":[],\"complete\":[\"{byId}\"],\"reopen\":[]}}}}")!;
+        ctx.RecordAction("wait", idUpdate.Raw, new ActionResult(ActionOutcome.Success, "ok"));
+        var failedUpdate = CommonUtils.ParseAgentAction(
+            "{\"action\":\"wait\",\"task_update\":{\"add\":[],\"complete\":[\"Open\"],\"reopen\":[]}}")!;
+        ctx.RecordAction("wait", failedUpdate.Raw, new ActionResult(ActionOutcome.Success, "ok"));
+        todoOk = ctx.Todos.Single(t => t.Text == "Open Windows Settings").IsCompleted
+            && ctx.Todos.Single(t => t.Text == "Click Check for updates").IsCompleted
+            && !ctx.Todos.Single(t => t.Text == "Navigate to Windows Update section").IsCompleted
+            && ctx.ResolveTodo("Open") is null;
+    }
+    finally
+    {
+        try { Directory.Delete(taskRoot, recursive: true); } catch { }
+    }
+
+    var valid = verifyOk && groundOk && blockOk && todoOk;
+    Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--controls-live", StringComparer.OrdinalIgnoreCase))
+{
+    // Reads the real accessibility tree of each visible window and resolves
+    // one of its own control names back to that control.
+    var windows = WindowsAppManager.ListVisibleWindows().Take(6).ToList();
+    var anyResolved = false;
+    foreach (var window in windows)
+    {
+        var sw = Stopwatch.StartNew();
+        var found = await UiControlGrounding.SnapshotAsync(window.Handle, TimeSpan.FromMilliseconds(700));
+        sw.Stop();
+        var sample = found.FirstOrDefault(c => c.Enabled && !c.Offscreen);
+        var hit = sample is null ? null : UiControlGrounding.Match($"the {sample.Name}", found);
+        var resolved = sample is not null && hit is not null && hit.Name == sample.Name;
+        anyResolved |= resolved;
+        Console.WriteLine($"{sw.ElapsedMilliseconds,5}ms controls={found.Count,3} sample=\"{sample?.Name}\" role={sample?.Role} resolved={resolved} :: {window.Title}");
+    }
+    Environment.ExitCode = anyResolved ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
 {
     // Mock OpenAI-compatible server that behaves like the hidden-reasoning

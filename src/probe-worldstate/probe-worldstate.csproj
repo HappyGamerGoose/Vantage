@@ -41,6 +41,7 @@
     <Compile Include="..\Common\LogWriter.cs" Link="LogWriter.cs" />
     <Compile Include="..\Services\Agent\VantageACI.cs" Link="VantageACI.cs" />
     <Compile Include="..\Services\Agent\ActionSanitizer.cs" Link="ActionSanitizer.cs" />
+    <Compile Include="..\Services\Agent\UiControlGrounding.cs" Link="UiControlGrounding.cs" />
     <Compile Include="..\Common\NativeInterop.cs" Link="NativeInterop.cs" />
   </ItemGroup>
 </Project>
