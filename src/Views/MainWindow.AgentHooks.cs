@@ -137,6 +137,10 @@ public sealed partial class MainWindow
                     kind = PhaseStatus.Failed;
                     kindLabel = "fail";
                 }
+                else if (reason.StartsWith("needs review", StringComparison.OrdinalIgnoreCase))
+                {
+                    kindLabel = "review";
+                }
                 _run.FinishLastRunning(kind);
                 _run.Mutate(vm =>
                 {

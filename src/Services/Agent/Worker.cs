@@ -96,8 +96,10 @@ public sealed class Worker
     private bool _doneRechecked;
     private readonly FactLedger _facts = new();
     private string _goal = "";
+    private const int MaxValueBlocks = 4;
+    private int _valueBlocks;
 
-    /// <summary>Numbers that were typed with no source, to report honestly at the end.</summary>
+    /// <summary>Numbers typed with no source, to report honestly at the end.</summary>
     internal IReadOnlyList<string> UnconfirmedValues => _facts.Unconfirmed();
 
     public List<string> WorkerHistory { get; } = new();
@@ -479,38 +481,31 @@ public sealed class Worker
         }
         _parseFailStreak = 0;
 
-        // A number with no source is held back before it reaches the screen.
-        // What this action notes doesn't count for its own text, otherwise an
-        // invented value could vouch for itself.
+        // A number with no source never reaches the screen. Sending it again
+        // changes nothing, and a model that keeps trying is stopped rather than
+        // left looping, with the values named so the failure explains itself.
         var sources = new List<string?> { _goal };
-        sources.AddRange(_aci.Notes);
+        sources.AddRange(_aci.ToolOutput);
         sources.AddRange(controls.Select(control => control.Name));
-        var unsourced = _facts.ChallengeTyping(action, sources);
-        if (unsourced.Count > 0)
+        var blocked = _facts.BlockedValues(action, sources);
+        if (blocked.Count > 0)
         {
-            var values = string.Join(", ", unsourced);
+            var values = string.Join(", ", blocked);
+            CommonUtils.LogDiagnostic("worker-value-blocked", $"turn={_turnCount + 1} attempt={_valueBlocks + 1} values={values}");
+            if (++_valueBlocks >= MaxValueBlocks)
+            {
+                _turnCount++;
+                return new ActionResult(ActionOutcome.FailedFatal,
+                    $"stopped before typing {values}, because these values could not be confirmed from any text on screen");
+            }
             var challenge =
-                $"UNVERIFIED_VALUE: nothing was typed. You were about to enter {values}, which is not in NOTES, the task or the current controls. " +
-                "If you read it on screen, go back and read it again, then record it with `note`. If you calculated it, note the calculation. " +
-                "Never estimate or round a value, and use `fail` if you cannot get it.";
+                $"BLOCKED_VALUE: nothing was typed. {values} is not in TEXT_READ, command output or the task, and a value read from a screenshot is not reliable. " +
+                "Go back to the window that shows it and send {\"action\":\"read_text\",\"find\":\"<word next to the value>\"}, then copy the value from TEXT_READ. " +
+                "If you calculated it, do the sum with run_powershell. Sending the same value again will not work.";
             HoldAction(challenge);
-            CommonUtils.LogDiagnostic("worker-value-challenged", $"turn={_turnCount} values={values}");
             return new ActionResult(ActionOutcome.Success, challenge);
         }
         _facts.RecordNotes(action);
-        if (!FactLedger.TypedText(action).Any())
-            _facts.RecordReasoning(_turnCount + 1, CommonUtils.SplitThoughtsAnswer(plan!).Item1);
-
-        if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase) && _facts.ShouldChallengeFinish())
-        {
-            var challenge =
-                $"UNVERIFIED_VALUE: {string.Join(", ", _facts.Unconfirmed())} went into the result without being confirmed. " +
-                "Check each against its source and correct any that is wrong, then send `done` again.";
-            HoldAction(challenge);
-            CommonUtils.LogDiagnostic("worker-done-challenged", $"turn={_turnCount}");
-            return new ActionResult(ActionOutcome.Success, challenge);
-        }
-
         // Asked once per finish: a screen that keeps moving, such as a playing
         // video, must not be able to hold the run open forever.
         if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
@@ -577,6 +572,7 @@ public sealed class Worker
             || string.Equals(action.Action, "vantage_get_clipboard", StringComparison.OrdinalIgnoreCase)
             // save_to_knowledge only writes to our local knowledge DB.
             || string.Equals(action.Action, "save_to_knowledge", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(action.Action, "read_text", StringComparison.OrdinalIgnoreCase)
             || fastPath;
 
         // the action actually landed. The first screenshot in this turn
@@ -627,6 +623,14 @@ public sealed class Worker
         // its accumulated latency so per-step logs can show how much of the
         // budget the grounding LLM chewed.
         groundingMs = _aci.LastGroundingMs;
+        if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
+        {
+            _valueBlocks = 0;
+            _facts.RecordRead(_aci.LastReadExcerpts);
+            if (_aci.LastReadUnavailable) _facts.RecordReadingUnavailable();
+            CommonUtils.LogDiagnostic("worker-read-text",
+                $"turn={_turnCount + 1} excerpts={_aci.LastReadExcerpts.Count} unavailable={_aci.LastReadUnavailable} elapsed={executeMs}ms");
+        }
         _lastActionOutcome = $"{result.Outcome}: {result.Description}";
 
         // Grounding was already measured separately inside _aci.ExecuteAsync

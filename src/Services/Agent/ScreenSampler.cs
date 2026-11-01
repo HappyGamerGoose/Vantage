@@ -402,7 +402,7 @@ internal static class SettlePolicy
     /// </summary>
     public static int NoChangeBudgetMs(AgentAction action) => action.Action.Trim().ToLowerInvariant() switch
     {
-        "done" or "fail" or "wait" or "screenshot" or "move_mouse" or "list_windows" or "get_window_state"
+        "done" or "fail" or "wait" or "screenshot" or "move_mouse" or "list_windows" or "get_window_state" or "read_text"
             or "list_apps" or "list_processes" or "frontmost_app" or "displays" or "cursor_position"
             or "vantage_get_clipboard" or "vantage_set_clipboard" or "save_to_knowledge" or "wait_for_app" => 0,
         "type" or "type_text" or "type_window_text" or "set_value" => 350,

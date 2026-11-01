@@ -74,8 +74,10 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("9. If a target cannot be found, call `list_windows`, select exactly one returned window_id, call `get_window_state` ONCE, then act on a returned element_index or a shortcut. Never call get_window_state repeatedly without an intervening state-changing action. Refresh it after layout changes; never reuse an observation_id.");
         sb.AppendLine("10. For files, folders, git, system info or processes, use `run_powershell` in one turn instead of navigating windows. Pass a URL, file or `ms-settings:` page directly to `launch_app`.");
         sb.AppendLine("11. Direct pages for `launch_app`: ms-settings:windowsupdate, ms-settings:display, ms-settings:sound, ms-settings:network-wifi, ms-settings:bluetooth, ms-settings:appsfeatures, ms-settings:defaultapps, ms-settings:personalization, ms-settings:privacy, ms-settings:dateandtime, ms-settings:powersleep, ms-settings:storagesense. Browser: Ctrl+T opens a new tab with the cursor in its address bar, Ctrl+L focuses the address bar.");
-        sb.AppendLine("17. Older screens are not kept, so a value you do not write down is lost. The moment you read a value you will need later, add it to that same action: {\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"],\"note\":\"Japan population: 122,950,000\"}. Copy it digit for digit, and name what it is. Later, type values only from NOTES. Never estimate, round or recall a value from memory: if it is not in NOTES, go back and read it again.");
-        sb.AppendLine("18. Before `done`, compare what you produced with NOTES on the screenshot. Report only what you can see.");
+        sb.AppendLine("17. To get a value or any exact text, use `read_text` instead of reading the screenshot or scrolling to find it. Screenshots are shrunk and their small digits are often misread. {\"action\":\"read_text\",\"find\":\"Population\"} returns the exact text around that word from the whole page in the front window, into TEXT_READ, where it stays for the rest of the task.");
+        sb.AppendLine("18. Vantage refuses to type a number that is not in TEXT_READ, command output or the task. Copy values from TEXT_READ digit for digit, and never estimate, round or recall one. For a sum, use `run_powershell`. Only if read_text reports that a window has no readable text may you pass `unconfirmed: true` on the typing action, and the run will then be reported as needing review.");
+        sb.AppendLine("19. Older screens are not kept. Add `note` to any action to leave yourself a reminder of what is done and what is next; a note is not proof of a value.");
+        sb.AppendLine("20. Before `done`, compare what you produced with TEXT_READ. Report only what you can see.");
         sb.AppendLine("16. Tabs that are already open are the user's work. To visit a page, open a new tab with Ctrl+T, or pass the URL to `launch_app`; never navigate an existing tab unless the task says to use it. Vantage turns the first use of the address bar into a new tab.");
         sb.AppendLine("12. Reply in the required shape every time, with exactly one action object and no comments or trailing commas. You control the desktop through these actions, so act rather than describing what could be done. If the task is truly impossible, send {\"action\":\"fail\",\"reason\":\"<why>\"}.");
         sb.AppendLine("13. Complete requested sends, installs, deletions, settings changes, uploads, and shell operations directly without asking for a separate approval. Normal physical keyboard or mouse activity does not end the run; continue unless the cancellation token is set by Stop or Escape.");
@@ -87,6 +89,15 @@ public static class PROCEDURAL_MEMORY
 
     private static IEnumerable<(string Method, string Doc)> BuildMethodDocs()
     {
+        yield return (
+            "read_text",
+            "## read_text\n" +
+            "Read the exact text of the front window, including parts scrolled out of view. Instant, and far more reliable than reading a screenshot.\n" +
+            "```json\n{ \"action\": \"read_text\", \"find\": \"Population\" }\n```\n" +
+            "- find (string or list of strings): word or words to search for; each match comes back with the text around it. Omit to get the start of the text.\n" +
+            "Results appear in TEXT_READ on the next turn. It reads only the window in front, so bring that window or tab forward first."
+        );
+
         yield return (
             "batch",
             "## batch\n" +

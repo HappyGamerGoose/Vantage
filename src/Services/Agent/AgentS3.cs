@@ -83,7 +83,7 @@ public sealed class AgentS3
                     var unconfirmed = _worker.UnconfirmedValues;
                     _hooks.OnRunFinished(unconfirmed.Count == 0
                         ? $"done in {step} steps"
-                        : $"done in {step} steps, but these values were not confirmed: {string.Join(", ", unconfirmed)}");
+                        : $"needs review: finished in {step} steps, but these values could not be confirmed and may be wrong: {string.Join(", ", unconfirmed)}");
                     return result;
                 }
                 if (result.Outcome == ActionOutcome.FailedFatal)

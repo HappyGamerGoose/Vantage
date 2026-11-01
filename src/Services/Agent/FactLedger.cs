@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Vantage — Services/Agent/FactLedger.cs
 //
-// Only the newest messages stay in the conversation, so a value read on an
-// earlier page is gone unless it is written down. A real run read three figures
-// correctly, lost them, and typed invented ones. The ledger keeps what the model
-// recorded word for word in every prompt, and flags any number about to be typed
-// that has no source, because nothing else in the agent checks content.
+// Keeps what has really been read, and refuses numbers that have no source.
+// Real runs read figures correctly and lost them, or misread them from a shrunken
+// screenshot, and then typed the wrong number and reported success. A model's own
+// word proves nothing, so only text Vantage itself read counts as a source: the
+// read_text action, command output, the current control names and the task.
 
 using System.Text;
 using System.Text.RegularExpressions;
@@ -16,22 +16,26 @@ internal sealed class FactLedger
 {
     private const int MaxNotes = 40;
     private const int MaxNoteLength = 240;
-    private const int MaxReasoning = 12;
-    private const int MaxReasoningLength = 160;
+    private const int MaxReadExcerpts = 24;
+    private const int MaxExcerptLength = 420;
     private const int MinValueDigits = 3;
 
     private static readonly Regex UrlOrPath = new(@"\S*(?:://|[\\/])\S*", RegexOptions.Compiled);
     private static readonly Regex Number = new(@"(?<![\w.])\d[\d,]*(?:\.\d+)?(?!\w)", RegexOptions.Compiled);
+    private static readonly Regex Year = new(@"^(19|20)\d\d$", RegexOptions.Compiled);
 
     private readonly List<string> _notes = new();
-    private readonly List<string> _reasoning = new();
-    private readonly HashSet<string> _challenged = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _typedWithoutSource = new(StringComparer.Ordinal);
-    private bool _finishChallenged;
+    private readonly List<string> _read = new();
+    private readonly Dictionary<string, string> _typedUnconfirmed = new(StringComparer.Ordinal);
+    private bool _readingUnavailable;
 
     public IReadOnlyList<string> Notes => _notes;
 
-    /// <summary>Numbers of three or more digits as written, keyed by their digits alone.</summary>
+    /// <summary>
+    /// Numbers of three or more digits as written, keyed by their digits alone.
+    /// A plain year is left out: it is usually context rather than data, and
+    /// demanding a source for it would stop ordinary tasks.
+    /// </summary>
     internal static Dictionary<string, string> ExtractValues(string? text)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -40,7 +44,7 @@ internal sealed class FactLedger
         {
             var written = match.Value.TrimEnd(',');
             var key = written.Replace(",", string.Empty);
-            if (key.Count(char.IsDigit) >= MinValueDigits) values[key] = written;
+            if (key.Count(char.IsDigit) >= MinValueDigits && !Year.IsMatch(key)) values[key] = written;
         }
         return values;
     }
@@ -63,6 +67,20 @@ internal sealed class FactLedger
                 break;
         }
     }
+
+    /// <summary>Text read from the window this turn: shown to the model, and a source.</summary>
+    public void RecordRead(IEnumerable<string> excerpts)
+    {
+        foreach (var excerpt in excerpts)
+        {
+            var text = excerpt.Length <= MaxExcerptLength ? excerpt : excerpt[..MaxExcerptLength];
+            if (!_read.Contains(text, StringComparer.Ordinal)) _read.Add(text);
+        }
+        while (_read.Count > MaxReadExcerpts) _read.RemoveAt(0);
+    }
+
+    /// <summary>The window has no readable text, so a screenshot is all there is.</summary>
+    public void RecordReadingUnavailable() => _readingUnavailable = true;
 
     public void RecordNotes(AgentAction action)
     {
@@ -88,86 +106,52 @@ internal sealed class FactLedger
     }
 
     /// <summary>
-    /// Backstop for a model that forgets to note what it read: lines of its own
-    /// reasoning that hold a value stay visible. They jog its memory but never
-    /// count as a source, since invented numbers appear in reasoning too.
+    /// Numbers this action may not type, because nothing Vantage read contains
+    /// them. Trying again changes nothing. The only exception is a window that
+    /// has been shown to expose no text, where `unconfirmed: true` lets the value
+    /// through and the run is reported as needing review.
     /// </summary>
-    public void RecordReasoning(int turn, string? thoughts)
-    {
-        if (string.IsNullOrWhiteSpace(thoughts)) return;
-        foreach (var raw in thoughts.Split('\n'))
-        {
-            var line = raw.Trim();
-            if (ExtractValues(line).Count == 0) continue;
-            if (line.Length > MaxReasoningLength) line = line[..MaxReasoningLength];
-            if (_reasoning.Any(existing => existing.EndsWith(line, StringComparison.Ordinal))) continue;
-            _reasoning.Add($"turn {turn}: {line}");
-        }
-        while (_reasoning.Count > MaxReasoning) _reasoning.RemoveAt(0);
-    }
-
-    /// <summary>
-    /// Returns numbers this action would type that have no source and have not
-    /// been challenged before. The first attempt is held; if the model insists
-    /// the value goes through and is reported as unconfirmed when the run ends,
-    /// because a legitimate number must never be able to deadlock a task.
-    /// </summary>
-    public IReadOnlyList<string> ChallengeTyping(AgentAction action, IEnumerable<string?> otherSources)
-    {
-        var missing = MissingSources(action, otherSources);
-        var fresh = new List<string>();
-        foreach (var (key, written) in missing)
-        {
-            if (_challenged.Add(key)) fresh.Add(written);
-        }
-        if (fresh.Count > 0) return fresh;
-
-        foreach (var (key, written) in missing) _typedWithoutSource[key] = written;
-        return Array.Empty<string>();
-    }
-
-    private Dictionary<string, string> MissingSources(AgentAction action, IEnumerable<string?> otherSources)
+    public IReadOnlyList<string> BlockedValues(AgentAction action, IEnumerable<string?> otherSources)
     {
         var missing = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var text in TypedText(action))
         foreach (var (key, written) in ExtractValues(text))
             missing[key] = written;
-        if (missing.Count == 0) return missing;
+        if (missing.Count == 0) return Array.Empty<string>();
 
-        foreach (var source in _notes.Concat(otherSources))
+        foreach (var source in _read.Concat(otherSources))
         foreach (var key in ExtractValues(source).Keys)
             missing.Remove(key);
-        return missing;
+        if (missing.Count == 0) return Array.Empty<string>();
+
+        if (_readingUnavailable && action.GetBool("unconfirmed", false))
+        {
+            foreach (var (key, written) in missing) _typedUnconfirmed[key] = written;
+            return Array.Empty<string>();
+        }
+        return missing.Values.ToList();
     }
 
-    /// <summary>Values typed with no source that nothing has confirmed since.</summary>
+    /// <summary>Values typed without a source that nothing has confirmed since.</summary>
     public IReadOnlyList<string> Unconfirmed()
     {
-        var noted = new HashSet<string>(_notes.SelectMany(note => ExtractValues(note).Keys), StringComparer.Ordinal);
-        return _typedWithoutSource.Where(pair => !noted.Contains(pair.Key)).Select(pair => pair.Value).ToList();
-    }
-
-    /// <summary>True the first time a finish is attempted with unconfirmed values.</summary>
-    public bool ShouldChallengeFinish()
-    {
-        if (_finishChallenged || Unconfirmed().Count == 0) return false;
-        _finishChallenged = true;
-        return true;
+        var read = new HashSet<string>(_read.SelectMany(text => ExtractValues(text).Keys), StringComparer.Ordinal);
+        return _typedUnconfirmed.Where(pair => !read.Contains(pair.Key)).Select(pair => pair.Value).ToList();
     }
 
     public string BuildPromptBlock()
     {
-        if (_notes.Count == 0 && _reasoning.Count == 0) return string.Empty;
+        if (_read.Count == 0 && _notes.Count == 0) return string.Empty;
         var sb = new StringBuilder();
+        if (_read.Count > 0)
+        {
+            sb.AppendLine("TEXT_READ (exact text from read_text; take values from here, digit for digit):");
+            foreach (var excerpt in _read) sb.Append("  - ").AppendLine(excerpt);
+        }
         if (_notes.Count > 0)
         {
-            sb.AppendLine("NOTES (what you recorded with `note`; use these exact values):");
+            sb.AppendLine("NOTES (reminders you wrote yourself; not proof of any value):");
             foreach (var note in _notes) sb.Append("  - ").AppendLine(note);
-        }
-        if (_reasoning.Count > 0)
-        {
-            sb.AppendLine("EARLIER_REASONING (your past words, possibly wrong; check the page if a value matters):");
-            foreach (var line in _reasoning) sb.Append("  - ").AppendLine(line);
         }
         return sb.ToString().TrimEnd();
     }

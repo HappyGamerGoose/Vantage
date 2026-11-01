@@ -463,57 +463,70 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var controlNotSanitized = ActionSanitizer.Sanitize(Parse("{\"action\":\"click\",\"control\":4}")).Replacement is null
         && ActionSanitizer.Sanitize(Parse("{\"action\":\"click\"}")).Replacement is not null;
 
-    // Fact ledger, replaying the failed run: values read on earlier pages.
-    var goal = "Find the population of India, Japan and Brazil and save them.";
-    var ledger = new FactLedger();
+    // Fact ledger, replaying both failed runs. Misread and invented values are
+    // refused, and asking again or writing a note does not get them through.
     var noSources = Array.Empty<string?>();
-    var invented = Parse("{\"action\":\"type_text\",\"text\":\"India: 1,441,719,852\\nBrazil: 214,000,000\"}");
+    var misread = Parse("{\"action\":\"type_text\",\"text\":\"India: 1,417,736,308\\nBrazil: 212,111,955\"}");
+    var ledger = new FactLedger();
+    var heldFirst = ledger.BlockedValues(misread, noSources);
+    var heldAgain = ledger.BlockedValues(misread, noSources);
+    ledger.RecordNotes(Parse("{\"action\":\"wait\",\"seconds\":1,\"note\":\"Brazil 212,111,955, India 1,417,736,308\"}"));
+    var heldAfterNote = ledger.BlockedValues(misread, noSources);
+    var refusedOk = heldFirst.Count == 2 && heldAgain.Count == 2 && heldAfterNote.Count == 2;
 
-    // Reasoning is shown but is no source: an invented number appears there too.
-    ledger.RecordReasoning(22, "India: 1,441,719,852 (2021 estimate)");
-    var heldFirst = ledger.ChallengeTyping(invented, noSources);
-    var insisted = ledger.ChallengeTyping(invented, noSources);
-    var inventedOk = heldFirst.Count == 2 && insisted.Count == 0
-        && ledger.Unconfirmed().Count == 2
-        && ledger.BuildPromptBlock().Contains("EARLIER_REASONING", StringComparison.Ordinal);
-    var finishOnce = ledger.ShouldChallengeFinish() && !ledger.ShouldChallengeFinish();
+    // The flag is refused while the window has readable text.
+    var flagged = Parse("{\"action\":\"type_text\",\"text\":\"Brazil: 212,111,955\",\"unconfirmed\":true}");
+    var flagRefused = ledger.BlockedValues(flagged, noSources).Count == 1 && ledger.Unconfirmed().Count == 0;
 
-    // Noted exactly, it passes with no challenge, including the rounded form.
-    var noted = new FactLedger();
-    noted.RecordNotes(Parse("{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"],\"note\":\"Brazil population: 214,211,951\"}"));
-    noted.RecordNotes(Parse("{\"action\":\"scroll\",\"clicks\":-5,\"note\":\"India population: 1.48 billion\"}"));
-    var accepted = noted.ChallengeTyping(Parse("{\"action\":\"type_text\",\"text\":\"India: 1.48 billion\\nBrazil: 214,211,951\"}"), noSources);
-    var rounded = noted.ChallengeTyping(Parse("{\"action\":\"type_text\",\"text\":\"Brazil: 214,000,000\"}"), noSources);
-    var noteOk = accepted.Count == 0 && rounded.SequenceEqual(new[] { "214,000,000" })
-        && noted.BuildPromptBlock().Contains("Brazil population: 214,211,951", StringComparison.Ordinal)
-        && !noted.BuildPromptBlock().Contains("EARLIER_REASONING", StringComparison.Ordinal);
+    // Text actually read is a source, exactly: the true value passes, a near miss does not.
+    var read = new FactLedger();
+    read.RecordRead(new[] { "Population • 2026 estimate 214,211,951[5] (7th) • 2022 census 203,080,756[6]", "Population • 2026 estimate 1.48 billion" });
+    var trueValues = read.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"India: 1.48 billion\\nBrazil: 214,211,951\"}"), noSources);
+    var nearMiss = read.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Brazil: 214,211,953\"}"), noSources);
+    var roundedValue = read.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Brazil: 214,000,000\"}"), noSources);
+    var readOk = trueValues.Count == 0 && nearMiss.Count == 1 && roundedValue.Count == 1
+        && read.BuildPromptBlock().Contains("TEXT_READ", StringComparison.Ordinal)
+        && read.BuildPromptBlock().Contains("214,211,951", StringComparison.Ordinal);
 
-    // Other real sources count; ordinary typing and URLs are never challenged.
+    // A window with no text: only then can a value go through, and it is reported.
+    var blind = new FactLedger();
+    blind.RecordReadingUnavailable();
+    var blindUnflagged = blind.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Score 48213\"}"), noSources);
+    var blindFlagged = blind.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Score 48213\",\"unconfirmed\":true}"), noSources);
+    var blindOk = blindUnflagged.Count == 1 && blindFlagged.Count == 0 && blind.Unconfirmed().SequenceEqual(new[] { "48213" });
+    blind.RecordRead(new[] { "Score 48,213" });
+    blindOk = blindOk && blind.Unconfirmed().Count == 0;
+
+    // Other real sources count; ordinary typing, URLs and years are never refused.
     var sourced = new FactLedger();
-    var fromGoal = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"Order 48213\"}"), new string?[] { "Enter order 48213 in the form" });
-    var fromOutput = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"Size 90,210\"}"), new string?[] { "pwsh_exit=0 out: 90210" });
-    var plain = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"toxic rock gaming\"}"), noSources);
-    var address = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"https://example.com/item/123456\",\"enter\":true}"), noSources);
-    var shortNumber = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"page 12\"}"), noSources);
-    var inBatch = sourced.ChallengeTyping(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"]},{\"action\":\"type_text\",\"text\":\"555123\"}]}"), noSources);
-    var sourceOk = fromGoal.Count == 0 && fromOutput.Count == 0 && plain.Count == 0 && address.Count == 0 && shortNumber.Count == 0 && inBatch.Count == 1 && goal.Length > 0;
+    var fromGoal = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"Order 48213\"}"), new string?[] { "Enter order 48213 in the form" });
+    var fromOutput = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"Size 90,210\"}"), new string?[] { "pwsh_exit=0 out: 90210" });
+    var plain = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"toxic rock gaming\"}"), noSources);
+    var address = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"https://example.com/item/123456\",\"enter\":true}"), noSources);
+    var shortNumber = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"page 12\"}"), noSources);
+    var yearOnly = sourced.BlockedValues(Parse("{\"action\":\"type\",\"text\":\"report for 2026\"}"), noSources);
+    var inBatch = sourced.BlockedValues(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"]},{\"action\":\"type_text\",\"text\":\"555123\"}]}"), noSources);
+    var sourceOk = fromGoal.Count == 0 && fromOutput.Count == 0 && plain.Count == 0 && address.Count == 0 && shortNumber.Count == 0 && yearOnly.Count == 0 && inBatch.Count == 1;
 
-    // Later noting confirms a value that was forced through.
-    var later = new FactLedger();
-    var forced = Parse("{\"action\":\"type_text\",\"text\":\"123,456\"}");
-    later.ChallengeTyping(forced, noSources);
-    later.ChallengeTyping(forced, noSources);
-    var beforeNote = later.Unconfirmed().Count;
-    later.RecordNotes(Parse("{\"action\":\"wait\",\"seconds\":1,\"note\":\"checked: 123456\"}"));
-    var ledgerOk = inventedOk && finishOnce && noteOk && sourceOk && beforeNote == 1 && later.Unconfirmed().Count == 0 && !later.ShouldChallengeFinish();
+    // Finding text: every match with context, whitespace collapsed, no match is empty.
+    var page = "Area\n  Total 8,510,346 km2\nPopulation \uFFFC\n  2026 estimate 214,211,951[5]\nPopulation density 23.8";
+    var foundText = PageTextReader.ExtractExcerpts(page, new[] { "2026 estimate" });
+    var noMatch = PageTextReader.ExtractExcerpts(page, new[] { "Elevation" });
+    var noFilter = PageTextReader.ExtractExcerpts(page, Array.Empty<string>());
+    var manyHits = PageTextReader.ExtractExcerpts(string.Join(' ', Enumerable.Repeat("Population " + new string('x', 400), 9)), new[] { "population" });
+    var excerptOk = foundText.Count == 1 && foundText[0].Contains("214,211,951", StringComparison.Ordinal) && !foundText[0].Contains('\n')
+        && noMatch.Count == 0 && noFilter.Count == 1 && manyHits.Count == 4
+        && PageTextReader.ExtractExcerpts("   ", new[] { "a" }).Count == 0;
+    var readAction = SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"read_text\",\"find\":\"x\"}")) == 0;
 
+    var ledgerOk = refusedOk && flagRefused && readOk && blindOk && sourceOk && excerptOk && readAction;
     var ruleOk = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("clicks\\\": -5", StringComparison.Ordinal)
         || PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("\"clicks\": -5", StringComparison.Ordinal);
 
     var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized && ledgerOk && ruleOk;
     Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
                       $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized} " +
-                      $"Invented={inventedOk} FinishOnce={finishOnce} Noted={noteOk} Sources={sourceOk} FactLedger={ledgerOk} ScrollExample={ruleOk}");
+                      $"Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -699,6 +712,26 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
                       $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk} PageLoad={pageOk} LoadCap={capOk} VideoCap={videoOk} Plans={planOk} DoneMoved={doneOk} Tabs={tabOk} Combobox={comboOk} Remembered={storeOk} HedgeReported={reportOk}");
     Console.WriteLine($"Measured: capture={captureMs}ms per frame at {live?.Width}x{live?.Height}, compare={compareMs}ms, world state first turn={first.Length} chars, later={later.Length} chars, system prompt={systemPrompt.Length} chars");
     Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--read-text-live", StringComparer.OrdinalIgnoreCase))
+{
+    // Usage: --read-text-live <part of a window title> <search word>. Read-only.
+    var titlePart = args.Length > 1 ? args[1] : "";
+    var search = args.Length > 2 ? new[] { args[2] } : Array.Empty<string>();
+    var target = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase));
+    if (target is null)
+    {
+        Console.WriteLine($"no window containing \"{titlePart}\"");
+        Environment.ExitCode = 1;
+        return;
+    }
+    var timer = Stopwatch.StartNew();
+    var pageText = await PageTextReader.ReadAsync(target.Handle, TimeSpan.FromSeconds(3));
+    var hits = PageTextReader.ExtractExcerpts(pageText, search);
+    Console.WriteLine($"{timer.ElapsedMilliseconds}ms chars={pageText.Length} matches={hits.Count} :: {target.Title}");
+    foreach (var hit in hits.Take(2)) Console.WriteLine("  " + (hit.Length > 300 ? hit[..300] : hit));
     return;
 }
 

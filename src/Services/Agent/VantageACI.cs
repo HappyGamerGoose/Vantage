@@ -179,6 +179,7 @@ public sealed class VantageACI
                 // Window-bound computer-use actions. IDs and element indexes
                 // must come from list_windows/get_window_state and are never
                 // reconstructed from titles or guessed coordinates.
+                "read_text"         => await DoReadTextAsync(action),
                 "list_windows"      => DoListWindows(),
                 "get_window_state"  => DoGetWindowState(action),
                 "activate_window"   => _computerUse.ActivateWindow(action.GetString("window_id")),
@@ -256,10 +257,41 @@ public sealed class VantageACI
         }
     }
 
+    /// <summary>What the last read_text found, for the worker to keep.</summary>
+    internal IReadOnlyList<string> LastReadExcerpts { get; private set; } = Array.Empty<string>();
+
+    /// <summary>True when the window had no readable text at all.</summary>
+    internal bool LastReadUnavailable { get; private set; }
+
+    /// <summary>Output Vantage itself produced, as opposed to what the model wrote down.</summary>
+    internal IReadOnlyList<string> ToolOutput => _toolOutput;
+
+    private readonly List<string> _toolOutput = new();
+    private static readonly TimeSpan ReadTextBudget = TimeSpan.FromSeconds(3);
+
+    private async Task<ActionResult> DoReadTextAsync(AgentAction action)
+    {
+        var searches = action.GetStringList("find");
+        if (searches.Count == 0 && action.GetString("find") is { Length: > 0 } single) searches = new List<string> { single };
+
+        var text = await PageTextReader.ReadAsync(Vantage.Common.NativeInterop.GetForegroundWindow(), ReadTextBudget);
+        LastReadUnavailable = text.Trim().Length < PageTextReader.MinUsableLength;
+        LastReadExcerpts = PageTextReader.ExtractExcerpts(text, searches);
+        if (LastReadUnavailable)
+        {
+            return new ActionResult(ActionOutcome.Success,
+                "this window exposes no readable text. A value here can only come from the screenshot: pass `unconfirmed: true` when typing it, and the run will be reported as needing review.");
+        }
+        return new ActionResult(ActionOutcome.Success, LastReadExcerpts.Count > 0
+            ? $"read_text found {LastReadExcerpts.Count} passage(s); they are in TEXT_READ"
+            : "the text was read but contains no match. Try a shorter or different search word.");
+    }
+
     private ActionResult HandleSaveToKnowledge(AgentAction action)
     {
         var facts = action.GetStringList("text");
-        foreach (var fact in facts) AddNote(fact);
+        // Deliberately not AddNote: this is the model's word, not something read.
+        foreach (var fact in facts) Notes.Add(Truncate(fact, 4_000));
         return new ActionResult(ActionOutcome.Success, $"saved {facts.Count} fact(s) to knowledge bank");
     }
 
@@ -1395,6 +1427,8 @@ public sealed class VantageACI
     private void AddNote(string note)
     {
         if (string.IsNullOrWhiteSpace(note)) return;
+        _toolOutput.Add(Truncate(note, 4_000));
+        if (_toolOutput.Count > 32) _toolOutput.RemoveAt(0);
         Notes.Add(Truncate(note, 4_000));
         if (Notes.Count > 32)
         {
