@@ -202,6 +202,7 @@ public sealed partial class MainWindow
             ModelsChanged = () => { SaveProviders(); RefreshModelSelector(); },
             TestProvider = TestProviderAsync,
             DeleteProvider = DeleteProviderAsync,
+            ExpandByDefault = _providers.Count == 1,
         };
         return ProviderCardRenderer.Build(provider, ctx);
     }

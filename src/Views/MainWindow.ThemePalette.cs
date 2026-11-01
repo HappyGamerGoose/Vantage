@@ -118,95 +118,84 @@ public sealed partial class MainWindow
         StartOsThemeWatcher();
     }
 
-    private Border BuildPaletteCard(ThemePalette palette, Color swatchColor)
+    private readonly Dictionary<string, (Border Ring, FontIcon Check)> _paletteSwatches = new(StringComparer.OrdinalIgnoreCase);
+
+    private Button BuildPaletteCard(ThemePalette palette, Color swatchColor)
     {
-        var card = new Border
+        var check = new FontIcon
         {
-            CornerRadius = new CornerRadius(12),
-            Background   = (Brush)RootGrid.Resources["SurfaceElevatedBrush"],
-            BorderBrush  = (Brush)RootGrid.Resources["SoftStrokeBrush"],
-            BorderThickness = new Thickness(1),
-            Padding      = new Thickness(12, 8, 12, 8),
-            Margin       = new Thickness(0, 0, 10, 10),
-            Tag          = palette.Name,
+            FontSize = 13,
+            Glyph = "",
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            Visibility = Visibility.Collapsed,
         };
-        var inner = new Grid { ColumnSpacing = 8 };
-        inner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-        inner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var dot = new Border
+        var dot = new Grid
         {
-            Width = 22, Height = 22,
-            CornerRadius = new CornerRadius(11),
-            Background   = new SolidColorBrush(swatchColor),
-            VerticalAlignment = VerticalAlignment.Center,
+            Width = 34, Height = 34,
+            CornerRadius = new CornerRadius(17),
+            Background = new SolidColorBrush(swatchColor),
+            Children = { check },
         };
-        Grid.SetColumn(dot, 0);
-        inner.Children.Add(dot);
-
-        var text = new StackPanel
+        var ring = new Border
         {
-            VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 1,
+            Width = 44, Height = 44,
+            CornerRadius = new CornerRadius(22),
+            BorderThickness = new Thickness(2),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = dot,
         };
-        text.Children.Add(new TextBlock
-        {
-            FontSize = 12.5,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = (Brush)RootGrid.Resources["PrimaryTextBrush"],
-            Text = palette.Name,
-        });
-        text.Children.Add(new TextBlock
-        {
-            FontSize = 10.5,
-            Foreground = (Brush)RootGrid.Resources["MutedTextBrush"],
-            Text = PaletteTagline(palette.Name),
-        });
-        Grid.SetColumn(text, 1);
-        inner.Children.Add(text);
+        _paletteSwatches[palette.Name] = (ring, check);
 
-        card.Child = inner;
-        card.Tapped += (_, _) =>
+        var button = new Button
+        {
+            Style = (Style)RootGrid.Resources["GhostIconButtonStyle"],
+            Width = 76, Height = 78,
+            Padding = new Thickness(0, 4, 0, 0),
+            VerticalContentAlignment = VerticalAlignment.Top,
+            Tag = palette.Name,
+            Content = new StackPanel
+            {
+                Spacing = 3,
+                Children =
+                {
+                    ring,
+                    new TextBlock
+                    {
+                        FontSize = 12,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Foreground = (Brush)RootGrid.Resources["SecondaryTextBrush"],
+                        Text = palette.Name,
+                    },
+                }
+            },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, palette.Name + " accent");
+        button.Click += (_, _) =>
         {
             LocalPreferences.SetString(PaletteKey, palette.Name);
             ApplyCurrentTheme();
         };
-        return card;
+        return button;
     }
 
     private void HighlightActivePaletteCard()
     {
         var currentName = LocalPreferences.GetString(PaletteKey, "Violet");
-        foreach (var child in PalettePicker.Children)
+        foreach (var (name, parts) in _paletteSwatches)
         {
-            if (child is Border b && b.Tag is string paletteName)
-            {
-                var isActive = string.Equals(paletteName, currentName, StringComparison.OrdinalIgnoreCase);
-                b.BorderBrush = isActive
-                    ? (Brush)RootGrid.Resources["AccentBrush"]
-                    : (Brush)RootGrid.Resources["SoftStrokeBrush"];
-                b.BorderThickness = new Thickness(isActive ? 2 : 1);
-            }
+            var isActive = string.Equals(name, currentName, StringComparison.OrdinalIgnoreCase);
+            parts.Ring.BorderBrush = isActive
+                ? (Brush)RootGrid.Resources["AccentBrush"]
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            parts.Check.Visibility = isActive ? Visibility.Visible : Visibility.Collapsed;
         }
     }
 
-    private static string PaletteTagline(string name) => name switch
+    private void ThemeMode_Checked(object sender, RoutedEventArgs e)
     {
-        "Green"  => "Calm · nature",
-        "Violet" => "Flow · playful",
-        "Yellow" => "Sunshine · bold",
-        "Blue"   => "Windows default",
-        "Teal"   => "Vantage classic",
-        "Orange" => "Sunset · warm",
-        "Pink"   => "Soft magenta",
-        "Slate"  => "Neutral · quiet",
-        _        => string.Empty
-    };
-
-    private void ThemeModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (ThemeModeCombo.SelectedItem is not ComboBoxItem item) return;
-        var tag = item.Tag?.ToString() ?? "Light";
+        if (sender is not RadioButton { Tag: string tag }) return;
+        if (tag == LocalPreferences.GetString(ThemeModeKey, "System")) return;
         LocalPreferences.SetString(ThemeModeKey, tag);
         ApplyCurrentTheme();
     }
@@ -235,7 +224,7 @@ public sealed partial class MainWindow
         var mode = modeTag switch
         {
             "Dark"   => AppThemeMode.Dark,
-            "System" => AppThemeMode.System,
+            "Light"  => AppThemeMode.Light,
             _        => AppThemeMode.System,
         };
         var useDark = mode == AppThemeMode.Dark
@@ -245,17 +234,13 @@ public sealed partial class MainWindow
         RootGrid.RequestedTheme = mode == AppThemeMode.System
             ? ElementTheme.Default
             : (useDark ? ElementTheme.Dark : ElementTheme.Light);
-        if (ThemeModeCombo.SelectedIndex < 0 && ThemeModeCombo.Items.Count > 0)
+        var option = modeTag switch
         {
-            var idx = modeTag switch
-            {
-                "Light"  => 0,
-                "Dark"   => 1,
-                "System" => 2,
-                _        => 0,
-            };
-            ThemeModeCombo.SelectedIndex = idx;
-        }
+            "Light" => ThemeLightOption,
+            "Dark"  => ThemeDarkOption,
+            _       => ThemeSystemOption,
+        };
+        if (option.IsChecked != true) option.IsChecked = true;
         HighlightActivePaletteCard();
     }
 

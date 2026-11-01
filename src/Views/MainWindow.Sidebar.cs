@@ -17,11 +17,15 @@ namespace Vantage;
 
 public sealed partial class MainWindow
 {
+    private const double SidebarExpandedWidth = 264.0;
+    private const double SidebarCollapsedWidth = 64.0;
+    private const double PaneToggleExpandedMargin = SidebarExpandedWidth - 44.0;
+
     private bool _sidebarExpanded = true;
     private readonly System.Diagnostics.Stopwatch _sidebarAnimStopwatch = new();
-    private double _currentWidth = 292.0;
-    private double _startWidth = 292.0;
-    private double _targetWidth = 292.0;
+    private double _currentWidth = SidebarExpandedWidth;
+    private double _startWidth = SidebarExpandedWidth;
+    private double _targetWidth = SidebarExpandedWidth;
     private bool _sidebarRenderingActive;
     private const double SidebarDurationMs = 260.0;
     private double _animDurationMs = SidebarDurationMs;
@@ -93,6 +97,7 @@ public sealed partial class MainWindow
         }
 
         if (pageName == "settings") BuildPalettePicker();
+        ChatHeader.Visibility = pageName == "chat" ? Visibility.Visible : Visibility.Collapsed;
 
         var targetElement = GetPageElement(pageName);
         var currentElement = GetPageElement(_currentPage);
@@ -211,7 +216,7 @@ public sealed partial class MainWindow
 
     private void StartSidebarAnimation(bool expanding)
     {
-        _targetWidth = expanding ? 292.0 : 64.0;
+        _targetWidth = expanding ? SidebarExpandedWidth : SidebarCollapsedWidth;
         _startWidth = _currentWidth;
 
         double distance = Math.Abs(_startWidth - _targetWidth);
@@ -223,7 +228,7 @@ public sealed partial class MainWindow
         }
 
         // Dynamically scale duration if reversing mid-animation so speed remains natural
-        _animDurationMs = Math.Clamp(SidebarDurationMs * (distance / (292.0 - 64.0)), 120.0, SidebarDurationMs);
+        _animDurationMs = Math.Clamp(SidebarDurationMs * (distance / (SidebarExpandedWidth - SidebarCollapsedWidth)), 120.0, SidebarDurationMs);
 
         ToolTipService.SetToolTip(PaneToggleButton, expanding ? "Collapse sidebar" : "Expand sidebar");
         PaneToggleGlyph.Glyph = expanding ? "\uE76B" : "\uE76C";
@@ -260,16 +265,17 @@ public sealed partial class MainWindow
     {
         if (SidebarColumn is null) return;
 
-        width = Math.Clamp(width, 64.0, 292.0);
+        width = Math.Clamp(width, SidebarCollapsedWidth, SidebarExpandedWidth);
         _currentWidth = width;
 
         SidebarColumn.Width = new GridLength(width);
         TitlebarNavBackdrop.Width = width;
 
-        double margin = Math.Clamp(width - 48.0, 16.0, 244.0);
+        double margin = Math.Clamp(width - 44.0, 16.0, PaneToggleExpandedMargin);
         PaneToggleButton.Margin = new Thickness(margin, 0, 0, 0);
+        UpdateTitleBarRegions();
 
-        double u = Math.Clamp((width - 64.0) / (292.0 - 64.0), 0.0, 1.0);
+        double u = Math.Clamp((width - SidebarCollapsedWidth) / (SidebarExpandedWidth - SidebarCollapsedWidth), 0.0, 1.0);
 
         // Clip the sidebar content cleanly so ConversationPane never bleeds into the workspace
         if (SidebarHost is not null)
@@ -323,14 +329,14 @@ public sealed partial class MainWindow
         StopSidebarAnimation();
 
         _sidebarExpanded = expanded;
-        double targetWidth = expanded ? 292.0 : 64.0;
+        double targetWidth = expanded ? SidebarExpandedWidth : SidebarCollapsedWidth;
         _currentWidth = targetWidth;
 
         if (SidebarColumn is null) return;
 
         SidebarColumn.Width = new GridLength(targetWidth);
         TitlebarNavBackdrop.Width = targetWidth;
-        PaneToggleButton.Margin = new Thickness(expanded ? 244.0 : 16.0, 0, 0, 0);
+        PaneToggleButton.Margin = new Thickness(expanded ? PaneToggleExpandedMargin : 16.0, 0, 0, 0);
 
         ToolTipService.SetToolTip(PaneToggleButton, expanded ? "Collapse sidebar" : "Expand sidebar");
         PaneToggleGlyph.Glyph = expanded ? "\uE76B" : "\uE76C";
@@ -350,7 +356,35 @@ public sealed partial class MainWindow
         {
             SidebarHost.Clip = null;
         }
+        UpdateTitleBarRegions();
     }
+
+    /// <summary>
+    /// The extended title bar swallows pointer input for window dragging, so
+    /// the sidebar toggle has to be declared as a click-through region.
+    /// </summary>
+    private void UpdateTitleBarRegions()
+    {
+        try
+        {
+            if (PaneToggleButton.XamlRoot is not { } root || PaneToggleButton.ActualWidth <= 0) return;
+            var scale = root.RasterizationScale;
+            var origin = PaneToggleButton.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var rect = new Windows.Graphics.RectInt32(
+                (int)Math.Round(origin.X * scale),
+                (int)Math.Round(origin.Y * scale),
+                (int)Math.Round(PaneToggleButton.ActualWidth * scale),
+                (int)Math.Round(PaneToggleButton.ActualHeight * scale));
+            Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(AppWindow.Id)
+                .SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough, new[] { rect });
+        }
+        catch
+        {
+            // Older runtimes keep the default title-bar behaviour.
+        }
+    }
+
+    private void PaneToggleButton_LayoutChanged(object sender, object e) => UpdateTitleBarRegions();
 
     internal void StopSidebarAnimation()
     {
@@ -386,7 +420,7 @@ public sealed partial class MainWindow
 
     private void UpdateComposerFocus()
     {
-        var focusedBorder = (Brush)RootGrid.Resources["StrokeBrush"];
+        var focusedBorder = (Brush)RootGrid.Resources["AccentBrush"];
         var composerBorder = (Brush)RootGrid.Resources["ComposerBorderBrush"];
         InputBox.GotFocus  += (_, _) => ComposerCard.BorderBrush = focusedBorder;
         InputBox.LostFocus += (_, _) => ComposerCard.BorderBrush = composerBorder;

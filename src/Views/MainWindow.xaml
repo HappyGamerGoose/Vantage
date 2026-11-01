@@ -72,6 +72,42 @@
             <SolidColorBrush x:Key="ComposerBorderBrush" Color="#D8DEE3" />
             <SolidColorBrush x:Key="HoverBrush" Color="#0A000000" />
             <SolidColorBrush x:Key="PendingBackgroundBrush" Color="#F7FAFB" />
+            <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
+            <!-- Gradients are not animated: ThemeManager rewrites their stops. -->
+            <LinearGradientBrush x:Key="AccentGradientBrush" StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Offset="0" Color="#1A86E0" />
+                <GradientStop Offset="1" Color="#0078D4" />
+            </LinearGradientBrush>
+            <RadialGradientBrush x:Key="HeroGlowBrush">
+                <GradientStop Offset="0" Color="#300078D4" />
+                <GradientStop Offset="1" Color="#000078D4" />
+            </RadialGradientBrush>
+
+            <!-- Stock buttons, primary dialog buttons and check boxes follow the palette. -->
+            <SolidColorBrush x:Key="ButtonBackground" Color="#FFF2F6F7" />
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FFE8EEF0" />
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#FFE0E8EA" />
+            <SolidColorBrush x:Key="ButtonForeground" Color="#101A24" />
+            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#101A24" />
+            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#101A24" />
+            <SolidColorBrush x:Key="ButtonBorderBrush" Color="#1607141A" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#2607141A" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#2607141A" />
+            <SolidColorBrush x:Key="AccentButtonBackground" Color="#0078D4" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#1A86E0" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#0064B0" />
+            <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked" Color="#0078D4" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="#1A86E0" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPressed" Color="#0064B0" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeChecked" Color="#0078D4" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" Color="#1A86E0" />
+            <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" Color="#0064B0" />
+            <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="#FFFFFFFF" />
 
             <!--
                 Lightweight-styling overrides for every TextBox / PasswordBox
@@ -122,25 +158,24 @@
                 <Setter Property="IsSpellCheckEnabled" Value="False" />
             </Style>
 
-            <CornerRadius x:Key="ComposerRadius">24</CornerRadius>
-            <ThemeShadow x:Key="NewChatShadow" />
-            <ThemeShadow x:Key="EmptyStateShadow" />
+            <CornerRadius x:Key="ComposerRadius">18</CornerRadius>
             <ThemeShadow x:Key="ComposerShadow" />
 
             <Style x:Key="PageTitleStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI" />
-                <Setter Property="FontSize" Value="24" />
+                <Setter Property="FontSize" Value="26" />
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
             </Style>
 
             <Style x:Key="SuggestionButtonStyle" TargetType="Button">
-                <Setter Property="MinHeight" Value="64" />
-                <Setter Property="Padding" Value="16,12" />
+                <Setter Property="MinHeight" Value="52" />
+                <Setter Property="Padding" Value="14,10" />
                 <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource SoftStrokeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template">
@@ -202,6 +237,127 @@
                 <Setter Property="IsSpellCheckEnabled" Value="False" />
             </Style>
 
+            <Style x:Key="GroupLabelStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12.5" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Margin" Value="2,18,0,4" />
+                <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            </Style>
+            <Style x:Key="RowTitleStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="13.5" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            </Style>
+            <Style x:Key="RowDescriptionStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12.5" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            </Style>
+
+            <!-- Messages manage their own width and hover; the container adds nothing. -->
+            <Style x:Key="MessageListItemStyle" TargetType="ListViewItem">
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="IsTabStop" Value="False" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListViewItem">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="SoftAccentButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid x:Name="RootGrid" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  Margin="{TemplateBinding Padding}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootGrid" Storyboard.TargetProperty="(Panel.Background)">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource PanelTintBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootGrid" Storyboard.TargetProperty="Opacity" To="0.8" Duration="0:0:0.05" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootGrid" Storyboard.TargetProperty="Opacity" To="0.5" Duration="0" />
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- One option of a segmented control. -->
+            <Style x:Key="SegmentStyle" TargetType="RadioButton">
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Grid x:Name="SegmentRoot" Background="Transparent" CornerRadius="8" BorderThickness="1" BorderBrush="Transparent">
+                                <ContentPresenter x:Name="SegmentContent" Margin="12,6" VerticalAlignment="Center"
+                                                  Foreground="{TemplateBinding Foreground}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SegmentRoot" Storyboard.TargetProperty="(Panel.Background)">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource HoverBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed" />
+                                        <VisualState x:Name="Disabled" />
+                                    </VisualStateGroup>
+                                    <VisualStateGroup x:Name="CheckStates">
+                                        <VisualState x:Name="Unchecked" />
+                                        <VisualState x:Name="Indeterminate" />
+                                        <VisualState x:Name="Checked">
+                                            <Storyboard>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SegmentRoot" Storyboard.TargetProperty="(Panel.Background)">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource SurfaceElevatedBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SegmentRoot" Storyboard.TargetProperty="BorderBrush">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource SoftStrokeBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="SegmentContent" Storyboard.TargetProperty="Foreground">
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource AccentBrush}" />
+                                                </ObjectAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="FontWeight" Value="SemiBold" />
@@ -214,8 +370,8 @@
                 <Setter Property="Background" Value="{StaticResource SurfaceElevatedBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource SoftStrokeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="14" />
-                <Setter Property="Padding" Value="22,20" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Padding" Value="0" />
             </Style>
 
             <!--
@@ -240,8 +396,8 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ListViewItem">
-                            <Grid x:Name="ItemRoot" Background="Transparent" CornerRadius="12"
-                                  BorderBrush="Transparent" BorderThickness="1">
+                            <Grid x:Name="ItemRoot" Background="Transparent" CornerRadius="9">
+                                <Rectangle x:Name="SelectionIndicator" Width="3" Height="16" RadiusX="1.5" RadiusY="1.5" HorizontalAlignment="Left" Margin="2,0,0,0" Fill="{StaticResource AccentBrush}" Opacity="0" />
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
                                                   HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -269,21 +425,17 @@
                                         <VisualState x:Name="Selected">
                                             <Storyboard>
                                                 <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="(Panel.Background)">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource AccentSoftBrush}" />
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource PanelTintBrush}" />
                                                 </ObjectAnimationUsingKeyFrames>
-                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="BorderBrush">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource BubbleBorderUserBrush}" />
-                                                </ObjectAnimationUsingKeyFrames>
+                                                <DoubleAnimation Storyboard.TargetName="SelectionIndicator" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12" />
                                             </Storyboard>
                                         </VisualState>
                                         <VisualState x:Name="SelectedUnfocused">
                                             <Storyboard>
                                                 <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="(Panel.Background)">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource AccentSoftBrush}" />
+                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource PanelTintBrush}" />
                                                 </ObjectAnimationUsingKeyFrames>
-                                                <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="BorderBrush">
-                                                    <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource BubbleBorderUserBrush}" />
-                                                </ObjectAnimationUsingKeyFrames>
+                                                <DoubleAnimation Storyboard.TargetName="SelectionIndicator" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12" />
                                             </Storyboard>
                                         </VisualState>
                                     </VisualStateGroup>
@@ -423,7 +575,7 @@
 
             <Style x:Key="AccentFilledButtonStyle" TargetType="Button">
                 <Setter Property="Background" Value="{StaticResource AccentBrush}" />
-                <Setter Property="Foreground" Value="White" />
+                <Setter Property="Foreground" Value="{StaticResource OnAccentBrush}" />
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="CornerRadius" Value="10" />
                 <!--
@@ -532,73 +684,473 @@
         </Grid.Resources>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="64" />
+            <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SidebarColumn" Width="264" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <!-- Extended Windows 11 titlebar: Mica remains visible while the
-             brand and local-state signal become part of the window chrome. -->
-        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="64" Background="{StaticResource ChatCanvasBrush}">
-            <Border x:Name="TitlebarNavBackdrop" Width="292" HorizontalAlignment="Left"
-                    Background="{StaticResource PaneBrush}" BorderBrush="{StaticResource PaneEdgeBrush}"
-                    BorderThickness="0,0,1,0" />
-            <TextBlock x:Name="BrandText" FontFamily="Segoe UI Variable Display, Segoe UI"
-                       Margin="22,0,120,0" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"
-                       Foreground="{StaticResource PrimaryTextBrush}" Text="Vantage" />
-            <Button x:Name="PaneToggleButton" Width="32" Height="32" Margin="244,0,0,0"
+        <!-- Window base: the palette tint over Mica. The sidebar and title bar
+             sit directly on it; the content floats above it as one surface. -->
+        <Border Grid.RowSpan="2" Grid.ColumnSpan="2" Background="{StaticResource PaneBrush}" />
+
+        <Grid x:Name="AppTitleBar" Grid.ColumnSpan="2" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="150" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="TitlebarNavBackdrop" Width="264" Background="Transparent" />
+            <StackPanel x:Name="BrandText" Orientation="Horizontal" Spacing="9" Margin="18,0,48,0" VerticalAlignment="Center">
+                <Image Width="20" Height="20" Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
+                <TextBlock FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="14" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" Text="Vantage" />
+            </StackPanel>
+            <Button x:Name="PaneToggleButton" Width="32" Height="32" Margin="220,0,0,0"
                     HorizontalAlignment="Left" VerticalAlignment="Center" Padding="0"
-                    Background="Transparent" BorderThickness="0" Click="PaneToggleButton_Click"
+                    Background="Transparent" BorderThickness="0" Click="PaneToggleButton_Click" Loaded="PaneToggleButton_LayoutChanged" SizeChanged="PaneToggleButton_LayoutChanged"
                     CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}"
+                    AutomationProperties.Name="Toggle sidebar"
                     ToolTipService.ToolTip="Collapse sidebar">
-                <FontIcon x:Name="PaneToggleGlyph" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE76B;" />
+                <FontIcon x:Name="PaneToggleGlyph" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE76B;" />
             </Button>
+
+            <!-- Conversation context, shown only on the chat page. -->
+            <StackPanel x:Name="ChatHeader" Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="10,0,0,0" VerticalAlignment="Center">
+                <TextBlock x:Name="ConversationTitleBlock" MaxWidth="520" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{StaticResource SecondaryTextBrush}" Text="New chat" TextTrimming="CharacterEllipsis" />
+                <Border x:Name="RunStatusPill" Padding="9,3" CornerRadius="999" Background="{StaticResource AccentSoftBrush}"
+                        VerticalAlignment="Center" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Ellipse x:Name="RunStatusPulse" Width="6" Height="6" VerticalAlignment="Center" Fill="{StaticResource AccentBrush}" />
+                        <TextBlock x:Name="RunStatusText" FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Text="Running" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+            <TextBlock x:Name="ConversationSubtitleBlock" Visibility="Collapsed" Text="" />
         </Grid>
 
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SidebarColumn" Width="292" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <!-- ============ SIDEBAR ============ -->
+        <Grid x:Name="SidebarHost" Grid.Row="1" Background="Transparent">
+            <Grid x:Name="ConversationPane" Width="264" HorizontalAlignment="Left" Padding="12,2,10,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-            <!-- ============ UNIFIED CONVERSATION SIDEBAR ============ -->
-            <Border Grid.Column="0" Background="{StaticResource PaneBrush}"
-                    BorderBrush="{StaticResource PaneEdgeBrush}" BorderThickness="0,0,1,0">
-                <Grid x:Name="SidebarHost">
-                    <Grid x:Name="ConversationPane" Width="292" HorizontalAlignment="Left" Padding="18,12,14,14">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Button x:Name="NewChatButton" Grid.Row="0" Height="44" Padding="14,0"
-                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                Background="{StaticResource SurfaceElevatedBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
-                                BorderThickness="1" Click="NewChatButton_Click" CornerRadius="12"
-                                Shadow="{StaticResource NewChatShadow}" Translation="0,0,8">
-                            <StackPanel Orientation="Horizontal" Spacing="13" VerticalAlignment="Center">
-                                <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE710;" />
-                                <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Text="New chat" />
-                            </StackPanel>
-                        </Button>
+                <Grid ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="NewChatButton" Height="38" Padding="12,0" HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left" Click="NewChatButton_Click"
+                            Style="{StaticResource SoftAccentButtonStyle}" AutomationProperties.Name="New chat">
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <FontIcon FontSize="14" Foreground="{StaticResource AccentBrush}" Glyph="&#xE710;" />
+                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Text="New chat" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="1" Width="38" Height="38" Padding="0" Click="HeaderSearchButton_Click"
+                            Background="Transparent" CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}"
+                            AutomationProperties.Name="Search messages" ToolTipService.ToolTip="Search messages">
+                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE721;" />
+                    </Button>
+                </Grid>
 
-                        <Grid Grid.Row="1" Margin="4,18,2,8">
-                            <TextBlock VerticalAlignment="Center" FontSize="12.5" FontWeight="SemiBold"
-                                       Foreground="{StaticResource SecondaryTextBrush}" Text="Conversations" />
-                            <Button HorizontalAlignment="Right" Width="30" Height="30" Padding="0"
-                                    Background="Transparent" BorderThickness="0" Click="HeaderSearchButton_Click"
-                                    CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}"
-                                    ToolTipService.ToolTip="Search messages">
-                                <FontIcon FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE721;" />
-                            </Button>
-                        </Grid>
+                <StackPanel x:Name="SearchPanel" Grid.Row="1" Spacing="8" Margin="0,10,0,0" Visibility="Collapsed">
+                    <Border Height="36" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
+                            BorderThickness="1" CornerRadius="10">
+                        <TextBox x:Name="SearchBox" Style="{StaticResource BorderlessTextBoxStyle}" Padding="10,5" FontSize="13"
+                                 MinHeight="0" PlaceholderText="Search every message" TextChanged="SearchBox_TextChanged">
+                            <TextBox.Resources>
+                                <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                                <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
+                            </TextBox.Resources>
+                        </TextBox>
+                    </Border>
+                    <Border x:Name="SearchResultsHost" MaxHeight="220" Background="{StaticResource SurfaceElevatedBrush}"
+                            BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1" CornerRadius="10"
+                            Visibility="Collapsed">
+                        <ListView x:Name="SearchResultsList" IsItemClickEnabled="True"
+                                  ItemClick="SearchResultsList_ItemClick" SelectionMode="None">
+                            <ListView.ItemContainerTransitions>
+                                <TransitionCollection>
+                                    <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="12" />
+                                    <RepositionThemeTransition />
+                                </TransitionCollection>
+                            </ListView.ItemContainerTransitions>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid MinHeight="58" Padding="10,7">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" Text="{Binding Detail}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Row="1" MaxLines="2" FontSize="12.5" Foreground="{StaticResource PrimaryTextBrush}"
+                                                   Text="{Binding Snippet}" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Border>
+                </StackPanel>
 
-                        <StackPanel x:Name="SearchPanel" Grid.Row="2" Spacing="8" Margin="0,0,0,8" Visibility="Collapsed">
-                            <Border Height="36" Background="{StaticResource InputBrush}" BorderBrush="{StaticResource SoftStrokeBrush}"
-                                    BorderThickness="1" CornerRadius="8">
-                                <TextBox x:Name="SearchBox" Style="{StaticResource BorderlessTextBoxStyle}" Padding="10,5" FontSize="13" Background="Transparent" BorderThickness="0"
-                                         PlaceholderText="Search every message" TextChanged="SearchBox_TextChanged">
+                <TextBlock Grid.Row="2" Margin="12,16,0,6" FontSize="11" FontWeight="SemiBold" CharacterSpacing="40"
+                           Foreground="{StaticResource MutedTextBrush}" Text="Recent" />
+
+                <Grid Grid.Row="3">
+                    <ListView x:Name="ConversationList" IsItemClickEnabled="True"
+                              ItemClick="ConversationList_ItemClick" SelectionMode="Single"
+                              ItemContainerStyle="{StaticResource ConversationListItemStyle}">
+                        <ListView.ItemContainerTransitions>
+                            <TransitionCollection>
+                                <AddDeleteThemeTransition />
+                                <ReorderThemeTransition />
+                                <RepositionThemeTransition />
+                            </TransitionCollection>
+                        </ListView.ItemContainerTransitions>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Height="38" Padding="12,0,10,0" ColumnSpacing="10" Background="Transparent">
+                                    <Grid.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Tag="{Binding}" Text="Rename" Click="RenameConversationMenuItem_Click">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem Tag="{Binding}" Text="Delete" Click="DeleteConversationMenuItem_Click">
+                                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Grid.ContextFlyout>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock VerticalAlignment="Center" FontSize="13" Foreground="{StaticResource PrimaryTextBrush}"
+                                               Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                               Text="{Binding UpdatedLabel}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock x:Name="SidebarEmptyState" Margin="12,6,0,0" HorizontalAlignment="Left"
+                               VerticalAlignment="Top" FontSize="12" Foreground="{StaticResource MutedTextBrush}"
+                               Text="No conversations yet" Visibility="Collapsed" />
+                </Grid>
+
+                <StackPanel Grid.Row="4" Spacing="2" Margin="0,8,0,0">
+                    <Button x:Name="ProvidersButton" Height="36" Padding="12,0"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="Transparent" BorderThickness="0" Click="ProvidersButton_Click"
+                            CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}" AutomationProperties.Name="AI providers">
+                        <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center">
+                            <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE950;" />
+                            <TextBlock FontSize="13" Foreground="{StaticResource PrimaryTextBrush}" Text="AI providers" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="SettingsButton" Height="36" Padding="12,0"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="Transparent" BorderThickness="0" Click="SettingsButton_Click"
+                            CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}" AutomationProperties.Name="Settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11" VerticalAlignment="Center">
+                            <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE713;" />
+                            <TextBlock FontSize="13" Foreground="{StaticResource PrimaryTextBrush}" Text="Settings" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <Grid x:Name="CollapsedSidebarCommands" Width="64" HorizontalAlignment="Left" Visibility="Collapsed" Margin="0,2,0,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Spacing="4" HorizontalAlignment="Center">
+                    <Button Width="38" Height="38" Padding="0" Click="NewChatButton_Click"
+                            Style="{StaticResource SoftAccentButtonStyle}" HorizontalContentAlignment="Center"
+                            AutomationProperties.Name="New chat" ToolTipService.ToolTip="New chat">
+                        <FontIcon FontSize="14" Foreground="{StaticResource AccentBrush}" Glyph="&#xE710;" />
+                    </Button>
+                    <Button Width="38" Height="38" Padding="0" Background="Transparent" BorderThickness="0"
+                            Click="HeaderSearchButton_Click" CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}"
+                            AutomationProperties.Name="Search messages" ToolTipService.ToolTip="Search messages">
+                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE721;" />
+                    </Button>
+                </StackPanel>
+                <StackPanel Grid.Row="2" Spacing="2" HorizontalAlignment="Center">
+                    <Button x:Name="ProvidersButtonCollapsed" Width="38" Height="38" Padding="0"
+                            Background="Transparent" BorderThickness="0" Click="ProvidersButton_Click"
+                            CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}"
+                            AutomationProperties.Name="AI providers" ToolTipService.ToolTip="AI providers">
+                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE950;" />
+                    </Button>
+                    <Button x:Name="SettingsButtonCollapsed" Width="38" Height="38" Padding="0"
+                            Background="Transparent" BorderThickness="0" Click="SettingsButton_Click"
+                            CornerRadius="10" Style="{StaticResource GhostIconButtonStyle}"
+                            AutomationProperties.Name="Settings" ToolTipService.ToolTip="Settings">
+                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE713;" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- ============ CONTENT SURFACE ============ -->
+        <Border Grid.Row="1" Grid.Column="1" Margin="0,0,8,8" CornerRadius="14"
+                Background="{StaticResource ChatCanvasBrush}"
+                BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1">
+            <Grid>
+                <!-- CHAT WORKSPACE -->
+                <Grid x:Name="Workspace" Background="Transparent" Visibility="Visible">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <ListView x:Name="MessagesList" Padding="24,20,24,8" SelectionMode="None" Background="Transparent"
+                              ItemContainerStyle="{StaticResource MessageListItemStyle}">
+                        <ListView.ItemContainerTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="14" />
+                                <RepositionThemeTransition />
+                            </TransitionCollection>
+                        </ListView.ItemContainerTransitions>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid MaxWidth="760" Padding="0,8,0,2" Background="Transparent"
+                                      PointerEntered="MessageRow_PointerEntered" PointerExited="MessageRow_PointerExited">
+                                    <Grid HorizontalAlignment="{Binding BubbleAlignment}" ColumnSpacing="{Binding MessageColumnSpacing}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="{Binding AvatarColumnWidth}" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="28" Height="28" CornerRadius="9" Background="{Binding AvatarBrush}"
+                                                VerticalAlignment="Top" Visibility="{Binding AvatarVisibility}">
+                                            <Image Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1">
+                                            <!-- Text message: the assistant writes on the canvas,
+                                                 the user and errors get a tinted bubble. -->
+                                            <Border CornerRadius="{Binding BubbleCornerRadius}" Padding="{Binding BubblePadding}"
+                                                    MaxWidth="{Binding BubbleMaxWidth}"
+                                                    HorizontalAlignment="{Binding BubbleAlignment}"
+                                                    Background="{Binding BubbleBrush}" BorderBrush="{Binding BubbleBorderBrush}"
+                                                    BorderThickness="1" Visibility="{Binding ContentVisibility}">
+                                                <StackPanel Spacing="4">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{Binding MetadataVisibility}">
+                                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{Binding AuthorBrush}"
+                                                                   Text="{Binding AuthorDisplay}" VerticalAlignment="Center" />
+                                                        <TextBlock FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                                                   Text="{Binding TimeLabel}" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    <Border MaxHeight="320" Margin="0,2,0,2" Background="{StaticResource SubtleSurfaceBrush}"
+                                                            CornerRadius="10" Visibility="{Binding ImageVisibility}">
+                                                        <Image MaxHeight="300" Source="{Binding ImageSource}" Stretch="Uniform" />
+                                                    </Border>
+                                                    <TextBlock FontSize="14" LineHeight="23" Foreground="{StaticResource PrimaryTextBrush}"
+                                                               IsTextSelectionEnabled="True"
+                                                               Text="{Binding CleanText}" TextWrapping="Wrap" Visibility="{Binding TextVisibility}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <!-- Agent run: header, slim progress, stepper, counters, outcome. -->
+                                            <Border CornerRadius="14" Margin="0,2,0,0" Background="{StaticResource SurfaceElevatedBrush}"
+                                                    BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1"
+                                                    Visibility="{Binding AgentRunVisibility}">
+                                                <Grid>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="*" />
+                                                    </Grid.RowDefinitions>
+                                                    <Grid Padding="16,12,14,10" ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="1" VerticalAlignment="Center">
+                                                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
+                                                                       Text="{Binding AgentRun.HeaderTitle}" />
+                                                            <TextBlock FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                                                       Text="{Binding AgentRun.StatusText}" />
+                                                        </StackPanel>
+                                                        <Border Grid.Column="1" Padding="9,3" CornerRadius="999"
+                                                                Background="{StaticResource SubtleSurfaceBrush}" VerticalAlignment="Center">
+                                                            <TextBlock FontSize="11.5" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"
+                                                                       Text="{Binding AgentRun.ElapsedLabel}" />
+                                                        </Border>
+                                                    </Grid>
+                                                    <StackPanel Grid.Row="1" Padding="16,0,16,14" Spacing="12">
+                                                        <ProgressBar Height="3" MinHeight="3" CornerRadius="2" Minimum="0" Maximum="100"
+                                                                     IsIndeterminate="{Binding AgentRun.ProgressIndeterminate}"
+                                                                     Value="{Binding AgentRun.ProgressPercent}"
+                                                                     Foreground="{StaticResource AccentBrush}"
+                                                                     Background="{StaticResource SubtleSurfaceBrush}" />
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <FontIcon Glyph="&#xE8D7;" FontSize="12" VerticalAlignment="Top" Margin="0,2,0,0"
+                                                                      Foreground="{StaticResource MutedTextBrush}" />
+                                                            <TextBlock Grid.Column="1" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                                                       TextWrapping="WrapWholeWords" Text="{Binding AgentRun.EvidenceSummary}" />
+                                                        </Grid>
+                                                        <ItemsControl ItemsSource="{Binding AgentRun.Phases}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Grid ColumnSpacing="10">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="20" />
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <Grid>
+                                                                            <Grid.RowDefinitions>
+                                                                                <RowDefinition Height="20" />
+                                                                                <RowDefinition Height="*" />
+                                                                            </Grid.RowDefinitions>
+                                                                            <Border Width="20" Height="20" CornerRadius="10" Background="{StaticResource AccentSoftBrush}">
+                                                                                <FontIcon Glyph="{Binding IconGlyph}" FontSize="10" Foreground="{StaticResource AccentBrush}"
+                                                                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                            </Border>
+                                                                            <Rectangle Grid.Row="1" Width="1" MinHeight="6" HorizontalAlignment="Center" Fill="{StaticResource StrokeBrush}" />
+                                                                        </Grid>
+                                                                        <StackPanel Grid.Column="1" Margin="0,0,0,8">
+                                                                            <TextBlock FontSize="13" Margin="0,1,0,0" Foreground="{StaticResource PrimaryTextBrush}" Text="{Binding Title}" />
+                                                                            <TextBlock FontSize="12" Margin="0,1,0,0" Foreground="{StaticResource MutedTextBrush}"
+                                                                                       Text="{Binding Subtitle}" TextWrapping="Wrap" Visibility="{Binding HasSubtitle}" />
+                                                                        </StackPanel>
+                                                                        <TextBlock Grid.Column="2" FontSize="11.5" Margin="0,2,0,0" Foreground="{StaticResource MutedTextBrush}"
+                                                                                   Text="{Binding DurationLabel}" />
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <ItemsControl ItemsSource="{Binding AgentRun.Counters}" Visibility="{Binding AgentRun.CountersVisibility}">
+                                                            <ItemsControl.ItemsPanel>
+                                                                <ItemsPanelTemplate>
+                                                                    <StackPanel Orientation="Horizontal" />
+                                                                </ItemsPanelTemplate>
+                                                            </ItemsControl.ItemsPanel>
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Border Padding="9,3" Margin="0,0,6,0" CornerRadius="999" Background="{StaticResource SubtleSurfaceBrush}">
+                                                                        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                                            <FontIcon Glyph="{Binding Glyph}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                                                                            <TextBlock FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Text="{Binding Label}" />
+                                                                            <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Text="{Binding Count}" />
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <Border Padding="12,8" CornerRadius="10" Visibility="{Binding AgentRun.IsFinishedVisibility}"
+                                                                Background="{StaticResource SubtleSurfaceBrush}">
+                                                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
+                                                                       Text="{Binding AgentRun.TerminationLabel}" TextWrapping="Wrap" />
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- Revealed on hover or keyboard focus. Space stays reserved
+                                                 so messages never shift while the pointer moves. -->
+                                            <Button x:Name="CopyAction" HorizontalAlignment="{Binding BubbleAlignment}"
+                                                    Margin="0,2,0,0" Padding="0" Width="26" Height="26" Opacity="0" CornerRadius="8"
+                                                    Click="CopyMessageButton_Click" Tag="{Binding}"
+                                                    GotFocus="CopyAction_GotFocus" LostFocus="CopyAction_LostFocus"
+                                                    AutomationProperties.Name="Copy message" ToolTipService.ToolTip="Copy message"
+                                                    Style="{StaticResource GhostIconButtonStyle}"
+                                                    Visibility="{Binding CopyButtonVisibility}">
+                                                <Button.OpacityTransition>
+                                                    <ScalarTransition Duration="0:0:0.12" />
+                                                </Button.OpacityTransition>
+                                                <FontIcon FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE8C8;" />
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <!-- Empty state: a soft accent glow behind the mark, then starters. -->
+                    <Grid x:Name="EmptyState" Margin="24,0,24,12" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="620">
+                        <Grid.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="16" />
+                            </TransitionCollection>
+                        </Grid.ChildrenTransitions>
+                        <Ellipse Width="400" Height="400" VerticalAlignment="Top" Margin="0,-170,0,0" IsHitTestVisible="False"
+                                 Fill="{StaticResource HeroGlowBrush}" />
+                        <StackPanel Spacing="8">
+                            <Image Width="56" Height="56" Margin="0,0,0,10" HorizontalAlignment="Center"
+                                   Source="ms-appx:///Assets/Square150x150Logo.scale-200.png" />
+                            <TextBlock HorizontalAlignment="Center" FontFamily="Segoe UI Variable Display, Segoe UI"
+                                       FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
+                                       Text="What can I help with?" TextAlignment="Center" />
+                            <TextBlock HorizontalAlignment="Center" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                                       Text="Ask a question, or tell Vantage what to do on your PC." TextAlignment="Center" TextWrapping="Wrap" />
+                            <Grid Margin="0,20,0,0" ColumnSpacing="10" RowSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Button Style="{StaticResource SuggestionButtonStyle}" Click="SuggestionButton_Click"
+                                        Tag="Open Settings and check for Windows updates.">
+                                    <Grid ColumnSpacing="11"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon FontSize="15" Foreground="{StaticResource AccentBrush}" Glyph="&#xE895;" /><TextBlock Grid.Column="1" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" Text="Check for Windows updates" /></Grid>
+                                </Button>
+                                <Button Grid.Column="1" Style="{StaticResource SuggestionButtonStyle}" Click="SuggestionButton_Click"
+                                        Tag="Find the largest files in my Downloads folder.">
+                                    <Grid ColumnSpacing="11"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon FontSize="15" Foreground="{StaticResource AccentBrush}" Glyph="&#xE8B7;" /><TextBlock Grid.Column="1" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" Text="Find my largest downloads" /></Grid>
+                                </Button>
+                                <Button Grid.Row="1" Style="{StaticResource SuggestionButtonStyle}" Click="SuggestionButton_Click"
+                                        Tag="Open Microsoft Edge and search for today's top news.">
+                                    <Grid ColumnSpacing="11"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon FontSize="15" Foreground="{StaticResource AccentBrush}" Glyph="&#xE774;" /><TextBlock Grid.Column="1" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" Text="Look up today's news" /></Grid>
+                                </Button>
+                                <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource SuggestionButtonStyle}" Click="SuggestionButton_Click"
+                                        Tag="Explain this in simple terms: ">
+                                    <Grid ColumnSpacing="11"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><FontIcon FontSize="15" Foreground="{StaticResource AccentBrush}" Glyph="&#xE82F;" /><TextBlock Grid.Column="1" FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" Text="Explain something simply" /></Grid>
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Composer: the message grows upward, tools sit below it. -->
+                    <Border x:Name="ComposerHost" Grid.Row="1" Padding="24,0,24,18" MaxWidth="808" HorizontalAlignment="Stretch">
+                        <Border x:Name="ComposerCard" Background="{StaticResource ComposerBrush}"
+                                BorderBrush="{StaticResource ComposerBorderBrush}" BorderThickness="1"
+                                CornerRadius="{StaticResource ComposerRadius}"
+                                Shadow="{StaticResource ComposerShadow}" Translation="0,0,16">
+                            <Grid Padding="16,10,10,10" RowSpacing="6">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBox x:Name="InputBox" MinHeight="28" MaxHeight="168"
+                                         PlaceholderText="Message Vantage" KeyDown="InputBox_KeyDown"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         Style="{StaticResource ComposerTextBoxStyle}">
                                     <TextBox.Resources>
                                         <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
                                         <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
@@ -610,716 +1162,174 @@
                                         <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
                                     </TextBox.Resources>
                                 </TextBox>
-                            </Border>
-                            <Border x:Name="SearchResultsHost" MaxHeight="220" Background="{StaticResource SurfaceElevatedBrush}"
-                                    BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1" CornerRadius="10"
-                                    Visibility="Collapsed">
-                                <ListView x:Name="SearchResultsList" IsItemClickEnabled="True"
-                                          ItemClick="SearchResultsList_ItemClick" SelectionMode="None">
-                                    <ListView.ItemContainerTransitions>
-                                        <TransitionCollection>
-                                            <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="12" />
-                                            <RepositionThemeTransition />
-                                        </TransitionCollection>
-                                    </ListView.ItemContainerTransitions>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid MinHeight="58" Padding="10,7">
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
-                                                <TextBlock FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" Text="{Binding Detail}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Grid.Row="1" MaxLines="2" FontSize="12.5" Foreground="{StaticResource PrimaryTextBrush}"
-                                                           Text="{Binding Snippet}" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                            </Border>
-                        </StackPanel>
-
-                        <Grid Grid.Row="3">
-                        <ListView x:Name="ConversationList" IsItemClickEnabled="True"
-                                      ItemClick="ConversationList_ItemClick" SelectionMode="Single"
-                                      ItemContainerStyle="{StaticResource ConversationListItemStyle}">
-                            <ListView.ItemContainerTransitions>
-                                <TransitionCollection>
-                                    <AddDeleteThemeTransition />
-                                    <ContentThemeTransition />
-                                    <ReorderThemeTransition />
-                                    <RepositionThemeTransition />
-                                </TransitionCollection>
-                            </ListView.ItemContainerTransitions>
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                        <Grid Height="58" Padding="10,6" ColumnSpacing="11">
-                                            <Grid.ContextFlyout>
-                                                <MenuFlyout>
-                                                    <MenuFlyoutItem Tag="{Binding}" Text="Rename" Click="RenameConversationMenuItem_Click">
-                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
-                                                    </MenuFlyoutItem>
-                                                    <MenuFlyoutSeparator />
-                                                    <MenuFlyoutItem Tag="{Binding}" Text="Delete" Click="DeleteConversationMenuItem_Click">
-                                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
-                                                    </MenuFlyoutItem>
-                                                </MenuFlyout>
-                                            </Grid.ContextFlyout>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="36" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <!-- One calm tile for every conversation: the per-title
-                                                 rainbow of glyphs read as noise, and in dark mode the
-                                                 pale tiles glared against the pane. -->
-                                            <Border Width="36" Height="36" CornerRadius="18" Background="{StaticResource AccentSoftBrush}">
-                                                <FontIcon FontSize="14" Foreground="{StaticResource AccentBrush}" Glyph="&#xE8F2;" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
-                                                <TextBlock FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
-                                                           Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock FontSize="11" Foreground="{StaticResource MutedTextBrush}" Text="{Binding UpdatedLabel}" />
-                                            </StackPanel>
-                                        </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                            <TextBlock x:Name="SidebarEmptyState" Margin="10,14,0,0" HorizontalAlignment="Left"
-                                       VerticalAlignment="Top" FontSize="11.5" Foreground="{StaticResource MutedTextBrush}"
-                                       Text="No conversations yet" Visibility="Collapsed" />
-                        </Grid>
-
-                        <Border Grid.Row="4" Margin="0,10,0,0" Padding="0,8,0,0"
-                                BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0">
-                            <StackPanel Spacing="2">
-                                <Button x:Name="ProvidersButton" Height="36" Padding="10,0"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                        Background="Transparent" BorderThickness="0" Click="ProvidersButton_Click"
-                                        CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE967;" />
-                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" Text="AI providers" />
-                                    </StackPanel>
-                                </Button>
-                                <Button x:Name="SettingsButton" Height="36" Padding="10,0"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                        Background="Transparent" BorderThickness="0" Click="SettingsButton_Click"
-                                        CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}">
-                                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                        <FontIcon FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE713;" />
-                                        <TextBlock FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" Text="Settings" />
-                                    </StackPanel>
-                                </Button>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
-
-                    <Grid x:Name="CollapsedSidebarCommands" Width="64" HorizontalAlignment="Left" Visibility="Collapsed" Margin="0,14,0,14">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <StackPanel Spacing="6" HorizontalAlignment="Center">
-                            <Button Width="40" Height="40" Padding="0" Background="{StaticResource AccentBrush}" BorderThickness="0"
-                                    Click="NewChatButton_Click" CornerRadius="10" Style="{StaticResource AccentFilledButtonStyle}"
-                                    ToolTipService.ToolTip="New chat">
-                                <FontIcon FontSize="15" Foreground="White" Glyph="&#xE710;" />
-                            </Button>
-                            <Button Width="40" Height="40" Padding="0" Background="Transparent" BorderThickness="0"
-                                    Click="HeaderSearchButton_Click" CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}"
-                                    ToolTipService.ToolTip="Search messages">
-                                <FontIcon FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE721;" />
-                            </Button>
-                        </StackPanel>
-                        <StackPanel Grid.Row="2" Spacing="4" HorizontalAlignment="Center">
-                            <Button x:Name="ProvidersButtonCollapsed" Width="40" Height="40" Padding="0"
-                                    Background="Transparent" BorderThickness="0" Click="ProvidersButton_Click"
-                                    CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}"
-                                    ToolTipService.ToolTip="AI providers">
-                                <FontIcon FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE967;" />
-                            </Button>
-                            <Button x:Name="SettingsButtonCollapsed" Width="40" Height="40" Padding="0"
-                                    Background="Transparent" BorderThickness="0" Click="SettingsButton_Click"
-                                    CornerRadius="8" Style="{StaticResource GhostIconButtonStyle}"
-                                    ToolTipService.ToolTip="Settings and appearance">
-                                <FontIcon FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE713;" />
-                            </Button>
-                        </StackPanel>
-                    </Grid>
-                </Grid>
-            </Border>
-
-            <!-- ============ CONTENT AREA ============ -->
-            <Grid Grid.Column="1" Background="{StaticResource ChatCanvasBrush}">
-                <!-- CHAT WORKSPACE -->
-                <Grid
-                    x:Name="Workspace"
-                    Background="{StaticResource ChatCanvasBrush}"
-                    Visibility="Visible">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <!-- Named state elements remain available to the controller without adding visible header chrome. -->
-                    <Grid Visibility="Collapsed">
-                        <TextBlock x:Name="ConversationTitleBlock" Text="New chat" />
-                        <TextBlock x:Name="ConversationSubtitleBlock" Text="" />
-                        <Border x:Name="RunStatusPill" Visibility="Collapsed">
-                            <StackPanel>
-                                <Ellipse x:Name="RunStatusPulse" />
-                                <TextBlock x:Name="RunStatusText" Text="Running" />
-                            </StackPanel>
-                        </Border>
-                    </Grid>
-
-                    <Grid Grid.Row="1">
-                        <ListView x:Name="MessagesList" Padding="36,28,36,18" SelectionMode="None" HorizontalContentAlignment="Stretch" Background="Transparent">
-                            <ListView.ItemContainerTransitions>
-                                <TransitionCollection>
-                                    <EntranceThemeTransition IsStaggeringEnabled="True" FromVerticalOffset="18" />
-                                    <RepositionThemeTransition />
-                                </TransitionCollection>
-                            </ListView.ItemContainerTransitions>
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="0,6" HorizontalAlignment="Stretch">
-                                        <Grid HorizontalAlignment="{Binding BubbleAlignment}" MaxWidth="800">
-                                            <Grid ColumnSpacing="{Binding MessageColumnSpacing}">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="{Binding AvatarColumnWidth}" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-                                                <!--
-                                                    Author avatar — a chunky
-                                                    colored circle showing the
-                                                    first letter. Adds presence
-                                                    to each message and removes
-                                                    the cramped 12px label.
-                                                -->
-                                                <Border Width="32" Height="32" CornerRadius="16"
-                                                        Background="{Binding AvatarBrush}"
-                                                        VerticalAlignment="Top" Visibility="{Binding AvatarVisibility}">
-                                                    <Image Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                           Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
-                                                </Border>
-                                            <StackPanel Grid.Column="1">
-
-                                                <!--
-                                                    Plain text bubble — used for user messages,
-                                                    EmitPlainReply, error cards, and any other
-                                                    non-agent assistant message.
-                                                -->
-                                                <Border CornerRadius="16"
-                                                        Padding="15,10,16,11"
-                                                        Background="{Binding BubbleBrush}"
-                                                        BorderBrush="{Binding BubbleBorderBrush}"
-                                                        BorderThickness="1"
-                                                        Visibility="{Binding ContentVisibility}">
-                                                        <StackPanel Spacing="6">
-                                                        <Grid ColumnSpacing="14" Visibility="{Binding MetadataVisibility}">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*" />
-                                                                <ColumnDefinition Width="Auto" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <TextBlock FontSize="12" FontWeight="SemiBold"
-                                                                       Foreground="{Binding AuthorBrush}"
-                                                                       Text="{Binding AuthorDisplay}" />
-                                                            <TextBlock Grid.Column="1" FontSize="11"
-                                                                       Foreground="{StaticResource MutedTextBrush}"
-                                                                       Text="{Binding TimeLabel}" />
-                                                        </Grid>
-                                                        <Border MaxHeight="320"
-                                                                 Background="{StaticResource SubtleSurfaceBrush}"
-                                                                 CornerRadius="8"
-                                                                Visibility="{Binding ImageVisibility}">
-                                                            <Image MaxHeight="300" Source="{Binding ImageSource}" Stretch="Uniform" />
-                                                        </Border>
-                                                        <TextBlock FontSize="15"
-                                                                   Foreground="{StaticResource PrimaryTextBrush}"
-                                                                   LineHeight="24"
-                                                                   Text="{Binding CleanText}"
-                                                                   TextWrapping="Wrap"
-                                                                   Visibility="{Binding TextVisibility}" />
-                                                    </StackPanel>
-                                                </Border>
-
-                                                <!--
-                                                    Agent-run visualization. Replaces the old raw
-                                                    step log with a structured stepper, progress
-                                                    bar, live counter strip, and an animated dot.
-                                                -->
-                                                <Border CornerRadius="14"
-                                                        Padding="0"
-                                                        Background="{Binding BubbleBrush}"
-                                                        BorderBrush="{Binding BubbleBorderBrush}"
-                                                        BorderThickness="1"
-                                                        Visibility="{Binding AgentRunVisibility}">
-                                                    <Grid>
-                                                        <Grid.RowDefinitions>
-                                                            <RowDefinition Height="Auto" />
-                                                            <RowDefinition Height="*" />
-                                                        </Grid.RowDefinitions>
-
-                                                        <!-- HEADER: title + status + elapsed pill -->
-                                                        <Border Grid.Row="0"
-                                                                Padding="15,11,15,11"
-                                                                BorderBrush="{StaticResource SoftStrokeBrush}"
-                                                                BorderThickness="0,0,0,1">
-                                                            <Grid ColumnSpacing="11">
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                    <ColumnDefinition Width="*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-                                                                <Ellipse Width="8" Height="8"
-                                                                         VerticalAlignment="Center"
-                                                                         Fill="{StaticResource AccentBrush}" />
-                                                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                                                    <TextBlock FontSize="13" FontWeight="SemiBold"
-                                                                               Foreground="{StaticResource PrimaryTextBrush}"
-                                                                               Text="{Binding AgentRun.HeaderTitle}" />
-                                                                    <TextBlock FontSize="11.5"
-                                                                               Foreground="{StaticResource SecondaryTextBrush}"
-                                                                               Text="{Binding AgentRun.StatusText}" />
-                                                                </StackPanel>
-                                                                <Border Grid.Column="2" Padding="10,5"
-                                                                        CornerRadius="999"
-                                                                        Background="{StaticResource SubtleSurfaceBrush}"
-                                                                        VerticalAlignment="Center">
-                                                                    <TextBlock FontSize="11.5" FontWeight="SemiBold"
-                                                                               Foreground="{StaticResource SecondaryTextBrush}"
-                                                                               Text="{Binding AgentRun.ElapsedLabel}" />
-                                                                </Border>
-                                                            </Grid>
-                                                        </Border>
-
-                                                        <StackPanel Grid.Row="1" Padding="18,14,18,16" Spacing="12">
-
-                                                            <ProgressBar Height="6" CornerRadius="3"
-                                                                         Minimum="0" Maximum="100"
-                                                                         IsIndeterminate="{Binding AgentRun.ProgressIndeterminate}"
-                                                                         Value="{Binding AgentRun.ProgressPercent}"
-                                                                         Foreground="{StaticResource AccentBrush}"
-                                                                         Background="{StaticResource SubtleSurfaceBrush}" />
-
-                                                            <Border Padding="10,7"
-                                                                    CornerRadius="8"
-                                                                    Background="{StaticResource SubtleSurfaceBrush}">
-                                                                <Grid ColumnSpacing="8" VerticalAlignment="Center">
-                                                                    <Grid.ColumnDefinitions>
-                                                                        <ColumnDefinition Width="Auto" />
-                                                                        <ColumnDefinition Width="*" />
-                                                                    </Grid.ColumnDefinitions>
-                                                                    <FontIcon Glyph="&#xE8D7;"
-                                                                              FontSize="12"
-                                                                              Foreground="{StaticResource SecondaryTextBrush}" />
-                                                                    <TextBlock Grid.Column="1"
-                                                                               FontSize="11.5"
-                                                                               Foreground="{StaticResource SecondaryTextBrush}"
-                                                                               TextWrapping="WrapWholeWords"
-                                                                               Text="{Binding AgentRun.EvidenceSummary}" />
-                                                                </Grid>
-                                                            </Border>
-
-                                                            <!-- Vertical stepper — every phase lights up as it completes. -->
-                                                            <ItemsControl ItemsSource="{Binding AgentRun.Phases}">
-                                                                <ItemsControl.ItemTemplate>
-                                                                    <DataTemplate>
-                                                                        <Grid Margin="0,2" ColumnSpacing="12">
-                                                                            <Grid.ColumnDefinitions>
-                                                                                <ColumnDefinition Width="28" />
-                                                                                <ColumnDefinition Width="*" />
-                                                                                <ColumnDefinition Width="Auto" />
-                                                                            </Grid.ColumnDefinitions>
-                                                                            <Grid Width="28">
-                                                                                <Grid.RowDefinitions>
-                                                                                    <RowDefinition Height="22" />
-                                                                                    <RowDefinition Height="*" />
-                                                                                </Grid.RowDefinitions>
-                                                                                <Grid Width="22" Height="22" VerticalAlignment="Top">
-                                                                                    <Ellipse Width="22" Height="22"
-                                                                                             StrokeThickness="2"
-                                                                                             Stroke="{StaticResource AccentBrush}"
-                                                                                             Fill="Transparent" />
-                                                                                    <FontIcon Glyph="{Binding IconGlyph}"
-                                                                                              FontSize="11"
-                                                                                              Foreground="{StaticResource AccentBrush}"
-                                                                                              HorizontalAlignment="Center"
-                                                                                              VerticalAlignment="Center" />
-                                                                                </Grid>
-                                                                                <Rectangle Grid.Row="1"
-                                                                                           Width="2"
-                                                                                           HorizontalAlignment="Center"
-                                                                                           Fill="{StaticResource SoftStrokeBrush}" />
-                                                                            </Grid>
-                                                                            <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="0,1,0,0">
-                                                                                <TextBlock FontSize="13"
-                                                                                           Foreground="{StaticResource PrimaryTextBrush}"
-                                                                                           Text="{Binding Title}" />
-                                                                                <TextBlock FontSize="11.5"
-                                                                                           Foreground="{StaticResource MutedTextBrush}"
-                                                                                           Text="{Binding Subtitle}"
-                                                                                           Visibility="{Binding HasSubtitle}"
-                                                                                           Margin="0,2,0,0" />
-                                                                            </StackPanel>
-                                                                            <TextBlock Grid.Column="2" FontSize="11.5"
-                                                                                       VerticalAlignment="Top" Margin="0,1,0,0"
-                                                                                       Foreground="{StaticResource SecondaryTextBrush}"
-                                                                                       Text="{Binding DurationLabel}" />
-                                                                        </Grid>
-                                                                    </DataTemplate>
-                                                                </ItemsControl.ItemTemplate>
-                                                            </ItemsControl>
-
-                                                            <!-- Counter strip — appears once the agent has done something. -->
-                                                            <ItemsControl ItemsSource="{Binding AgentRun.Counters}"
-                                                                          Visibility="{Binding AgentRun.CountersVisibility}">
-                                                                <ItemsControl.ItemsPanel>
-                                                                    <ItemsPanelTemplate>
-                                                                        <StackPanel Orientation="Horizontal" />
-                                                                    </ItemsPanelTemplate>
-                                                                </ItemsControl.ItemsPanel>
-                                                                <ItemsControl.ItemTemplate>
-                                                                    <DataTemplate>
-                                                                        <Border Padding="9,4" Margin="0,0,6,6"
-                                                                                CornerRadius="999"
-                                                                                Background="{StaticResource SubtleSurfaceBrush}">
-                                                                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                                                                <FontIcon Glyph="{Binding Glyph}" FontSize="11"
-                                                                                          Foreground="{StaticResource SecondaryTextBrush}" />
-                                                                                <TextBlock FontSize="12" FontWeight="SemiBold"
-                                                                                           Foreground="{StaticResource PrimaryTextBrush}"
-                                                                                           Text="{Binding Label}" />
-                                                                                <Border Padding="6,1" CornerRadius="6"
-                                                                                        Background="{StaticResource SurfaceElevatedBrush}">
-                                                                                    <TextBlock FontSize="11.5" FontWeight="SemiBold"
-                                                                                               Foreground="{StaticResource AccentBrush}"
-                                                                                               Text="{Binding Count}" />
-                                                                                </Border>
-                                                                            </StackPanel>
-                                                                        </Border>
-                                                                    </DataTemplate>
-                                                                </ItemsControl.ItemTemplate>
-                                                            </ItemsControl>
-
-                                                            <!-- Termination card — shown only when the run finishes. -->
-                                                            <Border Padding="12,10" CornerRadius="10"
-                                                                    Visibility="{Binding AgentRun.IsFinishedVisibility}"
-                                                                    Background="{StaticResource SubtleSurfaceBrush}"
-                                                                    BorderBrush="{StaticResource SoftStrokeBrush}"
-                                                                    BorderThickness="1">
-                                                                <TextBlock FontSize="13" FontWeight="SemiBold"
-                                                                           Foreground="{StaticResource PrimaryTextBrush}"
-                                                                           Text="{Binding AgentRun.TerminationLabel}" />
-                                                            </Border>
-
-                                                        </StackPanel>
-                                                    </Grid>
-                                                </Border>
-
-                                                <!--
-                                                    Copy button — modern chat UI affordance. Sits
-                                                    just below the bubble(s), right-aligned, and
-                                                    copies the message text to the clipboard when
-                                                    clicked. The click handler (MainWindow.Chat.cs)
-                                                    swaps the FontIcon for a checkmark for ~1.5 s
-                                                    as feedback, then restores the original copy
-                                                    glyph. Hidden for empty messages via
-                                                    CopyButtonVisibility on ChatMessage.
-                                                -->
-                                                <Button HorizontalAlignment="Right"
-                                                        Margin="0,2,2,0"
-                                                        Padding="0"
-                                                        Width="26" Height="26"
-                                                        Opacity="0.55"
-                                                        CornerRadius="13"
-                                                        Click="CopyMessageButton_Click"
-                                                        Tag="{Binding}"
-                                                        ToolTipService.ToolTip="Copy message"
-                                                        Style="{StaticResource GhostIconButtonStyle}"
-                                                        Visibility="{Binding CopyButtonVisibility}">
-                                                    <FontIcon FontSize="12"
-                                                              Foreground="{StaticResource SecondaryTextBrush}"
-                                                              Glyph="&#xE8C8;" />
-                                                </Button>
-
-                                            </StackPanel>
-                                        </Grid>
-                                        </Grid>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-
-                        <StackPanel x:Name="EmptyState" MaxWidth="640" Margin="32,0,32,90"
-                                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="22">
-                            <StackPanel.Transitions>
-                                <TransitionCollection>
-                                    <EntranceThemeTransition FromVerticalOffset="20" />
-                                    <RepositionThemeTransition />
-                                </TransitionCollection>
-                            </StackPanel.Transitions>
-                            <Border Width="72" Height="72" CornerRadius="14" HorizontalAlignment="Center"
-                                    Background="{StaticResource SurfaceElevatedBrush}"
-                                    BorderBrush="{StaticResource SoftStrokeBrush}" BorderThickness="1"
-                                    Shadow="{StaticResource EmptyStateShadow}" Translation="0,0,12">
-                                <Image Width="48" Height="48" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Source="ms-appx:///Assets/Square150x150Logo.scale-200.png" />
-                            </Border>
-                            <TextBlock HorizontalAlignment="Center" FontFamily="Segoe UI Variable Display, Segoe UI"
-                                       FontSize="30" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
-                                       Text="What can I help with?" TextAlignment="Center" />
-                        </StackPanel>
-                    </Grid>
-
-                    <!-- Modern Composer — fills the window width with a
-                         comfortable outer padding so it never feels like
-                         a tiny card floating on white space. -->
-                    <Border
-                        x:Name="ComposerHost"
-                        Grid.Row="2"
-                        Padding="32,4,32,32"
-                        HorizontalAlignment="Stretch"
-                        MaxWidth="900">
-                        <Border
-                            x:Name="ComposerCard"
-                            HorizontalAlignment="Stretch"
-                            Background="{StaticResource ComposerBrush}"
-                            BorderBrush="{StaticResource ComposerBorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="{StaticResource ComposerRadius}"
-                            Shadow="{StaticResource ComposerShadow}"
-                            Translation="0,0,18">
-                            <Grid Height="68" Padding="22,8,12,8" ColumnSpacing="10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                    <TextBox
-                                        x:Name="InputBox"
-                                        Grid.Column="0"
-                                        MinHeight="40"
-                                        MaxHeight="48"
-                                        Margin="0"
-                                        VerticalAlignment="Center"
-                                        VerticalContentAlignment="Center"
-                                        PlaceholderText="Message Vantage"
-                                        KeyDown="InputBox_KeyDown"
-                                        Style="{StaticResource ComposerTextBoxStyle}">
-                                        <TextBox.Resources>
-                                            <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
-                                            <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent" />
-                                        </TextBox.Resources>
-                                    </TextBox>
-                                     <ComboBox x:Name="ModelSelector"
-                                               Grid.Column="1"
-                                               Width="200" Height="44"
-                                               Padding="12,0"
-                                               CornerRadius="16"
-                                               Background="{StaticResource SubtleSurfaceBrush}"
-                                               BorderBrush="{StaticResource SoftStrokeBrush}"
-                                               SelectionChanged="ModelSelector_SelectionChanged"
-                                               ToolTipService.ToolTip="Active model">
-                                         <ComboBox.ItemTemplate>
-                                             <DataTemplate>
-                                                 <StackPanel Spacing="0" ToolTipService.ToolTip="{Binding Tooltip}">
-                                                     <TextBlock FontSize="12.5" FontWeight="SemiBold"
-                                                                Foreground="{StaticResource PrimaryTextBrush}"
-                                                                Text="{Binding Display}" />
-                                                     <TextBlock FontSize="10.5"
-                                                                Foreground="{StaticResource MutedTextBrush}"
-                                                                Text="{Binding ProviderDisplay}" />
-                                                 </StackPanel>
-                                             </DataTemplate>
-                                         </ComboBox.ItemTemplate>
-                                     </ComboBox>
-                                    <Grid Grid.Column="2" VerticalAlignment="Center">
-                                        <Button x:Name="SendButton" Width="44" Height="44" Padding="0" Background="{StaticResource AccentBrush}" BorderThickness="0" Click="SendButton_Click" CornerRadius="22" Style="{StaticResource AccentFilledButtonStyle}" ToolTipService.ToolTip="Send message">
-                                            <FontIcon FontSize="16" Foreground="White" Glyph="&#xE724;" />
+                                <Grid Grid.Row="1" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="ModelSelector" MinWidth="120" MaxWidth="340" Height="34" Margin="-8,0,0,0"
+                                              Padding="8,0,0,0" CornerRadius="10" BorderThickness="0" HorizontalAlignment="Left"
+                                              VerticalAlignment="Center" Background="Transparent"
+                                              SelectionChanged="ModelSelector_SelectionChanged"
+                                              AutomationProperties.Name="Active model" ToolTipService.ToolTip="Active model">
+                                        <ComboBox.Resources>
+                                            <SolidColorBrush x:Key="ComboBoxBackground" Color="Transparent" />
+                                            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="Transparent" />
+                                            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="Transparent" />
+                                            <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="Transparent" />
+                                            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="Transparent" />
+                                            <StaticResource x:Key="ComboBoxBackgroundPointerOver" ResourceKey="HoverBrush" />
+                                            <StaticResource x:Key="ComboBoxBackgroundPressed" ResourceKey="HoverBrush" />
+                                        </ComboBox.Resources>
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Spacing="7" ToolTipService.ToolTip="{Binding Tooltip}">
+                                                    <TextBlock FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                               Foreground="{StaticResource PrimaryTextBrush}" Text="{Binding Display}" />
+                                                    <TextBlock FontSize="11.5" VerticalAlignment="Center"
+                                                               Foreground="{StaticResource MutedTextBrush}" Text="{Binding ProviderDisplay}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <Grid Grid.Column="1" VerticalAlignment="Center">
+                                        <Button x:Name="SendButton" Width="34" Height="34" Padding="0" Background="{StaticResource AccentGradientBrush}"
+                                                Click="SendButton_Click" CornerRadius="17" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                                Style="{StaticResource AccentFilledButtonStyle}"
+                                                AutomationProperties.Name="Send message" ToolTipService.ToolTip="Send message">
+                                            <FontIcon FontSize="13" Foreground="{StaticResource OnAccentBrush}" Glyph="&#xE724;" />
                                         </Button>
-                                        <Button x:Name="StopButton" Width="44" Height="44" Padding="0" Background="{StaticResource WarmBrush}" BorderThickness="0" Click="StopButton_Click" CornerRadius="22" Visibility="Collapsed" Style="{StaticResource WarmFilledButtonStyle}" ToolTipService.ToolTip="Stop response">
-                                            <FontIcon FontSize="14" Foreground="White" Glyph="&#xE15B;" />
+                                        <Button x:Name="StopButton" Width="34" Height="34" Padding="0" Background="{StaticResource WarmBrush}"
+                                                Click="StopButton_Click" CornerRadius="17" Visibility="Collapsed"
+                                                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                                Style="{StaticResource WarmFilledButtonStyle}"
+                                                AutomationProperties.Name="Stop response" ToolTipService.ToolTip="Stop response">
+                                            <FontIcon FontSize="12" Foreground="White" Glyph="&#xE15B;" />
                                         </Button>
                                     </Grid>
+                                </Grid>
                             </Grid>
                         </Border>
                     </Border>
                 </Grid>
 
                 <!-- SETTINGS PAGE -->
-                <ScrollViewer
-                    x:Name="SettingsGrid"
-                    HorizontalScrollMode="Disabled"
-                    VerticalScrollBarVisibility="Auto"
-                    Visibility="Collapsed"
-                    Background="{StaticResource PageBrush}">
-                    <Grid Padding="36,28,36,40">
-                        <Grid.ChildrenTransitions>
-                            <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="16" />
-                                <RepositionThemeTransition />
-                            </TransitionCollection>
-                        </Grid.ChildrenTransitions>
-                        <Grid HorizontalAlignment="Stretch" MaxWidth="860">
-                            <StackPanel Spacing="16">
-                                <Grid ColumnSpacing="12" Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Width="40" Height="40" CornerRadius="12" Background="{StaticResource AccentSoftBrush}">
-                                        <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE713;" />
-                                    </Border>
-                                    <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                        <TextBlock Style="{StaticResource PageTitleStyle}" Text="Settings" />
-                                        <TextBlock FontSize="12.5" Foreground="{StaticResource SecondaryTextBrush}" Text="Appearance, local data, and app details" />
+                <Border x:Name="SettingsGrid" CornerRadius="13" Background="{StaticResource PageBrush}" Visibility="Collapsed">
+                    <ScrollViewer HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="760" Padding="28,30,28,36" Spacing="6">
+                            <TextBlock Style="{StaticResource PageTitleStyle}" Text="Settings" />
+
+                            <TextBlock Style="{StaticResource GroupLabelStyle}" Text="Appearance" />
+                            <Border Style="{StaticResource SectionCard}">
+                                <StackPanel>
+                                    <StackPanel Padding="18,16,18,10" Spacing="12">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Style="{StaticResource RowTitleStyle}" Text="Accent colour" />
+                                            <TextBlock Style="{StaticResource RowDescriptionStyle}" Text="Tints the whole app, not just the buttons." />
+                                        </StackPanel>
+                                        <VariableSizedWrapGrid x:Name="PalettePicker" Loaded="PalettePicker_Loaded"
+                                                               Orientation="Horizontal" ItemWidth="82" ItemHeight="84" />
                                     </StackPanel>
-                                </Grid>
-
-                                <Border Style="{StaticResource SectionCard}">
-                                    <StackPanel Spacing="14">
-                                        <StackPanel Spacing="4">
-                                            <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" Text="Appearance" />
-                                            <TextBlock FontSize="12.5" LineHeight="18" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Text="Pick an accent color, then choose light or dark to match your workspace. The change is instant." />
+                                    <Rectangle Height="1" Fill="{StaticResource HairlineBrush}" />
+                                    <Grid Padding="18,14" ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource RowTitleStyle}" Text="Theme" />
+                                            <TextBlock Style="{StaticResource RowDescriptionStyle}" Text="Light, dark, or follow Windows." />
                                         </StackPanel>
-
-                                        <!--
-                                            Palette picker — horizontal strip
-                                            of radio cards, a swatch + label
-                                            each. Built directly in code-behind
-                                            (WinUI 3 doesn't ship WrapPanel
-                                            the way WPF does — using a custom
-                                            stack here keeps the markup simple
-                                            and the cards identical).
-                                        -->
-                                        <!-- Wraps into a tidy 4-column grid so every palette is
-                                             visible at once (the old single row clipped the last ones). -->
-                                        <VariableSizedWrapGrid x:Name="PalettePicker"
-                                                               Loaded="PalettePicker_Loaded"
-                                                               Orientation="Horizontal"
-                                                               MaximumRowsOrColumns="4"
-                                                               ItemWidth="166" ItemHeight="58" />
-
-                                        <StackPanel Spacing="8">
-                                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" Text="Theme mode" />
-                                            <ComboBox
-                                                x:Name="ThemeModeCombo"
-                                                Width="240"
-                                                HorizontalAlignment="Left"
-                                                SelectionChanged="ThemeModeCombo_SelectionChanged">
-                                                <ComboBoxItem Content="Light"   Tag="Light" />
-                                                <ComboBoxItem Content="Dark"    Tag="Dark" />
-                                                <ComboBoxItem Content="System (follow Windows)" Tag="System" />
-                                            </ComboBox>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
-
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Style="{StaticResource SectionCard}">
-                                        <StackPanel Spacing="11">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <FontIcon FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" Glyph="&#xE74D;" />
-                                                <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" Text="Local data" />
+                                        <Border Grid.Column="1" Padding="3" CornerRadius="11" Background="{StaticResource SubtleSurfaceBrush}">
+                                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                                <RadioButton x:Name="ThemeLightOption" GroupName="ThemeMode" Tag="Light" Checked="ThemeMode_Checked" Style="{StaticResource SegmentStyle}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                                        <FontIcon FontSize="13" Glyph="&#xE706;" />
+                                                        <TextBlock FontSize="12.5" Text="Light" />
+                                                    </StackPanel>
+                                                </RadioButton>
+                                                <RadioButton x:Name="ThemeDarkOption" GroupName="ThemeMode" Tag="Dark" Checked="ThemeMode_Checked" Style="{StaticResource SegmentStyle}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                                        <FontIcon FontSize="13" Glyph="&#xE708;" />
+                                                        <TextBlock FontSize="12.5" Text="Dark" />
+                                                    </StackPanel>
+                                                </RadioButton>
+                                                <RadioButton x:Name="ThemeSystemOption" GroupName="ThemeMode" Tag="System" Checked="ThemeMode_Checked" Style="{StaticResource SegmentStyle}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                                        <FontIcon FontSize="13" Glyph="&#xE7F4;" />
+                                                        <TextBlock FontSize="12.5" Text="System" />
+                                                    </StackPanel>
+                                                </RadioButton>
                                             </StackPanel>
-                                            <TextBlock FontSize="12.5" LineHeight="18" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Text="Chat history stays on this PC until you clear it." />
-                                            <Button HorizontalAlignment="Left" Background="Transparent" BorderBrush="{StaticResource DangerBrush}" BorderThickness="1" Click="ClearHistoryButton_Click" CornerRadius="8" Foreground="{StaticResource DangerBrush}" Padding="10,6">
-                                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <FontIcon FontSize="14" Glyph="&#xE74D;" />
-                                                    <TextBlock Text="Clear history" />
-                                                </StackPanel>
-                                            </Button>
-                                        </StackPanel>
-                                    </Border>
-
-                                    <Border Grid.Column="1" Style="{StaticResource SectionCard}">
-                                        <StackPanel Spacing="8">
-                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                <Image Width="19" Height="19" Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
-                                                <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" Text="About Vantage" />
-                                            </StackPanel>
-                                            <TextBlock x:Name="AboutVersionText" FontSize="12.5" Foreground="{StaticResource SecondaryTextBrush}" Text="Vantage &#x2014; Local-first AI control panel for Windows." TextWrapping="Wrap" />
-                                            <TextBlock FontSize="12" Foreground="{StaticResource MutedTextBrush}" Text="Windows App SDK 1.8 &#x2022; WinUI 3" />
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
-                </ScrollViewer>
-
-                <!-- PROVIDERS PAGE -->
-                <ScrollViewer
-                    x:Name="ProvidersGrid"
-                    HorizontalScrollMode="Disabled"
-                    VerticalScrollBarVisibility="Auto"
-                    Visibility="Collapsed"
-                    Background="{StaticResource PageBrush}">
-                    <Grid Padding="36,28,36,40">
-                        <Grid.ChildrenTransitions>
-                            <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="16" />
-                                <RepositionThemeTransition />
-                            </TransitionCollection>
-                        </Grid.ChildrenTransitions>
-                        <Grid HorizontalAlignment="Stretch" MaxWidth="860">
-                            <StackPanel Spacing="16">
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                                        <Border Width="40" Height="40" CornerRadius="12" Background="{StaticResource AccentSoftBrush}">
-                                            <FontIcon FontSize="17" Foreground="{StaticResource AccentBrush}" Glyph="&#xE967;" />
                                         </Border>
-                                        <StackPanel Spacing="4" VerticalAlignment="Center">
-                                            <TextBlock Style="{StaticResource PageTitleStyle}" Text="AI Providers" />
-                                            <TextBlock FontSize="12.5" Foreground="{StaticResource SecondaryTextBrush}" Text="Models and endpoints available to Vantage" />
-                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Style="{StaticResource GroupLabelStyle}" Text="Data" />
+                            <Border Style="{StaticResource SectionCard}">
+                                <Grid Padding="18,14" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource RowTitleStyle}" Text="Chat history" />
+                                        <TextBlock Style="{StaticResource RowDescriptionStyle}" Text="Stays on this PC until you clear it." />
                                     </StackPanel>
-                                    <Button
-                                        Grid.Column="1"
-                                        VerticalAlignment="Top"
-                                        Margin="18,2,0,0"
-                                        Background="{StaticResource AccentBrush}"
-                                        BorderThickness="0"
-                                        Click="AddProviderButton_Click"
-                                        CornerRadius="8"
-                                        MinHeight="38"
-                                        Padding="16,0,16,0"
-                                        Style="{StaticResource AccentFilledButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                            <FontIcon FontSize="14" Foreground="White" Glyph="&#xE710;" />
-                                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="White" Text="Add provider" TextLineBounds="Tight" />
-                                        </StackPanel>
+                                    <Button Grid.Column="1" VerticalAlignment="Center" Background="Transparent" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
+                                            Click="ClearHistoryButton_Click" CornerRadius="9" Foreground="{StaticResource DangerBrush}" Padding="12,6">
+                                        <TextBlock FontSize="12.5" Foreground="{StaticResource DangerBrush}" Text="Clear history" />
                                     </Button>
                                 </Grid>
+                            </Border>
 
-                                <StackPanel x:Name="ProvidersList" Spacing="10" />
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
-                </ScrollViewer>
+                            <TextBlock Style="{StaticResource GroupLabelStyle}" Text="About" />
+                            <Border Style="{StaticResource SectionCard}">
+                                <Grid Padding="18,14" ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Image Width="32" Height="32" VerticalAlignment="Center" Source="ms-appx:///Assets/Square44x44Logo.targetsize-44_altform-unplated.png" />
+                                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock x:Name="AboutVersionText" Style="{StaticResource RowTitleStyle}" TextWrapping="Wrap" Text="Vantage" />
+                                        <TextBlock Style="{StaticResource RowDescriptionStyle}" Text="Windows App SDK 1.8 &#x2022; WinUI 3" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- PROVIDERS PAGE -->
+                <Border x:Name="ProvidersGrid" CornerRadius="13" Background="{StaticResource PageBrush}" Visibility="Collapsed">
+                    <ScrollViewer HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="760" Padding="28,30,28,36" Spacing="18">
+                            <Grid ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3" VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource PageTitleStyle}" Text="AI providers" />
+                                    <TextBlock Style="{StaticResource RowDescriptionStyle}" Text="The models and endpoints Vantage can use." />
+                                </StackPanel>
+                                <Button Grid.Column="1" VerticalAlignment="Center" Background="{StaticResource AccentGradientBrush}"
+                                        Click="AddProviderButton_Click" CornerRadius="10" MinHeight="36" Padding="14,0"
+                                        VerticalContentAlignment="Center"
+                                        Style="{StaticResource AccentFilledButtonStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontSize="12" Foreground="{StaticResource OnAccentBrush}" Glyph="&#xE710;" />
+                                        <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource OnAccentBrush}" Text="Add provider" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <StackPanel x:Name="ProvidersList" Spacing="10" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
             </Grid>
-        </Grid>
-
-        <!-- Agent overlay removed — the user wanted zero UI intrusions. The
-             agent now runs invisibly; Escape + composer Stop button + the
-             20-step cap are the only remaining safety surfaces. -->
+        </Border>
     </Grid>
 </Window>

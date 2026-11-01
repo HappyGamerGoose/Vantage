@@ -16,7 +16,7 @@ namespace Vantage.Services;
 
 public static class DialogStyle
 {
-    private static readonly string[] SharedPrefixes = { "TextControl", "ComboBox", "ToggleSwitch" };
+    private static readonly string[] SharedPrefixes = { "TextControl", "ComboBox", "ToggleSwitch", "Button", "AccentButton", "CheckBox" };
 
     public static void Apply(ContentDialog dialog, FrameworkElement appRoot)
     {

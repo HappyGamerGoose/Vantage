@@ -34,6 +34,7 @@ public sealed class ChatMessage : INotifyPropertyChanged
                 OnPropertyChanged(nameof(IsError));
                 OnPropertyChanged(nameof(BubbleBrush));
                 OnPropertyChanged(nameof(BubbleBorderBrush));
+                OnPropertyChanged(nameof(BubblePadding));
                 OnPropertyChanged(nameof(AuthorBrush));
                 OnPropertyChanged(nameof(AuthorDisplay));
                 OnPropertyChanged(nameof(CleanText));
@@ -96,6 +97,21 @@ public sealed class ChatMessage : INotifyPropertyChanged
     public HorizontalAlignment BubbleAlignment => Role.Equals("user", StringComparison.OrdinalIgnoreCase)
         ? HorizontalAlignment.Right
         : HorizontalAlignment.Left;
+
+    // User bubbles keep a tail-side corner; the assistant writes directly on
+    // the canvas with no bubble, except for errors.
+    [JsonIgnore]
+    public CornerRadius BubbleCornerRadius => Role.Equals("user", StringComparison.OrdinalIgnoreCase)
+        ? new CornerRadius(16, 16, 4, 16)
+        : new CornerRadius(14);
+
+    [JsonIgnore]
+    public Thickness BubblePadding => Role.Equals("user", StringComparison.OrdinalIgnoreCase) || IsError
+        ? new Thickness(14, 9, 14, 10)
+        : new Thickness(0, 3, 0, 0);
+
+    [JsonIgnore]
+    public double BubbleMaxWidth => Role.Equals("user", StringComparison.OrdinalIgnoreCase) ? 600 : double.PositiveInfinity;
 
     [JsonIgnore]
     public Visibility AvatarVisibility => Role.Equals("user", StringComparison.OrdinalIgnoreCase)

@@ -59,6 +59,37 @@ public sealed partial class MainWindow
     // timer instead of stacking feedback windows.
     private static readonly Dictionary<Button, DispatcherQueueTimer> s_copyFeedbackTimers = new();
 
+    private void MessageRow_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => SetCopyActionVisible(sender, true);
+
+    private void MessageRow_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => SetCopyActionVisible(sender, false);
+
+    private void CopyAction_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 1;
+    }
+
+    private void CopyAction_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 0;
+    }
+
+    private static void SetCopyActionVisible(object row, bool visible)
+    {
+        if (row is DependencyObject root && FindCopyAction(root) is { } button)
+            button.Opacity = visible ? 1 : 0;
+    }
+
+    private static Button? FindCopyAction(DependencyObject parent)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is Button { Name: "CopyAction" } button) return button;
+            if (FindCopyAction(child) is { } nested) return nested;
+        }
+        return null;
+    }
+
     private void CopyMessageButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button) return;

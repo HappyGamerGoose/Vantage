@@ -47,45 +47,45 @@ public static class ThemeManager
         if (!dark)
         {
             return new ThemeNeutralSet(
-                Page            : C(0.60, 0.975),
-                Surface         : C(0.40, 0.995, "FA"),
+                Page            : C(0.30, 0.970),
+                Surface         : C(0.25, 0.990),
                 SurfaceElevated : "#FFFFFFFF",
-                SubtleSurface   : C(0.55, 0.950),
-                Stroke          : C(0.45, 0.20, "24"),
-                SoftStroke      : C(0.45, 0.20, "16"),
-                Hairline        : C(0.45, 0.20, "0E"),
-                PrimaryText     : C(0.40, 0.12),
-                SecondaryText   : C(0.20, 0.36),
-                MutedText       : C(0.15, 0.49),
-                PaneStart       : C(0.65, 0.955),
-                PaneEnd         : C(0.65, 0.935),
+                SubtleSurface   : C(0.30, 0.945),
+                Stroke          : C(0.30, 0.20, "20"),
+                SoftStroke      : C(0.30, 0.20, "14"),
+                Hairline        : C(0.30, 0.20, "0C"),
+                PrimaryText     : C(0.28, 0.11),
+                SecondaryText   : C(0.12, 0.35),
+                MutedText       : C(0.10, 0.48),
+                PaneStart       : C(0.35, 0.925, "C8"),
+                PaneEnd         : C(0.35, 0.925),
                 Composer        : "#FFFFFFFF",
-                ComposerBorder  : C(0.45, 0.87),
-                Hover           : C(0.60, 0.50, "14"),
-                Background      : C(0.60, 0.975),
-                Rail            : C(0.65, 0.940),
-                ChatCanvas      : C(0.55, 0.985));
+                ComposerBorder  : C(0.25, 0.85),
+                Hover           : C(0.40, 0.40, "12"),
+                Background      : C(0.30, 0.970),
+                Rail            : C(0.35, 0.925),
+                ChatCanvas      : C(0.25, 0.992));
         }
 
         return new ThemeNeutralSet(
-            Page            : C(0.42, 0.095, "F2"),
-            Surface         : C(0.36, 0.140, "F5"),
-            SurfaceElevated : C(0.34, 0.180),
-            SubtleSurface   : C(0.32, 0.205),
-            Stroke          : C(0.60, 0.88, "38"),
-            SoftStroke      : C(0.60, 0.88, "1E"),
-            Hairline        : C(0.60, 0.88, "12"),
-            PrimaryText     : C(0.30, 0.94),
-            SecondaryText   : C(0.18, 0.74),
-            MutedText       : C(0.14, 0.58),
-            PaneStart       : C(0.44, 0.120, "F2"),
-            PaneEnd         : C(0.40, 0.145),
-            Composer        : C(0.34, 0.180),
-            ComposerBorder  : C(0.30, 0.290),
-            Hover           : C(0.80, 0.80, "1C"),
-            Background      : C(0.42, 0.095),
-            Rail            : C(0.44, 0.110, "F2"),
-            ChatCanvas      : C(0.40, 0.085, "F0"));
+            Page            : C(0.14, 0.105),
+            Surface         : C(0.13, 0.130),
+            SurfaceElevated : C(0.13, 0.150),
+            SubtleSurface   : C(0.13, 0.185),
+            Stroke          : C(0.20, 0.90, "22"),
+            SoftStroke      : C(0.20, 0.90, "16"),
+            Hairline        : C(0.20, 0.90, "0E"),
+            PrimaryText     : C(0.10, 0.94),
+            SecondaryText   : C(0.10, 0.73),
+            MutedText       : C(0.08, 0.57),
+            PaneStart       : C(0.16, 0.075, "D8"),
+            PaneEnd         : C(0.16, 0.075),
+            Composer        : C(0.13, 0.155),
+            ComposerBorder  : C(0.12, 0.25),
+            Hover           : C(0.20, 0.85, "14"),
+            Background      : C(0.14, 0.105),
+            Rail            : C(0.16, 0.075),
+            ChatCanvas      : C(0.14, 0.110));
     }
 
     /// <summary>HSL (h in degrees, s/l in 0..1) to the "#AARRGGBB" form ParseColor reads.</summary>
@@ -270,7 +270,41 @@ public static class ThemeManager
         Queue("AccentPressedBrush",     accent.AccentPressed);
         Queue("AccentSoftBrush",        accent.AccentSoft);
         Queue("PaneEdgeBrush",          neutral.SoftStroke);
-        Queue("PanelTintBrush",         darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft);
+        Queue("PanelTintBrush",         WithAlpha(accent.Accent, darkMode ? "38" : "26"));
+
+        // Dark accents are pale, so what sits on them has to be dark.
+        var onAccent = darkMode ? "#FF11131A" : "#FFFFFFFF";
+        Queue("OnAccentBrush",          onAccent);
+
+        // Stock controls: without these, hover states and dialog buttons
+        // fall back to WinUI's system greys and system accent.
+        Queue("ButtonBackground",                 neutral.SubtleSurface);
+        Queue("ButtonBackgroundPointerOver",      neutral.SoftStroke);
+        Queue("ButtonBackgroundPressed",          neutral.Stroke);
+        Queue("ButtonForeground",                 neutral.PrimaryText);
+        Queue("ButtonForegroundPointerOver",      neutral.PrimaryText);
+        Queue("ButtonForegroundPressed",          neutral.PrimaryText);
+        Queue("ButtonBorderBrush",                neutral.SoftStroke);
+        Queue("ButtonBorderBrushPointerOver",     neutral.Stroke);
+        Queue("ButtonBorderBrushPressed",         neutral.Stroke);
+        Queue("AccentButtonBackground",           accent.Accent);
+        Queue("AccentButtonBackgroundPointerOver", accent.AccentHover);
+        Queue("AccentButtonBackgroundPressed",    accent.AccentPressed);
+        Queue("AccentButtonForeground",           onAccent);
+        Queue("AccentButtonForegroundPointerOver", onAccent);
+        Queue("AccentButtonForegroundPressed",    onAccent);
+        Queue("CheckBoxCheckBackgroundFillChecked",            accent.Accent);
+        Queue("CheckBoxCheckBackgroundFillCheckedPointerOver", accent.AccentHover);
+        Queue("CheckBoxCheckBackgroundFillCheckedPressed",     accent.AccentPressed);
+        Queue("CheckBoxCheckBackgroundStrokeChecked",            accent.Accent);
+        Queue("CheckBoxCheckBackgroundStrokeCheckedPointerOver", accent.AccentHover);
+        Queue("CheckBoxCheckBackgroundStrokeCheckedPressed",     accent.AccentPressed);
+        Queue("CheckBoxCheckGlyphForegroundChecked",            onAccent);
+        Queue("CheckBoxCheckGlyphForegroundCheckedPointerOver", onAccent);
+        Queue("CheckBoxCheckGlyphForegroundCheckedPressed",     onAccent);
+
+        SetGradientStops(root, "AccentGradientBrush", accent.AccentHover, accent.Accent);
+        SetGradientStops(root, "HeroGlowBrush", WithAlpha(accent.Accent, darkMode ? "2E" : "26"), WithAlpha(accent.Accent, "00"));
 
         // Warm / Success / Danger
         // "Warm" colours the Stop button: a clear coral-red in both modes so
@@ -294,13 +328,13 @@ public static class ThemeManager
         // Message bubbles & avatars
         var bubbleUser          = darkMode ? WithAlpha(accent.Accent, "26") : accent.AccentSoft;
         var bubbleAssistant     = "#00FFFFFF";
-        var bubbleError         = darkMode ? "#3F1E24" : "#FFECEE";
-        var bubbleBorderUser    = WithAlpha(accent.Accent, darkMode ? "55" : "38");
+        var bubbleError         = darkMode ? "#33191D" : "#FFF0F1";
+        var bubbleBorderUser    = WithAlpha(accent.Accent, darkMode ? "2A" : "1C");
         var bubbleBorderAssist  = "#00000000";
-        var bubbleBorderError   = darkMode ? "#80FF8A90" : "#F2B4B8";
+        var bubbleBorderError   = darkMode ? "#40FF8A90" : "#F6CDD0";
         var avatarUser          = neutral.SubtleSurface;
         var avatarAssistant     = darkMode ? WithAlpha(accent.Accent, "38") : accent.AccentSoft;
-        var avatarError         = darkMode ? "#3F1E24" : "#FFECEE";
+        var avatarError         = darkMode ? "#33191D" : "#FFF0F1";
         var authorText          = darkMode
                                     ? WithAlpha(accent.Accent, "FF")
                                     : WithAlpha(accent.AccentPressed, "FF");
@@ -317,6 +351,21 @@ public static class ThemeManager
         Queue("AuthorErrorBrush",           errorText);
 
         ApplyBrushSwaps(root, targets, animate);
+    }
+
+    private static void SetGradientStops(FrameworkElement root, string key, string first, string last)
+    {
+        if (!root.Resources.TryGetValue(key, out var value)) return;
+        // RadialGradientBrush is a composition brush, not a GradientBrush.
+        IList<GradientStop>? stops = value switch
+        {
+            GradientBrush gradient => gradient.GradientStops,
+            RadialGradientBrush radial => radial.GradientStops,
+            _ => null,
+        };
+        if (stops is null || stops.Count < 2) return;
+        if (ParseColor(first) is { } a) stops[0].Color = a;
+        if (ParseColor(last) is { } b) stops[stops.Count - 1].Color = b;
     }
 
     private static void ApplyBrushSwaps(FrameworkElement root, List<(string Key, string ColorHex)> targets, bool animate)
