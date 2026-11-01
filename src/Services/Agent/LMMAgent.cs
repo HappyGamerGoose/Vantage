@@ -193,12 +193,29 @@ public sealed class LmmAgent
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            // Each attempt gets its own copy: JSON nodes are not safe to share
+            // between two requests in flight.
+            var attempts = 0;
             var response = await HedgedRequest.RunAsync(
-                token => _engine.GenerateAsync(req, token),
+                token =>
+                {
+                    if (Interlocked.Increment(ref attempts) == 1) return _engine.GenerateAsync(req, token);
+                    var copy = new LmmRequest
+                    {
+                        Model = req.Model,
+                        Messages = Messages.Select(m => (JsonObject)m.DeepClone()!).ToList(),
+                        MaxTokens = req.MaxTokens,
+                        Temperature = req.Temperature,
+                        UseThinking = req.UseThinking,
+                    };
+                    return _engine.GenerateAsync(copy, token);
+                },
                 LlmLatency.HedgeDelay(latencyKey),
                 ct,
                 () => CommonUtils.LogDiagnostic("llm-hedged-request",
-                    $"model={_engine.Model} no answer after {watch.ElapsedMilliseconds}ms; sent a second request"));
+                    $"model={_engine.Model} no answer after {watch.ElapsedMilliseconds}ms; sent a second request"),
+                outcome => CommonUtils.LogDiagnostic("llm-hedge-result",
+                    $"model={_engine.Model} after {watch.ElapsedMilliseconds}ms: {outcome}"));
             LlmLatency.Record(latencyKey, watch.ElapsedMilliseconds);
             LastInputTokens = response.InputTokens;
             LastOutputTokens = response.OutputTokens;

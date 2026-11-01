@@ -142,11 +142,19 @@ internal static class ScreenSampler
         ScreenFrame? baseline,
         int noChangeBudgetMs,
         Func<(int X, int Y)?> pointer,
+        CancellationToken ct) =>
+        await SettleAsync(baseline, new SettlePlan(noChangeBudgetMs), pointer, null, ct);
+
+    public static async Task<ScreenFrame?> SettleAsync(
+        ScreenFrame? baseline,
+        SettlePlan plan,
+        Func<(int X, int Y)?> pointer,
+        string? titleBefore,
         CancellationToken ct)
     {
         if (baseline is null) return null;
 
-        var tracker = new SettleTracker(noChangeBudgetMs);
+        var tracker = new SettleTracker(plan);
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var previous = baseline;
         var latest = baseline;
@@ -161,7 +169,9 @@ internal static class ScreenSampler
             var fromPrevious = Compare(previous, frame);
             latest = frame;
             previous = frame;
-            if (tracker.IsDone(fromBase, fromPrevious, watch.ElapsedMilliseconds)) return latest;
+            var titleChanged = plan.AwaitTitleMs > 0 && titleBefore is not null
+                && !string.Equals(ForegroundWindowProbe.Read().Title, titleBefore, StringComparison.Ordinal);
+            if (tracker.IsDone(fromBase, fromPrevious, watch.ElapsedMilliseconds, titleChanged)) return latest;
         }
     }
 
@@ -196,6 +206,98 @@ internal static class ScreenSampler
     [DllImport("gdi32.dll")] private static extern bool StretchBlt(IntPtr dest, int dx, int dy, int dw, int dh, IntPtr src, int sx, int sy, int sw, int sh, uint rop);
 }
 
+internal readonly record struct ForegroundWindowInfo(string Title, string ProcessName)
+{
+    public bool IsBrowser => BrowserPolicy.IsBrowserProcess(ProcessName);
+}
+
+internal static class ForegroundWindowProbe
+{
+    public static ForegroundWindowInfo Read()
+    {
+        try
+        {
+            var handle = GetForegroundWindow();
+            if (handle == IntPtr.Zero) return default;
+            var buffer = new System.Text.StringBuilder(512);
+            GetWindowText(handle, buffer, buffer.Capacity);
+            GetWindowThreadProcessId(handle, out var pid);
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            return new ForegroundWindowInfo(buffer.ToString(), process.ProcessName);
+        }
+        catch
+        {
+            return default;
+        }
+    }
+
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int count);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+}
+
+internal static class BrowserPolicy
+{
+    private static readonly string[] BrowserProcesses = { "msedge", "chrome", "firefox", "brave", "opera", "vivaldi" };
+    private static readonly string[] CurrentTabPhrases = { "this tab", "current tab", "same tab", "existing tab", "open tab" };
+
+    public static bool IsBrowserProcess(string? process) =>
+        process is not null && BrowserProcesses.Contains(process, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The user's open tabs are their work, unless the task is about one of them.</summary>
+    public static bool GoalAllowsCurrentTab(string? goal) =>
+        goal is not null && CurrentTabPhrases.Any(phrase => goal.Contains(phrase, StringComparison.OrdinalIgnoreCase));
+
+    public static bool IsBlankTab(string? windowTitle) =>
+        windowTitle is not null
+        && (windowTitle.StartsWith("new tab", StringComparison.OrdinalIgnoreCase)
+            || windowTitle.StartsWith("about:blank", StringComparison.OrdinalIgnoreCase));
+
+    public static bool IsAddressBar(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return false;
+        var text = UiControlGrounding.Normalize(target);
+        return text.Contains("address and search", StringComparison.Ordinal)
+            || text.Contains("address bar", StringComparison.Ordinal)
+            || text.Contains("url bar", StringComparison.Ordinal)
+            || text.Contains("location bar", StringComparison.Ordinal)
+            || text.Contains("omnibox", StringComparison.Ordinal);
+    }
+
+    public static bool IsAddressBarShortcut(string? chord)
+    {
+        var parts = (chord ?? string.Empty).ToLowerInvariant()
+            .Replace(" ", string.Empty)
+            .Replace("control", "ctrl")
+            .Split('+', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length switch
+        {
+            1 => parts[0] == "f6",
+            2 => (parts.Contains("ctrl") && parts.Contains("l")) || (parts.Contains("alt") && parts.Contains("d")),
+            _ => false,
+        };
+    }
+
+    public static bool IsNewTabShortcut(string? chord)
+    {
+        var parts = (chord ?? string.Empty).ToLowerInvariant()
+            .Replace(" ", string.Empty)
+            .Replace("control", "ctrl")
+            .Split('+', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2 && parts.Contains("ctrl") && parts.Contains("t");
+    }
+}
+
+internal static class DonePolicy
+{
+    /// <summary>
+    /// The model answers from a screenshot taken before its call, which can be
+    /// many seconds old. If the screen has moved on since then, the `done` is
+    /// about a screen that no longer exists.
+    /// </summary>
+    public static bool ScreenMovedSinceLook(FrameDelta sinceScreenshot) => sinceScreenshot.Global >= 0.01;
+}
+
 /// <summary>
 /// Decides when an action's effect has finished. Nothing changed: give the UI
 /// a budget to react, which only a true no-op pays in full. Something changed:
@@ -205,32 +307,95 @@ internal static class ScreenSampler
 internal sealed class SettleTracker
 {
     public const int PollIntervalMs = 40;
-    private const int QuietMs = 220;
-    private const int MaxAfterChangeMs = 2500;
 
-    private readonly int _noChangeBudgetMs;
+    private readonly SettlePlan _plan;
     private long _lastMotionMs;
+    private bool _titleChanged;
 
-    public SettleTracker(int noChangeBudgetMs) => _noChangeBudgetMs = noChangeBudgetMs;
+    public SettleTracker(int noChangeBudgetMs) : this(new SettlePlan(noChangeBudgetMs))
+    {
+    }
+
+    public SettleTracker(SettlePlan plan) => _plan = plan;
 
     public bool Changed { get; private set; }
 
-    public bool IsDone(FrameDelta fromBaseline, FrameDelta fromPrevious, long elapsedMs)
+    public bool IsDone(FrameDelta fromBaseline, FrameDelta fromPrevious, long elapsedMs, bool titleChanged = false)
     {
         if (!Changed && fromBaseline.IsChange)
         {
             Changed = true;
             _lastMotionMs = elapsedMs;
         }
-        if (!Changed) return elapsedMs >= _noChangeBudgetMs;
-
+        if (titleChanged && !_titleChanged)
+        {
+            _titleChanged = true;
+            Changed = true;
+            _lastMotionMs = elapsedMs;
+        }
         if (fromPrevious.IsMotion) _lastMotionMs = elapsedMs;
-        return elapsedMs - _lastMotionMs >= QuietMs || elapsedMs >= MaxAfterChangeMs;
+
+        // A page that is still fetching looks perfectly still: the typed text
+        // has been drawn and nothing else moves yet. Until the title changes,
+        // stillness proves nothing.
+        if (_plan.AwaitTitleMs > 0 && !_titleChanged && elapsedMs < _plan.AwaitTitleMs) return false;
+
+        if (!Changed) return elapsedMs >= _plan.NoChangeBudgetMs;
+        return elapsedMs - _lastMotionMs >= _plan.QuietMs || elapsedMs >= _plan.MaxMs;
     }
 }
 
+/// <summary>How to decide that an action's effect has finished.</summary>
+internal sealed record SettlePlan(int NoChangeBudgetMs, int QuietMs = 220, int MaxMs = 2500, int AwaitTitleMs = 0);
+
 internal static class SettlePolicy
 {
+    private const int PageQuietMs = 600;
+    private const int NavigationMaxMs = 4000;
+    private const int AwaitTitleMs = 2500;
+
+    public static SettlePlan Plan(AgentAction action, bool browserInFront)
+    {
+        var budget = NoChangeBudgetMs(action);
+        if (budget == 0) return new SettlePlan(0);
+        if (browserInFront && SubmitsSomething(action))
+            return new SettlePlan(Math.Max(budget, AwaitTitleMs), PageQuietMs, NavigationMaxMs, AwaitTitleMs);
+        if (action.Action.Trim().ToLowerInvariant() == "launch_app" && OpensUrl(action))
+            return new SettlePlan(Math.Max(budget, AwaitTitleMs), PageQuietMs, NavigationMaxMs, AwaitTitleMs);
+        // A link click draws its hover at once and only then starts loading.
+        if (browserInFront && action.Action.Trim().ToLowerInvariant() is "click" or "click_xy" or "click_element")
+            return new SettlePlan(budget, PageQuietMs);
+        return new SettlePlan(budget);
+    }
+
+    internal static bool OpensUrl(AgentAction action)
+    {
+        var target = action.GetString("executable")?.TrimStart() ?? string.Empty;
+        return target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>True when the action ends by pressing Enter, which is what starts a page load.</summary>
+    internal static bool SubmitsSomething(AgentAction action)
+    {
+        switch (action.Action.Trim().ToLowerInvariant())
+        {
+            case "batch":
+                return action.GetActionList("steps").Any(SubmitsSomething);
+            case "type":
+                return action.GetBool("enter", false);
+            case "press_key" or "press_window_key":
+                return IsEnter(action.GetString("combo"));
+            case "key":
+                return action.GetStringList("keys") is { Count: 1 } keys && IsEnter(keys[0]);
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsEnter(string? key) =>
+        key?.Trim().ToLowerInvariant() is "enter" or "return";
+
     /// <summary>
     /// How long to wait for a first visible reaction, by action. Zero means
     /// the action cannot change the screen, so no frames are taken at all.

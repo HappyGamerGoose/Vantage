@@ -11,6 +11,9 @@ using System.Text.Json.Nodes;
 using Vantage.Services;
 using Vantage.Services.Agent;
 
+// Tests talk to mock servers, whose learned settings must not reach the real file.
+LlmCapabilities.StorePath = null;
+
 if (args.Contains("--input-self-test", StringComparer.OrdinalIgnoreCase))
 {
     var valid = WindowsAppManager.ValidateNativeInputLayout();
@@ -571,9 +574,81 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
         && !systemPrompt.Contains("Wait at least 3 seconds", StringComparison.Ordinal)
         && !systemPrompt.Contains("terminate with `done`", StringComparison.Ordinal);
 
-    var valid = noOpOk && loadsOk && spinnerOk && thresholdOk && policyOk && compareOk && liveOk && hedgeOk && parameterOk && worldOk && promptOk;
+    // Page loads, replaying the failed run: typing + Enter draws at once and then
+    // sits still while the page fetches. Stillness alone must not end the wait.
+    var submit = Parse("{\"action\":\"type\",\"description\":\"Address and search bar\",\"text\":\"youtube.com\",\"enter\":true}");
+    var plan = SettlePolicy.Plan(submit, browserInFront: true);
+    var waitsForPage = new SettleTracker(plan);
+    var pageOk = !waitsForPage.IsDone(change, change, 40)
+        && !waitsForPage.IsDone(change, still, 400)
+        && !waitsForPage.IsDone(change, still, 1200)
+        && !waitsForPage.IsDone(change, change, 1500, titleChanged: true)
+        && !waitsForPage.IsDone(change, still, 1800, titleChanged: true)
+        && waitsForPage.IsDone(change, still, 2120, titleChanged: true);
+    var neverLoads = new SettleTracker(plan);
+    var capOk = !neverLoads.IsDone(change, change, 40) && !neverLoads.IsDone(change, still, 2400) && neverLoads.IsDone(change, still, 2500);
+    var videoPage = new SettleTracker(plan);
+    var videoOk = !videoPage.IsDone(change, change, 3000, titleChanged: true) && videoPage.IsDone(change, change, 4000, titleChanged: true);
+    var outsideBrowser = SettlePolicy.Plan(submit, browserInFront: false);
+    var planOk = plan.AwaitTitleMs > 0 && outsideBrowser.AwaitTitleMs == 0
+        && SettlePolicy.Plan(Parse("{\"action\":\"press_key\",\"combo\":\"Enter\"}"), true).AwaitTitleMs > 0
+        && SettlePolicy.Plan(Parse("{\"action\":\"type\",\"text\":\"hi\"}"), true).AwaitTitleMs == 0
+        && SettlePolicy.Plan(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"]},{\"action\":\"type\",\"text\":\"a\",\"enter\":true}]}"), true).AwaitTitleMs > 0
+        && SettlePolicy.Plan(Parse("{\"action\":\"launch_app\",\"executable\":\"https://example.com\"}"), false).AwaitTitleMs > 0
+        && SettlePolicy.Plan(Parse("{\"action\":\"click\",\"control\":3}"), true).QuietMs > SettlePolicy.Plan(Parse("{\"action\":\"click\",\"control\":3}"), false).QuietMs;
+
+    // A done is held back only if the screen really moved after the look.
+    var doneOk = DonePolicy.ScreenMovedSinceLook(new FrameDelta(0.3, 0)) && !DonePolicy.ScreenMovedSinceLook(new FrameDelta(0.001, 0.5));
+
+    // Tabs: address bar use opens a new tab unless the task is about the open one.
+    var tabOk = BrowserPolicy.IsBrowserProcess("msedge") && !BrowserPolicy.IsBrowserProcess("notepad")
+        && BrowserPolicy.IsAddressBar("Address and search bar") && BrowserPolicy.IsAddressBar("the address bar at the top of the browser")
+        && !BrowserPolicy.IsAddressBar("the Search box") && !BrowserPolicy.IsAddressBar("the shipping address field")
+        && BrowserPolicy.GoalAllowsCurrentTab("Reload this tab") && !BrowserPolicy.GoalAllowsCurrentTab("Search for toxic rock gaming on youtube using Microsoft Edge.")
+        && BrowserPolicy.IsBlankTab("New tab and 4 more pages - Personal - Microsoft Edge") && !BrowserPolicy.IsBlankTab("India - DeepSeek and 1 more page")
+        && BrowserPolicy.IsAddressBarShortcut("ctrl+l") && BrowserPolicy.IsAddressBarShortcut("Alt+D") && BrowserPolicy.IsAddressBarShortcut("F6") && !BrowserPolicy.IsAddressBarShortcut("ctrl+a")
+        && BrowserPolicy.IsNewTabShortcut("Ctrl + T") && !BrowserPolicy.IsNewTabShortcut("ctrl+shift+t");
+    var combobox = UiControlGrounding.Match("Search combobox at top-center of YouTube page", new List<UiControl>
+    {
+        new("Search", "combobox", true, false, 500, 100, 400, 40),
+        new("Search", "button", true, false, 900, 100, 60, 40),
+    });
+    var comboOk = combobox?.Role == "combobox";
+
+    // Learned settings survive a restart, and a damaged file is harmless.
+    var storeDir = Path.Combine(Path.GetTempPath(), "vantage-capabilities-" + Guid.NewGuid().ToString("N"));
+    bool storeOk;
+    try
+    {
+        LlmCapabilities.StorePath = Path.Combine(storeDir, "llm-capabilities.json");
+        var saved = new LlmCapabilities();
+        saved.SuppressThinking["https://x|m"] = true;
+        saved.UseMaxCompletionTokens.Add("https://y|n");
+        saved.Save();
+        var restored = LlmCapabilities.Load();
+        File.WriteAllText(LlmCapabilities.StorePath, "{ not json");
+        storeOk = restored.SuppressThinking.TryGetValue("https://x|m", out var thinking) && thinking
+            && restored.UseMaxCompletionTokens.Contains("https://y|n")
+            && LlmCapabilities.Load().SuppressThinking.Count == 0;
+    }
+    finally
+    {
+        LlmCapabilities.StorePath = null;
+        try { Directory.Delete(storeDir, recursive: true); } catch { }
+    }
+
+    var hedgeOutcome = "";
+    var reported = await HedgedRequest.RunAsync(async token =>
+    {
+        await Task.Delay(Volatile.Read(ref hedgeOutcome) == "" ? 60 : 60, token);
+        return "x";
+    }, TimeSpan.FromMilliseconds(5), CancellationToken.None, null, outcome => hedgeOutcome = outcome);
+    var reportOk = reported == "x" && hedgeOutcome.Contains("answered first", StringComparison.Ordinal);
+
+    var valid = noOpOk && loadsOk && spinnerOk && thresholdOk && policyOk && compareOk && liveOk && hedgeOk && parameterOk && worldOk && promptOk
+        && pageOk && capOk && videoOk && planOk && doneOk && tabOk && comboOk && storeOk && reportOk;
     Console.WriteLine($"AgentSpeedValid={valid} NoOp={noOpOk} Loads={loadsOk} Spinner={spinnerOk} Thresholds={thresholdOk} Policy={policyOk} Compare={compareOk} LiveCapture={liveOk} " +
-                      $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk}");
+                      $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk} PageLoad={pageOk} LoadCap={capOk} VideoCap={videoOk} Plans={planOk} DoneMoved={doneOk} Tabs={tabOk} Combobox={comboOk} Remembered={storeOk} HedgeReported={reportOk}");
     Console.WriteLine($"Measured: capture={captureMs}ms per frame at {live?.Width}x{live?.Height}, compare={compareMs}ms, world state first turn={first.Length} chars, later={later.Length} chars, system prompt={systemPrompt.Length} chars");
     Environment.ExitCode = valid ? 0 : 1;
     return;

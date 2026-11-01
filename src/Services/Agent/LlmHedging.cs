@@ -58,6 +58,52 @@ internal static class LlmLatency
         TimeSpan.FromMilliseconds(Math.Clamp(medianMs * 3, 6_000, 25_000));
 }
 
+/// <summary>
+/// What was learned about each model, kept across restarts: otherwise the first
+/// call of every session rediscovers it, which on a reasoning model means one
+/// call of 30 seconds or more with thinking still switched on.
+/// </summary>
+internal sealed class LlmCapabilities
+{
+    public Dictionary<string, bool> SuppressThinking { get; set; } = new();
+    public List<string> UseMaxCompletionTokens { get; set; } = new();
+    public List<string> OmitTemperature { get; set; } = new();
+
+    /// <summary>Null turns saving off, for tests.</summary>
+    public static string? StorePath { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Vantage", "llm-capabilities.json");
+
+    public static LlmCapabilities Load()
+    {
+        try
+        {
+            if (StorePath is { } path && File.Exists(path))
+                return System.Text.Json.JsonSerializer.Deserialize<LlmCapabilities>(File.ReadAllText(path)) ?? new();
+        }
+        catch (Exception ex)
+        {
+            CommonUtils.LogDiagnostic("llm-capabilities-load-failed", ex.Message);
+        }
+        return new();
+    }
+
+    public void Save()
+    {
+        try
+        {
+            if (StorePath is not { } path) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(this));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            CommonUtils.LogDiagnostic("llm-capabilities-save-failed", ex.Message);
+        }
+    }
+}
+
 internal static class HedgedRequest
 {
     /// <summary>
@@ -70,7 +116,8 @@ internal static class HedgedRequest
         Func<CancellationToken, Task<T>> send,
         TimeSpan? delay,
         CancellationToken ct,
-        Action? onHedged = null)
+        Action? onHedged = null,
+        Action<string>? onHedgeSettled = null)
     {
         if (delay is null) return await send(ct);
 
@@ -94,6 +141,7 @@ internal static class HedgedRequest
         var other = winner == first ? second : first;
         if (winner.IsCompletedSuccessfully)
         {
+            onHedgeSettled?.Invoke(winner == second ? "second request answered first" : "original request answered first");
             (winner == first ? secondCts : firstCts).Cancel();
             Observe(other);
             return await winner;
@@ -101,6 +149,7 @@ internal static class HedgedRequest
 
         // The quicker attempt failed; the slower one may still answer.
         ct.ThrowIfCancellationRequested();
+        onHedgeSettled?.Invoke($"{(winner == second ? "second" : "original")} request failed: {winner.Exception?.GetBaseException().Message}");
         try
         {
             return await other;

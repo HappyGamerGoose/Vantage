@@ -88,6 +88,7 @@ public sealed class Worker
     private string _lastObservationKey = "";
     private string _lastTargetKey = "";
     private int _sameTargetCount;
+    private bool _doneRechecked;
 
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
@@ -133,6 +134,7 @@ public sealed class Worker
     {
         _taskContext.BeginTask(instruction);
         _generator.ActiveTaskGoal = instruction;
+        _aci.SetTaskGoal(instruction);
     }
 
     /// <summary>
@@ -166,6 +168,7 @@ public sealed class Worker
         }
 
         var captureSw = Stopwatch.StartNew();
+        var frameAtLook = await Task.Run(ScreenSampler.Capture, ct);
         var screenshotBytes = WindowsAutomationService.CaptureScreenFastLogical(maxLongestSide: VisionMaxLongestSide, quality: 88);
         _aci.AssignScreenshot(screenshotBytes);
         var b64 = Convert.ToBase64String(screenshotBytes);
@@ -453,6 +456,31 @@ public sealed class Worker
         }
         _parseFailStreak = 0;
 
+        // Asked once per finish: a screen that keeps moving, such as a playing
+        // video, must not be able to hold the run open forever.
+        if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_doneRechecked && frameAtLook is not null
+                && await Task.Run(ScreenSampler.Capture, ct) is { } frameNow
+                && DonePolicy.ScreenMovedSinceLook(ScreenSampler.Compare(frameAtLook, frameNow)))
+            {
+                _doneRechecked = true;
+                const string recheck = "The screen changed after the screenshot your `done` was based on. Check this newer screenshot and send `done` again only if it shows the result.";
+                _verificationFeedback.Enqueue(recheck);
+                while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
+                _lastActionOutcome = "Success: done held back for a fresh look";
+                _taskContext.RecordSystemEvent(recheck);
+                _turnCount++;
+                FlushHistory();
+                CommonUtils.LogDiagnostic("worker-done-rechecked", $"turn={_turnCount}");
+                return new ActionResult(ActionOutcome.Success, recheck);
+            }
+        }
+        else
+        {
+            _doneRechecked = false;
+        }
+
         if (CheckObservationLoop(action) is { } observationLoopResult)
         {
             _lastActionOutcome = $"{observationLoopResult.Outcome}: {observationLoopResult.Description}";
@@ -536,9 +564,10 @@ public sealed class Worker
         // Every action that can change the screen is followed by a settle, so
         // the next screenshot never shows a half-finished transition. Whether
         // the outcome is also judged is a separate decision below.
-        var settleBudgetMs = actionWasSanitized ? 0 : SettlePolicy.NoChangeBudgetMs(action);
+        var foregroundBefore = ForegroundWindowProbe.Read();
+        var settlePlan = actionWasSanitized ? new SettlePlan(0) : SettlePolicy.Plan(action, foregroundBefore.IsBrowser);
         if (!skipVerification) preSnapshot = WorldSnapshot.Capture();
-        if (settleBudgetMs > 0) preFrame = await Task.Run(ScreenSampler.Capture, ct);
+        if (settlePlan.NoChangeBudgetMs > 0) preFrame = await Task.Run(ScreenSampler.Capture, ct);
 
         var executeSw = Stopwatch.StartNew();
         var result = await _aci.ExecuteAsync(action, ct);
@@ -569,7 +598,7 @@ public sealed class Worker
         ScreenFrame? postFrame = null;
         if (preFrame is not null && !outcomeFailed)
         {
-            postFrame = await ScreenSampler.SettleAsync(preFrame, settleBudgetMs, CursorPosition, ct);
+            postFrame = await ScreenSampler.SettleAsync(preFrame, settlePlan, CursorPosition, foregroundBefore.Title, ct);
         }
         var postSnapshot = needVerify ? WorldSnapshot.Capture() : null;
         var worldDiff = needVerify

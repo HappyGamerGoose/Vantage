@@ -228,7 +228,9 @@ public sealed class OpenAICompatEngine : LMMEngine
     /// the grounding call's can be consumed entirely, leaving `content` null.
     /// true = send the flag, false = provider rejected it, missing = unknown.
     /// </summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SuppressThinking = new();
+    private static readonly LlmCapabilities Capabilities = LlmCapabilities.Load();
+    private static readonly object CapabilitiesGate = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SuppressThinking = new(Capabilities.SuppressThinking);
 
     private const int ReasoningRetryMaxTokensCeiling = 4096;
 
@@ -236,19 +238,34 @@ public sealed class OpenAICompatEngine : LMMEngine
 
     // Newer OpenAI-style models reject `max_tokens` and fixed temperatures.
     // Learned once per model, so later calls don't pay for the failed request.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UseMaxCompletionTokens = new();
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> OmitTemperature = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UseMaxCompletionTokens =
+        new(Capabilities.UseMaxCompletionTokens.Select(key => new KeyValuePair<string, byte>(key, 0)));
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> OmitTemperature =
+        new(Capabilities.OmitTemperature.Select(key => new KeyValuePair<string, byte>(key, 0)));
+
+    private static void RememberCapabilities()
+    {
+        lock (CapabilitiesGate)
+        {
+            Capabilities.SuppressThinking = new Dictionary<string, bool>(SuppressThinking);
+            Capabilities.UseMaxCompletionTokens = UseMaxCompletionTokens.Keys.ToList();
+            Capabilities.OmitTemperature = OmitTemperature.Keys.ToList();
+            Capabilities.Save();
+        }
+    }
 
     private static bool LearnParameterRejection(string key, LmmProviderException pex)
     {
         if (pex.HttpStatus is not (400 or 422)) return false;
         var text = $"{pex.Message} {pex.RawBody}";
-        return ClassifyParameterRejection(text) switch
+        var learned = ClassifyParameterRejection(text) switch
         {
             ParameterRejection.MaxTokens => UseMaxCompletionTokens.TryAdd(key, 0),
             ParameterRejection.Temperature => OmitTemperature.TryAdd(key, 0),
             _ => false,
         };
+        if (learned) RememberCapabilities();
+        return learned;
     }
 
     internal enum ParameterRejection { None, MaxTokens, Temperature }
@@ -283,6 +300,7 @@ public sealed class OpenAICompatEngine : LMMEngine
                     || pex.RawBody.Contains("enable_thinking", StringComparison.OrdinalIgnoreCase)))
             {
                 SuppressThinking[key] = false;
+                RememberCapabilities();
                 CommonUtils.LogDiagnostic("llm-thinking-flag-rejected", $"model={Model} status={pex.HttpStatus}");
                 return await SendOnceAsync(request, maxTokens, false, ct);
             }
@@ -299,6 +317,7 @@ public sealed class OpenAICompatEngine : LMMEngine
         {
             // First sighting of a reasoning model: use the flag from now on.
             SuppressThinking[key] = true;
+            RememberCapabilities();
             CommonUtils.LogDiagnostic("llm-reasoning-model-detected",
                 $"model={Model} content_empty={string.IsNullOrWhiteSpace(reply.Response.Text)} finish={reply.FinishReason}; disabling thinking for later calls");
         }

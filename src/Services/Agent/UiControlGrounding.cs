@@ -53,7 +53,7 @@ internal static class UiControlGrounding
         ("checkbox", new[] { "checkbox", "check box", "toggle" }),
         ("radio-button", new[] { "radio" }),
         ("edit", new[] { "box", "field", "input", "bar", "textbox" }),
-        ("combobox", new[] { "dropdown", "drop down", "combo", "selector" }),
+        ("combobox", new[] { "combobox", "dropdown", "drop down", "combo", "selector" }),
         ("list-item", new[] { "option", "item", "entry", "row", "sidebar", "navigation" }),
         ("tree-item", new[] { "folder", "node" }),
     };

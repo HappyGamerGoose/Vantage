@@ -281,8 +281,37 @@ public sealed class VantageACI
 
     // ─── Action implementations ─────────────────────────────────
 
+    public void SetTaskGoal(string goal) => _taskGoal = goal;
+
+    // Navigating needs a tab of its own: whatever is open belongs to the user.
+    // Decided once per run, at the first attempt to use the address bar. Later
+    // navigation stays in the tab this run opened.
+    private string _taskGoal = string.Empty;
+    private bool _browserTabDecided;
+    private bool _addressBarFocused;
+
+    private bool ClaimNewTab()
+    {
+        if (_browserTabDecided) return false;
+        var foreground = ForegroundWindowProbe.Read();
+        if (!foreground.IsBrowser) return false;
+        _browserTabDecided = true;
+        if (BrowserPolicy.GoalAllowsCurrentTab(_taskGoal) || BrowserPolicy.IsBlankTab(foreground.Title)) return false;
+        CommonUtils.LogDiagnostic("browser-new-tab", "opening a new tab so the open one is not replaced");
+        return true;
+    }
+
+    private string? ControlNameFor(AgentAction action) =>
+        action.GetInt("control") is { } number && number >= 0 && number < _controls.Count
+            ? _controls[number].Name
+            : null;
+
+    private bool TargetsAddressBar(AgentAction action) =>
+        BrowserPolicy.IsAddressBar(action.GetString("description")) || BrowserPolicy.IsAddressBar(ControlNameFor(action));
+
     private async Task<ActionResult> DoClickAsync(AgentAction action, CancellationToken ct)
     {
+        _addressBarFocused = TargetsAddressBar(action);
         if (TryResolveControlNumber(action, out var controlPoint) is { } resolved)
         {
             return resolved.Outcome != ActionOutcome.Success
@@ -429,7 +458,19 @@ public sealed class VantageACI
         var overwrite = action.GetBool("overwrite", false);
         var enter = action.GetBool("enter", false);
 
-        if (TryResolveControlNumber(action, out var controlPoint) is { } resolved)
+        // Ctrl+T leaves the cursor in the new tab's address bar, so the target
+        // no longer needs finding.
+        var intoAddressBar = text.Length > 0 && (TargetsAddressBar(action)
+            || (_addressBarFocused && action.GetInt("control") is null && action.GetPoint() is null && string.IsNullOrWhiteSpace(description)));
+        var inOwnTab = intoAddressBar && ClaimNewTab();
+        _addressBarFocused = false;
+        if (inOwnTab)
+        {
+            WindowsAppManager.PressKey("ctrl+t");
+            await Task.Delay(NewTabFocusDelayMs, ct);
+        }
+
+        if (!inOwnTab && TryResolveControlNumber(action, out var controlPoint) is { } resolved)
         {
             if (resolved.Outcome != ActionOutcome.Success) return resolved;
             WindowsAutomationService.LeftClick(controlPoint.X, controlPoint.Y);
@@ -437,9 +478,9 @@ public sealed class VantageACI
         }
 
         var pt = action.GetPoint();
-        if (action.GetInt("control") is not null)
+        if (inOwnTab || action.GetInt("control") is not null)
         {
-            // Already focused through the control number above.
+            // Focus is already in place, from Ctrl+T or the control number above.
         }
         else if (pt is not null)
         {
@@ -485,10 +526,31 @@ public sealed class VantageACI
         return new ActionResult(ActionOutcome.Success, $"typed {typed} character(s)");
     }
 
+    private const int NewTabFocusDelayMs = 200;
+
+    /// <summary>
+    /// Keeps track of tab use from keyboard shortcuts. Returns true when the
+    /// address-bar shortcut should open a new tab instead, which also puts the
+    /// cursor in an address bar, just one that replaces nothing.
+    /// </summary>
+    private bool ShortcutShouldOpenNewTab(string chord)
+    {
+        if (BrowserPolicy.IsNewTabShortcut(chord))
+        {
+            _browserTabDecided = true;
+            _addressBarFocused = true;
+            return false;
+        }
+        if (!BrowserPolicy.IsAddressBarShortcut(chord)) return false;
+        _addressBarFocused = true;
+        return ClaimNewTab();
+    }
+
     private ActionResult DoKey(AgentAction action)
     {
         var keys = action.GetStringList("keys");
         if (keys.Count == 0) return new ActionResult(ActionOutcome.Failed, "key requires non-empty `keys` list");
+        if (ShortcutShouldOpenNewTab(string.Join("+", keys))) keys = new List<string> { "ctrl", "t" };
 
         // Parse: modifiers first, leaf last
         var modifiers = new List<Windows.System.VirtualKey>();
@@ -919,6 +981,9 @@ public sealed class VantageACI
         if (string.IsNullOrWhiteSpace(executable))
             return new ActionResult(ActionOutcome.Failed, "launch_app requires `executable` (path or file association)");
 
+        // A URL handed to the system opens in a new tab already.
+        if (SettlePolicy.OpensUrl(action)) _browserTabDecided = true;
+
         var launch = await WindowsAppManager.LaunchAndFocusAppAsync(
             executable,
             timeoutMs: 8_000,
@@ -1180,7 +1245,7 @@ public sealed class VantageACI
         return new ActionResult(ActionOutcome.Success, $"drag {btn} ({fromX},{fromY}) -> ({toX},{toY})");
     }
 
-    private static async Task<ActionResult> DoTypeTextAsync(AgentAction action, CancellationToken ct)
+    private async Task<ActionResult> DoTypeTextAsync(AgentAction action, CancellationToken ct)
     {
         if (CheckForegroundTarget(action, "type_text") is { } targetFailure)
             return targetFailure;
@@ -1188,6 +1253,12 @@ public sealed class VantageACI
         var text = action.GetString("text") ?? "";
         if (text.Length == 0)
             return new ActionResult(ActionOutcome.Failed, "type_text requires non-empty `text`");
+        if (_addressBarFocused && ClaimNewTab())
+        {
+            WindowsAppManager.PressKey("ctrl+t");
+            await Task.Delay(NewTabFocusDelayMs, ct);
+        }
+        _addressBarFocused = false;
         var delay = action.GetInt("delay_ms") ?? 0;
         var typed = await WindowsAppManager.TypeTextAsync(
             text,
@@ -1208,6 +1279,7 @@ public sealed class VantageACI
         var combo = action.GetString("combo");
         if (string.IsNullOrWhiteSpace(combo))
             return new ActionResult(ActionOutcome.Failed, "press_key requires `combo` like \"ctrl+s\" or \"Return\"");
+        if (ShortcutShouldOpenNewTab(combo)) combo = "ctrl+t";
         var ok = WindowsAppManager.PressKey(combo);
         return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
             ok ? $"pressed {combo}" : $"press_key failed for '{combo}' (unknown token or SendInput rejected)");
