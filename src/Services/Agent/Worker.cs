@@ -332,9 +332,9 @@ public sealed class Worker
         else if (_parseFailStreak > 0 && !string.IsNullOrEmpty(_lastRawPlan))
         {
             sbGen.AppendLine(
-                $"FORMAT_FEEDBACK: Your previous response could not be parsed as a JSON action. " +
-                $"You MUST reply with a single <thoughts>…</thoughts><answer>```json{{...}}```</answer> block containing an \"action\" field. " +
-                $"Previous response was: {Truncate(_lastRawPlan, 400)}");
+                $"FORMAT_FEEDBACK: No desktop action ran, because your last reply could not be used: {CommonUtils.DescribeActionProblem(_lastRawPlan)}. " +
+                "Reply with <thoughts>…</thoughts>, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>. " +
+                $"Your last reply ended with: {Tail(_lastRawPlan, ParseFeedbackTailLength)}");
         }
         else if (_lastActionOutcome.StartsWith("failed", StringComparison.OrdinalIgnoreCase)
                  && _turnCount > 0)
@@ -466,7 +466,7 @@ public sealed class Worker
         {
             _parseFailStreak++;
             _turnCount++;
-            _taskContext.RecordSystemEvent("The prior model response could not be parsed; no desktop action ran");
+            _taskContext.RecordSystemEvent($"No desktop action ran, because the last reply could not be used: {CommonUtils.DescribeActionProblem(plan!)}");
             FlushHistory();
 
             // Give up after consecutive parse failures — prevents an
@@ -474,10 +474,10 @@ public sealed class Worker
             // responses forever.
             if (_parseFailStreak >= MaxParseFailStreak)
                 return new ActionResult(ActionOutcome.FailedFatal,
-                    $"aborted after {_parseFailStreak} consecutive unparseable responses. Last plan excerpt: {Truncate(plan!, 200)}");
+                    $"aborted after {_parseFailStreak} consecutive unusable responses, because {CommonUtils.DescribeActionProblem(plan!)}. Last reply ended with: {Tail(plan!, ParseFeedbackTailLength)}");
 
             return new ActionResult(ActionOutcome.Failed,
-                $"worker response did not contain a parseable JSON action. Plan excerpt: {Truncate(plan!, 200)}");
+                $"the model reply could not be used, because {CommonUtils.DescribeActionProblem(plan!)}");
         }
         _parseFailStreak = 0;
 
@@ -1007,6 +1007,12 @@ public sealed class Worker
     }
 
     private void FlushHistory() => _generator.CompactContextWindow();
+
+    private const int ParseFeedbackTailLength = 240;
+
+    // The start of a reply is its reasoning; a format problem shows at the end.
+    private static string Tail(string s, int n) =>
+        string.IsNullOrEmpty(s) || s.Length <= n ? s : "…" + s[^n..];
 
     private static string Truncate(string s, int n) =>
         string.IsNullOrEmpty(s) || s.Length <= n ? s : s.Substring(0, n) + "…";

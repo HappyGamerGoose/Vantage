@@ -114,69 +114,92 @@ public static class CommonUtils
     ///      models that emit plain JSON without fences)
     /// Returns empty string if nothing parseable is found.
     /// </summary>
+    // Harmless slips in an otherwise clear action should not cost a turn.
+    private static readonly JsonDocumentOptions ActionJsonOptions = new()
+    {
+        AllowTrailingCommas = true,
+        CommentHandling = JsonCommentHandling.Skip,
+    };
+
     public static string ExtractLastJsonBlock(string text)
     {
         if (string.IsNullOrEmpty(text)) return "";
 
-        var jsonMatches = Regex.Matches(text, "```json\\s*\\n?(.*?)```", RegexOptions.Singleline);
-        if (jsonMatches.Count > 0) return jsonMatches[^1].Groups[1].Value.Trim();
-
-        var anyMatches = Regex.Matches(text, "```\\s*\\n?(.*?)```", RegexOptions.Singleline);
-        if (anyMatches.Count > 0) return anyMatches[^1].Groups[1].Value.Trim();
-
-        // Fallback: walk through the text from the end, find a '{' that
-        // opens a balanced object containing "action":
-        var last = ExtractLastBalancedObject(text);
-        if (!string.IsNullOrEmpty(last) && last.IndexOf("\"action\"", StringComparison.Ordinal) >= 0)
-            return last;
-
-        return "";
-    }
-
-    /// <summary>
-    /// Find the last top-level balanced {...} object in a string by
-    /// scanning from the end. Skips braces inside strings.
-    /// </summary>
-    private static string? ExtractLastBalancedObject(string text)
-    {
-        for (var i = text.Length - 1; i >= 0; i--)
+        // A fence is only a hint: models put stray closing tags inside it, which
+        // once rejected the same valid action three times and stopped a run. If
+        // no fence holds exactly an action, look for one anywhere in the reply.
+        foreach (var pattern in new[] { "```json\\s*\\n?(.*?)```", "```\\s*\\n?(.*?)```" })
         {
-            if (text[i] != '}') continue;
-            var depth = 1;
-            var inStr = false;
-            var esc = false;
-            for (var j = i - 1; j >= 0; j--)
+            var matches = Regex.Matches(text, pattern, RegexOptions.Singleline);
+            for (var i = matches.Count - 1; i >= 0; i--)
             {
-                var c = text[j];
-                if (esc) { esc = false; continue; }
-                if (c == '\\' && inStr) { esc = true; continue; }
-                if (c == '"') { inStr = !inStr; continue; }
-                if (inStr) continue;
-                if (c == '}') depth++;
-                else if (c == '{')
-                {
-                    depth--;
-                    if (depth == 0)
-                    {
-                        // candidate spans [j..i]
-                        var candidate = text.Substring(j, i - j + 1);
-                        try
-                        {
-                            using var _ = JsonDocument.Parse(candidate);
-                            return candidate;
-                        }
-                        catch
-                        {
-                            // not valid JSON — keep scanning
-                            break;
-                        }
-                    }
-                }
+                var content = matches[i].Groups[1].Value.Trim();
+                if (ParseAgentAction(content) is not null) return content;
             }
         }
-        return null;
+        return FindLastActionObject(text) ?? "";
     }
 
+    /// <summary>The last complete JSON object in the text that is an action.</summary>
+    private static string? FindLastActionObject(string text)
+    {
+        string? found = null;
+        var position = 0;
+        while (position < text.Length)
+        {
+            var start = text.IndexOf('{', position);
+            if (start < 0) break;
+            var end = FindObjectEnd(text, start);
+            if (end >= 0 && text.Substring(start, end - start + 1) is var candidate && ParseAgentAction(candidate) is not null)
+            {
+                found = candidate;
+                position = end + 1;
+            }
+            else
+            {
+                position = start + 1;
+            }
+        }
+        return found;
+    }
+
+    /// <summary>Index of the brace closing the object at <paramref name="start"/>, or -1.</summary>
+    private static int FindObjectEnd(string text, int start)
+    {
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && inString) { escaped = true; continue; }
+            if (c == '"') { inString = !inString; continue; }
+            if (inString) continue;
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>Says what is wrong with a reply that holds no usable action.</summary>
+    public static string DescribeActionProblem(string reply)
+    {
+        if (!reply.Contains('{')) return "it has no JSON object";
+        var fenced = Regex.Match(reply, "```(?:json)?\\s*\\n?(.*?)```", RegexOptions.Singleline);
+        var json = fenced.Success ? fenced.Groups[1].Value.Trim() : reply[reply.IndexOf('{')..].Trim();
+        try
+        {
+            using var doc = JsonDocument.Parse(json, ActionJsonOptions);
+            return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("action", out _)
+                ? "its `action` field is not a name"
+                : "its JSON object has no `action` field";
+        }
+        catch (JsonException ex)
+        {
+            return $"its JSON is invalid ({ex.Message.Split(". Path")[0]})";
+        }
+    }
     /// <summary>
     /// Split a response into (thoughts, answer) sections. Returns the
     /// full text as `answer` and empty `thoughts` on parse failure.
@@ -205,7 +228,7 @@ public static class CommonUtils
         if (string.IsNullOrWhiteSpace(jsonText)) return null;
         try
         {
-            using var doc = JsonDocument.Parse(jsonText);
+            using var doc = JsonDocument.Parse(jsonText, ActionJsonOptions);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return null;
             if (!root.TryGetProperty("action", out var actionProp)) return null;

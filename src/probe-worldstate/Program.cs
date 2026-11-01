@@ -138,8 +138,40 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         && !noisySummary.Contains("dfrgui.exe", StringComparison.OrdinalIgnoreCase)
         && !noisySummary.Contains("0x4049C", StringComparison.OrdinalIgnoreCase);
 
-    var valid = windowValid && persistentValid && factsClean;
-    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} FactsWithoutNoise={factsClean} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
+    // Compaction must not turn plans into history: the reply that never ran
+    // is no milestone, and "failed" in the next message is no recorded failure.
+    var honestDir = Path.Combine(Path.GetTempPath(), "vantage-compaction-" + Guid.NewGuid().ToString("N"));
+    bool historyHonest;
+    try
+    {
+        var honestContext = new PersistentTaskContext("honest", honestDir);
+        honestContext.BeginTask("Create a folder");
+        honestContext.RecordMilestone("Opened the real thing");
+        JsonObject Say(string role, string text) => new() { ["role"] = role, ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = text } } };
+        var neverRan = new List<JsonObject>
+        {
+            Say("system", "system"),
+            Say("user", "first"),
+            Say("assistant", "<answer>```json\n{\"action\":\"run_powershell\",\"command\":\"x\"}\n</answer>"),
+            Say("user", "Pitfalls to avoid (previous failed actions):"),
+            Say("assistant", "<answer>```json\n{\"action\":\"wait\",\"seconds\":1}\n```</answer>"),
+            Say("user", "latest"),
+        };
+        var honestSummary = ContextWindowCompactor.Compact(neverRan, keepRecentNonSystemMessages: 1, keepRecentImages: 1, taskContext: honestContext).Summary;
+        var milestoneSection = honestSummary.Split("## EARLIER PLANS")[0];
+        historyHonest = honestContext.Milestones.All(m => !m.Contains("run_powershell", StringComparison.OrdinalIgnoreCase) && !m.Contains("Executed", StringComparison.OrdinalIgnoreCase))
+            && !milestoneSection.Contains("Executed", StringComparison.OrdinalIgnoreCase)
+            && milestoneSection.Contains("Opened the real thing", StringComparison.Ordinal)
+            && honestSummary.Contains("EARLIER PLANS", StringComparison.Ordinal)
+            && honestContext.FailedAttempts.Count == 0;
+    }
+    finally
+    {
+        try { Directory.Delete(honestDir, recursive: true); } catch { }
+    }
+
+    var valid = windowValid && persistentValid && factsClean && historyHonest;
+    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} FactsWithoutNoise={factsClean} HistoryHonest={historyHonest} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -520,13 +552,37 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var readAction = SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"read_text\",\"find\":\"x\"}")) == 0;
 
     var ledgerOk = refusedOk && flagRefused && readOk && blindOk && sourceOk && excerptOk && readAction;
+    // Replies, starting with the exact one that stopped a real run three times.
+    AgentAction? FromReply(string reply) => CommonUtils.ParseAgentAction(CommonUtils.ExtractLastJsonBlock(reply));
+    var strayTags = "<thoughts>\nCreate the folder.\n</thoughts>\n<answer>\n```json\n{\n  \"action\": \"run_powershell\",\n  \"command\": \"New-Item -ItemType Directory -Path \\\"$env:USERPROFILE\\\\Desktop\\\\Vantage Hard Test\\\" -Force\"\n}\n</answer>\n</json>\n```";
+    var strayAction = FromReply(strayTags);
+    var noFenceClose = FromReply("<answer>\n```json\n{\"action\":\"wait\",\"seconds\":1}\n</answer>");
+    var noFence = FromReply("<thoughts>go</thoughts><answer>{\"action\":\"done\"}</answer>");
+    var quotedExample = FromReply("<thoughts>Earlier I sent {\"action\":\"screenshot\"} and the format is <answer>```json{...}```</answer>.</thoughts><answer>\n```json\n{\"action\":\"click\",\"control\":4}\n```\n</answer>");
+    var nestedBatch = FromReply("```json\n{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"]},{\"action\":\"wait\",\"seconds\":1}]}\n</answer>\n```");
+    var braceInText = FromReply("<answer>\n```json\n{\"action\":\"type_text\",\"text\":\"a } \\\" { b\"}\nstray\n```");
+    var trailingComma = FromReply("```json\n{\"action\":\"done\",}\n```");
+    var noAction = FromReply("I would click the button.");
+    var notAnAction = FromReply("```json\n{\"thing\":1}\n```");
+    var replyOk = strayAction?.Action == "run_powershell"
+        && strayAction.GetString("command")!.Contains("Vantage Hard Test", StringComparison.Ordinal)
+        && noFenceClose?.Action == "wait" && noFence?.Action == "done"
+        && quotedExample?.Action == "click" && quotedExample.GetInt("control") == 4
+        && nestedBatch?.Action == "batch" && nestedBatch.GetActionList("steps").Count == 2
+        && braceInText?.GetString("text") == "a } \" { b"
+        && trailingComma?.Action == "done" && noAction is null && notAnAction is null;
+    var problemOk = CommonUtils.DescribeActionProblem("I would click it.").Contains("no JSON", StringComparison.Ordinal)
+        && CommonUtils.DescribeActionProblem("```json\n{\"thing\":1}\n```").Contains("no `action`", StringComparison.Ordinal)
+        && CommonUtils.DescribeActionProblem("```json\n{\"action\": \n```").Contains("invalid", StringComparison.Ordinal);
+    ledgerOk = ledgerOk && replyOk && problemOk;
+
     var ruleOk = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("clicks\\\": -5", StringComparison.Ordinal)
         || PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("\"clicks\": -5", StringComparison.Ordinal);
 
     var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized && ledgerOk && ruleOk;
     Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
                       $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized} " +
-                      $"Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
+                      $"Replies={replyOk} ReplyProblem={problemOk} Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }

@@ -124,38 +124,18 @@ public static class ContextWindowCompactor
             }
             else if (role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
             {
-                // Extract planned action and verification thoughts
-                var (actionSummary, planDescription) = ExtractActionSummary(text);
+                // What the model planned, which is not the same as what happened:
+                // the reply may have been unusable, or the action may have failed.
+                // Only the worker knows that, and it records real milestones and
+                // failures in the task context. Guessing from the next message
+                // here marked actions that never ran as accomplished.
+                var (_, planDescription) = ExtractActionSummary(text);
                 if (!string.IsNullOrWhiteSpace(planDescription))
                 {
                     actionHistory.Add(planDescription);
                 }
-
-                // Check subsequent message or verifier outcome for milestone vs pitfall
-                if (index + 1 < messages.Count)
-                {
-                    var nextText = ExtractText(messages[index + 1]);
-                    if (nextText.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-                        nextText.Contains("STUCK_RECOVERY", StringComparison.OrdinalIgnoreCase) ||
-                        nextText.Contains("GROUNDING_FAILED", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var failureReason = ExtractFailureSnippet(nextText);
-                        var pitfallDesc = !string.IsNullOrWhiteSpace(planDescription)
-                            ? $"{planDescription} -> {failureReason}"
-                            : $"Action failed -> {failureReason}";
-                        if (!pitfalls.Contains(pitfallDesc, StringComparer.OrdinalIgnoreCase))
-                            pitfalls.Add(pitfallDesc);
-                    }
-                    else if (!string.IsNullOrWhiteSpace(planDescription))
-                    {
-                        var milestoneDesc = planDescription;
-                        if (!milestones.Contains(milestoneDesc, StringComparer.OrdinalIgnoreCase))
-                            milestones.Add(milestoneDesc);
-                    }
-                }
             }
         }
-
         // Remove the pruned messages from messages list
         for (var index = firstRetainedIndex - 1; index >= 0; index--)
         {
@@ -169,12 +149,6 @@ public static class ContextWindowCompactor
         if (taskContext != null)
         {
             taskContext.RecordDiscoveredEntities(discoveredEntities);
-            foreach (var m in milestones) taskContext.RecordMilestone(m);
-            foreach (var p in pitfalls)
-            {
-                var parts = p.Split("->", 2);
-                taskContext.RecordFailedAttempt(parts[0].Trim(), parts.Length > 1 ? parts[1].Trim() : "failed");
-            }
         }
 
         // Build the rich, high-fidelity compacted task memory summary
@@ -376,22 +350,6 @@ public static class ContextWindowCompactor
         return ("Action", "Issued desktop interaction");
     }
 
-    private static string ExtractFailureSnippet(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return "action did not achieve expected state";
-        var lines = text.Split('\n');
-        foreach (var line in lines)
-        {
-            if (line.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("GROUNDING_FAILED", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("VERIFICATION_FEEDBACK", StringComparison.OrdinalIgnoreCase))
-            {
-                return NormalizeSentence(line);
-            }
-        }
-        return "observed no positive state change";
-    }
-
     private static string SynthesizeCompactedTaskMemory(
         string goal,
         List<string> userDirectives,
@@ -433,15 +391,22 @@ public static class ContextWindowCompactor
         }
 
         // 3. Accomplished Milestones
-        if (milestones.Count > 0 || actionHistory.Count > 0)
+        if (milestones.Count > 0)
         {
             sb.AppendLine("## 3. ACCOMPLISHED MILESTONES (DO NOT REDO)");
-            var combinedMilestones = milestones.Concat(actionHistory)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .TakeLast(8);
-            foreach (var milestone in combinedMilestones)
+            foreach (var milestone in milestones.Distinct(StringComparer.OrdinalIgnoreCase).TakeLast(8))
             {
                 sb.Append("- [✓] ").AppendLine(milestone);
+            }
+            sb.AppendLine();
+        }
+
+        if (actionHistory.Count > 0)
+        {
+            sb.AppendLine("## EARLIER PLANS (not proof they ran or worked; check the screen)");
+            foreach (var plan in actionHistory.Distinct(StringComparer.OrdinalIgnoreCase).TakeLast(6))
+            {
+                sb.Append("- ").AppendLine(plan);
             }
             sb.AppendLine();
         }
