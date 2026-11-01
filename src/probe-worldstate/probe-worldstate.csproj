@@ -45,6 +45,7 @@
     <Compile Include="..\Services\Agent\ScreenSampler.cs" Link="ScreenSampler.cs" />
     <Compile Include="..\Services\Agent\ScreenshotDiffer.cs" Link="ScreenshotDiffer.cs" />
     <Compile Include="..\Services\Agent\LlmHedging.cs" Link="LlmHedging.cs" />
+    <Compile Include="..\Services\Agent\FactLedger.cs" Link="FactLedger.cs" />
     <Compile Include="..\Common\NativeInterop.cs" Link="NativeInterop.cs" />
   </ItemGroup>
 </Project>

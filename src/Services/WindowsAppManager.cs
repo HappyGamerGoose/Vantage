@@ -913,6 +913,12 @@ public static class WindowsAppManager
         Span<char> utf16 = stackalloc char[2];
         foreach (var rune in text.EnumerateRunes())
         {
+            if (TrySendLineBreak(rune, out var lineBreakSent))
+            {
+                if (!lineBreakSent) return typed;
+                typed++;
+                continue;
+            }
             var units = rune.EncodeToUtf16(utf16);
             var inputs = new INPUT[units * 2];
             var n = 0;
@@ -940,6 +946,12 @@ public static class WindowsAppManager
         foreach (var rune in text.EnumerateRunes())
         {
             ct.ThrowIfCancellationRequested();
+            if (TrySendLineBreak(rune, out var lineBreakSent))
+            {
+                if (!lineBreakSent) return typed;
+                typed++;
+                continue;
+            }
             var units = rune.EncodeToUtf16(utf16);
             var inputs = new INPUT[units * 2];
             var n = 0;
@@ -954,6 +966,23 @@ public static class WindowsAppManager
             if (perCharDelayMs > 0) await Task.Delay(perCharDelayMs, ct);
         }
         return typed;
+    }
+
+    /// <summary>
+    /// A line break sent as a Unicode character is dropped by most apps, so it
+    /// has to be the Enter key. The CR of a CRLF pair is skipped, otherwise each
+    /// break would press Enter twice.
+    /// </summary>
+    private static bool TrySendLineBreak(Rune rune, out bool sent)
+    {
+        sent = true;
+        if (rune.Value == '\r') return true;
+        if (rune.Value != '\n') return false;
+        var inputs = new INPUT[2];
+        WriteKbd(inputs, 0, wVk: 0x0D, wScan: 0, flags: 0);
+        WriteKbd(inputs, 1, wVk: 0x0D, wScan: 0, flags: KEYEVENTF_KEYUP);
+        sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>()) == 2;
+        return true;
     }
 
     private static void WriteKbd(INPUT[] arr, int idx, ushort wVk, ushort wScan, uint flags)

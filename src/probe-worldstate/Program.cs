@@ -463,9 +463,57 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var controlNotSanitized = ActionSanitizer.Sanitize(Parse("{\"action\":\"click\",\"control\":4}")).Replacement is null
         && ActionSanitizer.Sanitize(Parse("{\"action\":\"click\"}")).Replacement is not null;
 
-    var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized;
+    // Fact ledger, replaying the failed run: values read on earlier pages.
+    var goal = "Find the population of India, Japan and Brazil and save them.";
+    var ledger = new FactLedger();
+    var noSources = Array.Empty<string?>();
+    var invented = Parse("{\"action\":\"type_text\",\"text\":\"India: 1,441,719,852\\nBrazil: 214,000,000\"}");
+
+    // Reasoning is shown but is no source: an invented number appears there too.
+    ledger.RecordReasoning(22, "India: 1,441,719,852 (2021 estimate)");
+    var heldFirst = ledger.ChallengeTyping(invented, noSources);
+    var insisted = ledger.ChallengeTyping(invented, noSources);
+    var inventedOk = heldFirst.Count == 2 && insisted.Count == 0
+        && ledger.Unconfirmed().Count == 2
+        && ledger.BuildPromptBlock().Contains("EARLIER_REASONING", StringComparison.Ordinal);
+    var finishOnce = ledger.ShouldChallengeFinish() && !ledger.ShouldChallengeFinish();
+
+    // Noted exactly, it passes with no challenge, including the rounded form.
+    var noted = new FactLedger();
+    noted.RecordNotes(Parse("{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"],\"note\":\"Brazil population: 214,211,951\"}"));
+    noted.RecordNotes(Parse("{\"action\":\"scroll\",\"clicks\":-5,\"note\":\"India population: 1.48 billion\"}"));
+    var accepted = noted.ChallengeTyping(Parse("{\"action\":\"type_text\",\"text\":\"India: 1.48 billion\\nBrazil: 214,211,951\"}"), noSources);
+    var rounded = noted.ChallengeTyping(Parse("{\"action\":\"type_text\",\"text\":\"Brazil: 214,000,000\"}"), noSources);
+    var noteOk = accepted.Count == 0 && rounded.SequenceEqual(new[] { "214,000,000" })
+        && noted.BuildPromptBlock().Contains("Brazil population: 214,211,951", StringComparison.Ordinal)
+        && !noted.BuildPromptBlock().Contains("EARLIER_REASONING", StringComparison.Ordinal);
+
+    // Other real sources count; ordinary typing and URLs are never challenged.
+    var sourced = new FactLedger();
+    var fromGoal = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"Order 48213\"}"), new string?[] { "Enter order 48213 in the form" });
+    var fromOutput = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"Size 90,210\"}"), new string?[] { "pwsh_exit=0 out: 90210" });
+    var plain = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"toxic rock gaming\"}"), noSources);
+    var address = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"https://example.com/item/123456\",\"enter\":true}"), noSources);
+    var shortNumber = sourced.ChallengeTyping(Parse("{\"action\":\"type\",\"text\":\"page 12\"}"), noSources);
+    var inBatch = sourced.ChallengeTyping(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"t\"]},{\"action\":\"type_text\",\"text\":\"555123\"}]}"), noSources);
+    var sourceOk = fromGoal.Count == 0 && fromOutput.Count == 0 && plain.Count == 0 && address.Count == 0 && shortNumber.Count == 0 && inBatch.Count == 1 && goal.Length > 0;
+
+    // Later noting confirms a value that was forced through.
+    var later = new FactLedger();
+    var forced = Parse("{\"action\":\"type_text\",\"text\":\"123,456\"}");
+    later.ChallengeTyping(forced, noSources);
+    later.ChallengeTyping(forced, noSources);
+    var beforeNote = later.Unconfirmed().Count;
+    later.RecordNotes(Parse("{\"action\":\"wait\",\"seconds\":1,\"note\":\"checked: 123456\"}"));
+    var ledgerOk = inventedOk && finishOnce && noteOk && sourceOk && beforeNote == 1 && later.Unconfirmed().Count == 0 && !later.ShouldChallengeFinish();
+
+    var ruleOk = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("clicks\\\": -5", StringComparison.Ordinal)
+        || PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("\"clicks\": -5", StringComparison.Ordinal);
+
+    var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized && ledgerOk && ruleOk;
     Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
-                      $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized}");
+                      $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized} " +
+                      $"Invented={inventedOk} FinishOnce={finishOnce} Noted={noteOk} Sources={sourceOk} FactLedger={ledgerOk} ScrollExample={ruleOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -651,6 +699,18 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
                       $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk} PageLoad={pageOk} LoadCap={capOk} VideoCap={videoOk} Plans={planOk} DoneMoved={doneOk} Tabs={tabOk} Combobox={comboOk} Remembered={storeOk} HedgeReported={reportOk}");
     Console.WriteLine($"Measured: capture={captureMs}ms per frame at {live?.Width}x{live?.Height}, compare={compareMs}ms, world state first turn={first.Length} chars, later={later.Length} chars, system prompt={systemPrompt.Length} chars");
     Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--controls-timing", StringComparer.OrdinalIgnoreCase))
+{
+    // How long a full read takes with no time limit, for tuning that limit.
+    foreach (var window in WindowsAppManager.ListVisibleWindows().Take(3))
+    {
+        var unlimited = Stopwatch.StartNew();
+        var read = await UiControlGrounding.SnapshotAsync(window.Handle, TimeSpan.FromSeconds(30));
+        Console.WriteLine($"{unlimited.ElapsedMilliseconds,6}ms controls={read.Count,3} :: {window.Title}");
+    }
     return;
 }
 

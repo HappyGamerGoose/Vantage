@@ -1009,7 +1009,8 @@ public sealed class WindowsAutomationService
         var typed = 0;
         try
         {
-            foreach (var rune in text.EnumerateRunes())
+            // CR and LF each press Enter below, so a CRLF pair would press it twice.
+            foreach (var rune in text.Replace("\r\n", "\n").EnumerateRunes())
             {
                 ct.ThrowIfCancellationRequested();
                 TypeOneRune(rune);

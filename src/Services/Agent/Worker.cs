@@ -74,7 +74,12 @@ public sealed class Worker
     private int _consecutiveRateLimits;
     private const int FirstCaptureSettleMs = 450;
     private const int RepeatedTargetNudgeAt = 3;
-    private const int ControlsBudgetMs = 700;
+    // Measured: 0.2-0.4 s for ordinary windows, 1.1-1.8 s for a long Wikipedia
+    // article. Still cheaper than the vision call it replaces.
+    private const int ControlsBudgetMs = 2000;
+    private const int ControlsMissesBeforeSkip = 2;
+    private string _controlsMissKey = "";
+    private int _controlsMisses;
     private const int GeneratorMaxNewTokens = 768;
     private const int ReflectionMaxNewTokens = 512;
 
@@ -89,6 +94,11 @@ public sealed class Worker
     private string _lastTargetKey = "";
     private int _sameTargetCount;
     private bool _doneRechecked;
+    private readonly FactLedger _facts = new();
+    private string _goal = "";
+
+    /// <summary>Numbers that were typed with no source, to report honestly at the end.</summary>
+    internal IReadOnlyList<string> UnconfirmedValues => _facts.Unconfirmed();
 
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
@@ -135,6 +145,7 @@ public sealed class Worker
         _taskContext.BeginTask(instruction);
         _generator.ActiveTaskGoal = instruction;
         _aci.SetTaskGoal(instruction);
+        _goal = instruction;
     }
 
     /// <summary>
@@ -259,8 +270,18 @@ public sealed class Worker
         // grounding step, so a control the model names is clicked exactly.
         var controlsSw = Stopwatch.StartNew();
         var controlsWindow = NativeInterop.GetForegroundWindow();
-        var controls = await UiControlGrounding.SnapshotAsync(
-            controlsWindow, TimeSpan.FromMilliseconds(ControlsBudgetMs));
+        // A page too large to read in time would cost the whole limit every
+        // turn for nothing, so give up on it until the window or page changes.
+        var controlsKey = $"{controlsWindow}|{worldState.ForegroundTitle}";
+        if (controlsKey != _controlsMissKey)
+        {
+            _controlsMissKey = controlsKey;
+            _controlsMisses = 0;
+        }
+        IReadOnlyList<UiControl> controls = _controlsMisses >= ControlsMissesBeforeSkip
+            ? Array.Empty<UiControl>()
+            : await UiControlGrounding.SnapshotAsync(controlsWindow, TimeSpan.FromMilliseconds(ControlsBudgetMs));
+        if (controls.Count == 0 && controlsSw.ElapsedMilliseconds >= ControlsBudgetMs) _controlsMisses++;
         _aci.AssignControls(controls, controlsWindow);
         if (controls.Count > 0)
         {
@@ -274,6 +295,8 @@ public sealed class Worker
             $"turn={_turnCount + 1} controls={controls.Count} elapsed={controlsSw.ElapsedMilliseconds}ms");
 
         sbGen.AppendLine(_taskContext.BuildPromptBlock());
+        var factsBlock = _facts.BuildPromptBlock();
+        if (factsBlock.Length > 0) sbGen.AppendLine(factsBlock);
 
         // Stuck-state recovery: if we've now hit the same failing
         // description twice in a row, force a strategy pivot.
@@ -456,6 +479,38 @@ public sealed class Worker
         }
         _parseFailStreak = 0;
 
+        // A number with no source is held back before it reaches the screen.
+        // What this action notes doesn't count for its own text, otherwise an
+        // invented value could vouch for itself.
+        var sources = new List<string?> { _goal };
+        sources.AddRange(_aci.Notes);
+        sources.AddRange(controls.Select(control => control.Name));
+        var unsourced = _facts.ChallengeTyping(action, sources);
+        if (unsourced.Count > 0)
+        {
+            var values = string.Join(", ", unsourced);
+            var challenge =
+                $"UNVERIFIED_VALUE: nothing was typed. You were about to enter {values}, which is not in NOTES, the task or the current controls. " +
+                "If you read it on screen, go back and read it again, then record it with `note`. If you calculated it, note the calculation. " +
+                "Never estimate or round a value, and use `fail` if you cannot get it.";
+            HoldAction(challenge);
+            CommonUtils.LogDiagnostic("worker-value-challenged", $"turn={_turnCount} values={values}");
+            return new ActionResult(ActionOutcome.Success, challenge);
+        }
+        _facts.RecordNotes(action);
+        if (!FactLedger.TypedText(action).Any())
+            _facts.RecordReasoning(_turnCount + 1, CommonUtils.SplitThoughtsAnswer(plan!).Item1);
+
+        if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase) && _facts.ShouldChallengeFinish())
+        {
+            var challenge =
+                $"UNVERIFIED_VALUE: {string.Join(", ", _facts.Unconfirmed())} went into the result without being confirmed. " +
+                "Check each against its source and correct any that is wrong, then send `done` again.";
+            HoldAction(challenge);
+            CommonUtils.LogDiagnostic("worker-done-challenged", $"turn={_turnCount}");
+            return new ActionResult(ActionOutcome.Success, challenge);
+        }
+
         // Asked once per finish: a screen that keeps moving, such as a playing
         // video, must not be able to hold the run open forever.
         if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
@@ -466,12 +521,7 @@ public sealed class Worker
             {
                 _doneRechecked = true;
                 const string recheck = "The screen changed after the screenshot your `done` was based on. Check this newer screenshot and send `done` again only if it shows the result.";
-                _verificationFeedback.Enqueue(recheck);
-                while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
-                _lastActionOutcome = "Success: done held back for a fresh look";
-                _taskContext.RecordSystemEvent(recheck);
-                _turnCount++;
-                FlushHistory();
+                HoldAction(recheck);
                 CommonUtils.LogDiagnostic("worker-done-rechecked", $"turn={_turnCount}");
                 return new ActionResult(ActionOutcome.Success, recheck);
             }
@@ -808,6 +858,17 @@ public sealed class Worker
             $"controls={controls.Count} " +
             $"outcome={result.Outcome}");
         return result;
+    }
+
+    /// <summary>Ends the turn with no desktop action and tells the model why.</summary>
+    private void HoldAction(string reason)
+    {
+        _verificationFeedback.Enqueue(reason);
+        while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
+        _lastActionOutcome = "Success: action held back";
+        _taskContext.RecordSystemEvent(reason);
+        _turnCount++;
+        FlushHistory();
     }
 
     private static (int X, int Y)? CursorPosition()

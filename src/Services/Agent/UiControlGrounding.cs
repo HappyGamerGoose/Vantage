@@ -34,6 +34,17 @@ internal static class UiControlGrounding
     private const int MinNameLength = 2;
     private const int MinPrefixLength = 4;
 
+    private const int BoundingRectanglePropertyId = 30001;
+    private const int ControlTypePropertyId = 30003;
+    private const int NamePropertyId = 30005;
+    private const int IsEnabledPropertyId = 30010;
+    private const int IsOffscreenPropertyId = 30022;
+
+    private static readonly int[] TargetControlTypes =
+    {
+        50000, 50002, 50003, 50004, 50005, 50007, 50011, 50013, 50015, 50019, 50024, 50029,
+    };
+
     // Roles a person (or the model) would name when describing something to
     // click or fill. Panes, groups, plain text and images are layout, not targets.
     private static readonly HashSet<string> TargetRoles = new(StringComparer.Ordinal)
@@ -82,13 +93,37 @@ internal static class UiControlGrounding
         IUIAutomation? automation = null;
         IUIAutomationElement? root = null;
         IUIAutomationCondition? condition = null;
+        IUIAutomationCacheRequest? cache = null;
         IUIAutomationElementArray? found = null;
+        var conditions = new List<object>();
         try
         {
             automation = new CUIAutomation();
             root = automation.ElementFromHandle(windowHandle);
-            condition = automation.CreateTrueCondition();
-            found = root.FindAll(TreeScope.TreeScope_Descendants, condition);
+
+            // Large web pages have thousands of nodes, and reading each one's
+            // properties separately ran past the time limit and returned nothing.
+            // The provider filters here and returns all the fields in one call.
+            cache = automation.CreateCacheRequest();
+            cache.AddProperty(NamePropertyId);
+            cache.AddProperty(ControlTypePropertyId);
+            cache.AddProperty(IsEnabledPropertyId);
+            cache.AddProperty(IsOffscreenPropertyId);
+            cache.AddProperty(BoundingRectanglePropertyId);
+
+            IUIAutomationCondition? anyRole = null;
+            foreach (var type in TargetControlTypes)
+            {
+                var one = automation.CreatePropertyCondition(ControlTypePropertyId, type);
+                conditions.Add(one);
+                anyRole = anyRole is null ? one : automation.CreateOrCondition(anyRole, one);
+                conditions.Add(anyRole);
+            }
+            var onScreen = automation.CreatePropertyCondition(IsOffscreenPropertyId, false);
+            conditions.Add(onScreen);
+            condition = automation.CreateAndCondition(onScreen, anyRole!);
+
+            found = root.FindAllBuildCache(TreeScope.TreeScope_Descendants, condition, cache);
             var length = found.Length;
             for (var i = 0; i < length && controls.Count < MaxControls; i++)
             {
@@ -97,19 +132,19 @@ internal static class UiControlGrounding
                 try
                 {
                     element = found.GetElement(i);
-                    var role = ControlRole(element.CurrentControlType);
+                    var role = ControlRole(element.CachedControlType);
                     if (!TargetRoles.Contains(role)) continue;
-                    var name = (element.CurrentName ?? string.Empty).Trim();
+                    var name = (element.CachedName ?? string.Empty).Trim();
                     if (name.Length < MinNameLength) continue;
-                    var rect = element.CurrentBoundingRectangle;
+                    var rect = element.CachedBoundingRectangle;
                     var width = Math.Max(0, rect.right - rect.left);
                     var height = Math.Max(0, rect.bottom - rect.top);
                     if (width == 0 || height == 0) continue;
                     controls.Add(new UiControl(
                         name,
                         role,
-                        element.CurrentIsEnabled != 0,
-                        element.CurrentIsOffscreen != 0,
+                        element.CachedIsEnabled != 0,
+                        element.CachedIsOffscreen != 0,
                         rect.left,
                         rect.top,
                         width,
@@ -129,12 +164,13 @@ internal static class UiControlGrounding
         {
             Release(found);
             Release(condition);
+            foreach (var part in conditions) Release(part);
+            Release(cache);
             Release(root);
             Release(automation);
         }
         return controls;
     }
-
     /// <summary>
     /// Returns the single control that best fits the description, or null when
     /// nothing fits or the best candidates cannot be told apart.

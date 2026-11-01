@@ -79,7 +79,11 @@ public sealed class AgentS3
 
                 if (result.Outcome == ActionOutcome.Done)
                 {
-                    _hooks.OnRunFinished($"done in {step} steps");
+                    // A claim of success must not hide values nothing could confirm.
+                    var unconfirmed = _worker.UnconfirmedValues;
+                    _hooks.OnRunFinished(unconfirmed.Count == 0
+                        ? $"done in {step} steps"
+                        : $"done in {step} steps, but these values were not confirmed: {string.Join(", ", unconfirmed)}");
                     return result;
                 }
                 if (result.Outcome == ActionOutcome.FailedFatal)
