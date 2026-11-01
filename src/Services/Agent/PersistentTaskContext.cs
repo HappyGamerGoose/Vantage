@@ -111,9 +111,7 @@ public sealed class PersistentTaskContext
             sb.Append("- [").Append(item.IsCompleted ? 'x' : ' ').Append("] ")
                 .Append('(').Append(item.Id).Append(") ").AppendLine(item.Text);
         }
-        if (_snapshot.Todos.Count == 1 && !_snapshot.Todos[0].IsCompleted)
-            sb.AppendLine("Planning required: add 1-5 concrete remaining steps with task_update.add in your next action.");
-        sb.AppendLine("Include task_update in each action as {\"add\":[],\"complete\":[],\"reopen\":[]}. Add contains new step text; complete and reopen contain existing to-do IDs (such as todo-2) or their exact text. Do not complete goal directly or mark any step complete until its action succeeded.");
+        sb.AppendLine("For a task with several steps you may include task_update as {\"add\":[],\"complete\":[],\"reopen\":[]}. Add takes new step text; complete and reopen take a to-do ID (such as todo-2) or its exact text.");
         return sb.ToString().TrimEnd();
     }
 

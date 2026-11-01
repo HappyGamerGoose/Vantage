@@ -222,7 +222,7 @@ public sealed record WorldStateProbe(
     /// formatted so the model can quickly scan the names AND copy a
     /// concrete exe path into a `launch_app` action.
     /// </summary>
-    public string ToPromptBlock()
+    public string ToPromptBlock(bool includeInventory = true)
     {
         var sb = new StringBuilder(1536);
         sb.Append("WORLD_STATE = { ");
@@ -240,24 +240,18 @@ public sealed record WorldStateProbe(
         sb.Append(", cursor=(").Append(CursorX).Append(',').Append(CursorY).Append(')');
         if (BrowserActiveTabHint is { } tab)
             sb.Append(", active_tab=\"").Append(Escape(Truncate(tab, 80))).Append('"');
-        if (BatteryState is { } bat)
-            sb.Append(", battery=\"").Append(Escape(Truncate(bat, 40))).Append('"');
-
-        // Keyboard / lock state — useful for accurate typing. CapsLock
-        // surprises are a real source of "agent typed everything in
-        // upper case" failures.
-        sb.Append(", kb=\"").Append(KeyboardLayout ?? "?")
-          .Append(" caps=").Append(CapsLockOn ? 1 : 0)
-          .Append(" num=").Append(NumLockOn ? 1 : 0)
-          .Append(" scroll=").Append(ScrollLockOn ? 1 : 0)
-          .Append('"');
+        // Only worth tokens when it is a trap: CapsLock surprises are a real
+        // source of "agent typed everything in upper case" failures.
+        if (CapsLockOn) sb.Append(", caps_lock=on");
 
         sb.Append(", windows=[").Append(TopVisibleWindows.Count).Append(']');
         if (TopVisibleWindows.Count > 0)
             sb.Append(" top=\"").Append(Escape(TopVisibleWindows[0])).Append('"');
         if (ClipboardText is { Length: > 0 } c)
             sb.Append(", clipboard_chars=").Append(c.Length);
-        if (RecentFiles.Count > 0)
+        // What is installed or recent barely changes during a run, so it is
+        // only sent with the first turn.
+        if (includeInventory && RecentFiles.Count > 0)
             sb.Append(", recent_files=[").Append(Escape(string.Join(", ", RecentFiles.Take(5).Select(Path.GetFileName)))).Append(']');
 
         // Running apps with rich metadata. Formatted as
@@ -277,7 +271,7 @@ public sealed record WorldStateProbe(
             }
             sb.Append(']');
         }
-        if (RecentApps.Count > 0)
+        if (includeInventory && RecentApps.Count > 0)
         {
             sb.Append(", recent_apps=[").Append(Escape(string.Join(", ", RecentApps))).Append(']');
         }
@@ -286,7 +280,7 @@ public sealed record WorldStateProbe(
         // `launch_app` directly with the path; if the path is
         // missing (rare — system shortcuts that don't carry targets)
         // we still surface the name.
-        if (InstalledApps.Count > 0)
+        if (includeInventory && InstalledApps.Count > 0)
         {
             sb.Append(", installed_apps=").Append(InstalledAppCount)
               .Append(" (");

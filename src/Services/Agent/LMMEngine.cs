@@ -114,6 +114,9 @@ public sealed class AnthropicEngine : LMMEngine
             body["system"] = sysContent is JsonArray sa
                 ? new JsonArray(sa.Select(b => (JsonNode?)b?.DeepClone()).ToArray())
                 : JsonValue.Create(sysContent?.ToJsonString() ?? "");
+            // The static instructions repeat on every step of a run.
+            if (body["system"] is JsonArray { Count: > 0 } systemBlocks && systemBlocks[0] is JsonObject staticBlock)
+                staticBlock["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
         }
         if (request.UseThinking)
         {
@@ -231,6 +234,36 @@ public sealed class OpenAICompatEngine : LMMEngine
 
     private sealed record OpenAiReply(LmmResponse Response, bool HadReasoning, string? FinishReason);
 
+    // Newer OpenAI-style models reject `max_tokens` and fixed temperatures.
+    // Learned once per model, so later calls don't pay for the failed request.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> UseMaxCompletionTokens = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> OmitTemperature = new();
+
+    private static bool LearnParameterRejection(string key, LmmProviderException pex)
+    {
+        if (pex.HttpStatus is not (400 or 422)) return false;
+        var text = $"{pex.Message} {pex.RawBody}";
+        return ClassifyParameterRejection(text) switch
+        {
+            ParameterRejection.MaxTokens => UseMaxCompletionTokens.TryAdd(key, 0),
+            ParameterRejection.Temperature => OmitTemperature.TryAdd(key, 0),
+            _ => false,
+        };
+    }
+
+    internal enum ParameterRejection { None, MaxTokens, Temperature }
+
+    internal static ParameterRejection ClassifyParameterRejection(string error)
+    {
+        if (error.Contains("max_completion_tokens", StringComparison.OrdinalIgnoreCase)) return ParameterRejection.MaxTokens;
+        if (error.Contains("temperature", StringComparison.OrdinalIgnoreCase)
+            && (error.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("not support", StringComparison.OrdinalIgnoreCase)
+                || error.Contains("only the default", StringComparison.OrdinalIgnoreCase)))
+            return ParameterRejection.Temperature;
+        return ParameterRejection.None;
+    }
+
     public override async Task<LmmResponse> GenerateAsync(LmmRequest request, CancellationToken ct)
     {
         var key = $"{BaseUrl}|{Model}";
@@ -252,6 +285,11 @@ public sealed class OpenAICompatEngine : LMMEngine
                 SuppressThinking[key] = false;
                 CommonUtils.LogDiagnostic("llm-thinking-flag-rejected", $"model={Model} status={pex.HttpStatus}");
                 return await SendOnceAsync(request, maxTokens, false, ct);
+            }
+            catch (LmmProviderException pex) when (LearnParameterRejection(key, pex))
+            {
+                CommonUtils.LogDiagnostic("llm-parameter-adapted", $"model={Model} status={pex.HttpStatus} msg={pex.Message}");
+                return await SendAsync(maxTokens, wantFlag);
             }
         }
 
@@ -282,13 +320,14 @@ public sealed class OpenAICompatEngine : LMMEngine
 
     private async Task<OpenAiReply> SendOnceAsync(LmmRequest request, int maxTokens, bool suppressThinking, CancellationToken ct)
     {
+        var parameterKey = $"{BaseUrl}|{Model}";
         var body = new JsonObject
         {
             ["model"]       = request.Model,
-            ["max_tokens"]  = maxTokens,
-            ["temperature"] = request.Temperature,
             ["messages"]    = new JsonArray(request.Messages.Select(m => m.DeepClone()).ToArray())
         };
+        body[UseMaxCompletionTokens.ContainsKey(parameterKey) ? "max_completion_tokens" : "max_tokens"] = maxTokens;
+        if (!OmitTemperature.ContainsKey(parameterKey)) body["temperature"] = request.Temperature;
         if (suppressThinking)
         {
             // vLLM / NVIDIA NIM chat templates read these; templates that don't

@@ -32,6 +32,7 @@ internal static class UiControlGrounding
 {
     private const int MaxControls = 160;
     private const int MinNameLength = 2;
+    private const int MinPrefixLength = 4;
 
     // Roles a person (or the model) would name when describing something to
     // click or fill. Panes, groups, plain text and images are layout, not targets.
@@ -144,6 +145,12 @@ internal static class UiControlGrounding
         if (wanted.Length == 0 || controls.Count == 0) return null;
         var padded = " " + wanted + " ";
 
+        // "the Check for updates button at the top of the Windows Update page":
+        // the target comes first, and what follows the preposition only says
+        // where it is. A control named in that trailing part is not the target.
+        var targetEnd = TargetPhraseEnd(padded);
+        var core = TargetCore(padded[..targetEnd]);
+
         var scored = new List<(UiControl Control, double Score)>();
         foreach (var control in controls)
         {
@@ -152,13 +159,20 @@ internal static class UiControlGrounding
             if (name.Length < MinNameLength) continue;
 
             double score;
+            var position = padded.IndexOf(" " + name + " ", StringComparison.Ordinal);
             if (string.Equals(name, wanted, StringComparison.Ordinal))
             {
                 score = 100 + name.Length;
             }
-            else if (padded.Contains(" " + name + " ", StringComparison.Ordinal))
+            else if (position >= 0 && position < targetEnd)
             {
                 score = name.Length;
+            }
+            else if (core.Length >= MinPrefixLength
+                     && (name + " ").StartsWith(core + " ", StringComparison.Ordinal))
+            {
+                // "the Search box" for a control named "Search box, Find a setting".
+                score = core.Length - 1;
             }
             else
             {
@@ -185,6 +199,64 @@ internal static class UiControlGrounding
         if (ranked.Count > 1 && ranked[0].Bias - ranked[1].Bias < 0.15) return null;
         return ranked[0].Control;
     }
+
+    private static readonly string[] LocationWords =
+    {
+        " in ", " on ", " at ", " of ", " from ", " under ", " inside ", " within ", " near ",
+        " next to ", " beside ", " below ", " above ", " to the ", " that ", " which ",
+    };
+
+    private static readonly string[] LeadingWords = { "the ", "a ", "an ", "this ", "that " };
+
+    private static readonly string[] TrailingRoleWords =
+    {
+        " button", " link", " hyperlink", " tab", " option", " item", " entry", " icon",
+        " menu", " list item", " checkbox", " check box", " toggle", " control",
+    };
+
+    /// <summary>Index in <paramref name="padded"/> where the location clause starts.</summary>
+    private static int TargetPhraseEnd(string padded)
+    {
+        var end = padded.Length;
+        foreach (var word in LocationWords)
+        {
+            var index = padded.IndexOf(word, StringComparison.Ordinal);
+            // A description that opens with its location names the target later.
+            if (index > 0 && index < end) end = index;
+        }
+        return end;
+    }
+
+    private static string TargetCore(string phrase)
+    {
+        var core = phrase.Trim();
+        foreach (var word in LeadingWords)
+        {
+            if (core.StartsWith(word, StringComparison.Ordinal))
+            {
+                core = core[word.Length..];
+                break;
+            }
+        }
+        foreach (var word in TrailingRoleWords)
+        {
+            if (core.EndsWith(word, StringComparison.Ordinal))
+            {
+                core = core[..^word.Length];
+                break;
+            }
+        }
+        return core;
+    }
+
+    /// <summary>Smallest control under a point, for tightening a vision estimate.</summary>
+    public static UiControl? ControlAt(int physicalX, int physicalY, IReadOnlyList<UiControl> controls) =>
+        controls
+            .Where(c => c.Enabled && !c.Offscreen
+                && physicalX >= c.Left && physicalX < c.Left + c.Width
+                && physicalY >= c.Top && physicalY < c.Top + c.Height)
+            .OrderBy(c => (long)c.Width * c.Height)
+            .FirstOrDefault();
 
     private static double PositionBias(string padded, UiControl candidate, IReadOnlyList<UiControl> all)
     {
@@ -229,19 +301,22 @@ internal static class UiControlGrounding
         int monitorWidth,
         int monitorHeight,
         double scale,
-        int maxEntries = 40)
+        int maxEntries = 60)
     {
-        var usable = controls.Where(c => c.Enabled && !c.Offscreen).ToList();
+        var usable = controls
+            .Select((control, index) => (Control: control, Index: index))
+            .Where(c => c.Control.Enabled && !c.Control.Offscreen && !IsWindowChrome(c.Control))
+            .ToList();
         if (usable.Count == 0) return string.Empty;
 
         var sb = new StringBuilder();
         sb.Append("FOREGROUND_CONTROLS (window \"").Append(OneLine(windowTitle, 60))
-          .AppendLine("\"; copy a control's exact name into `description` to click it with no guessing):");
-        foreach (var control in usable.Take(maxEntries))
+          .AppendLine("\"; click one exactly with {\"action\":\"click\",\"control\":N}, valid this turn only):");
+        foreach (var (control, index) in usable.Take(maxEntries))
         {
             var cx = control.CenterX / Math.Max(scale, 0.01);
             var cy = control.CenterY / Math.Max(scale, 0.01);
-            sb.Append("  \"").Append(OneLine(control.Name, 60)).Append("\" ")
+            sb.Append("  [").Append(index).Append("] \"").Append(OneLine(control.Name, 60)).Append("\" ")
               .Append(control.Role).Append(" @")
               .Append(Region(cy, monitorHeight, "top", "middle", "bottom")).Append('-')
               .AppendLine(Region(cx, monitorWidth, "left", "center", "right"));
@@ -249,6 +324,19 @@ internal static class UiControlGrounding
         if (usable.Count > maxEntries)
             sb.Append("  … ").Append(usable.Count - maxEntries).AppendLine(" more not listed");
         return sb.ToString().TrimEnd();
+    }
+
+    // The caption buttons are the same in every window and close_app covers
+    // the one that matters; listing them only costs tokens.
+    private static bool IsWindowChrome(UiControl control)
+    {
+        if (control.Role != "button") return false;
+        var name = control.Name;
+        return name.StartsWith("Minimi", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("Maximi", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("Restore", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Close", StringComparison.OrdinalIgnoreCase)
+            || (name.StartsWith("Close ", StringComparison.OrdinalIgnoreCase) && !name.Equals("Close tab", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string Region(double value, int extent, string low, string mid, string high)
@@ -304,6 +392,46 @@ internal static class UiControlGrounding
         {
         }
     }
+}
+
+/// <summary>How a vision model expresses the coordinates it returns.</summary>
+internal enum CoordinateConvention { ImagePixels, Permille }
+
+internal static class CoordinateCalibration
+{
+    // Many vision models answer on a 0-1000 grid even when asked for pixels,
+    // which misplaces every click. A control's true position is known from the
+    // accessibility tree, so one measured answer shows which grid the model uses.
+    public static CoordinateConvention Choose(
+        int returnedX, int returnedY, double expectedX, double expectedY, int imageWidth, int imageHeight)
+    {
+        if ((returnedX > imageWidth || returnedY > imageHeight) && returnedX <= 1000 && returnedY <= 1000)
+            return CoordinateConvention.Permille;
+
+        var pixelError = Distance(returnedX, returnedY, expectedX, expectedY);
+        var permille = ToImage(CoordinateConvention.Permille, returnedX, returnedY, imageWidth, imageHeight);
+        var permilleError = Distance(permille.X, permille.Y, expectedX, expectedY);
+        return permilleError < pixelError * 0.6 ? CoordinateConvention.Permille : CoordinateConvention.ImagePixels;
+    }
+
+    public static (double X, double Y) ToImage(CoordinateConvention convention, int x, int y, int imageWidth, int imageHeight) =>
+        convention == CoordinateConvention.Permille
+            ? (x * imageWidth / 1000.0, y * imageHeight / 1000.0)
+            : (x, y);
+
+    private static double Distance(double ax, double ay, double bx, double by) =>
+        Math.Sqrt(((ax - bx) * (ax - bx)) + ((ay - by) * (ay - by)));
+}
+
+internal static class BatchPolicy
+{
+    /// <summary>
+    /// A `done` after state-changing steps is a claim nobody has checked, since
+    /// those steps ran after the model's last look at the screen. Only steps
+    /// that cannot change anything may precede a real `done`.
+    /// </summary>
+    public static bool DoneNeedsAFreshLook(IEnumerable<AgentAction> stepsBeforeDone) =>
+        stepsBeforeDone.Any(step => step.Action.Trim().ToLowerInvariant() is not ("wait" or "screenshot"));
 }
 
 /// <summary>

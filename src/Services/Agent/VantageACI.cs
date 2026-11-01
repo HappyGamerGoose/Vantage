@@ -64,15 +64,54 @@ public sealed class VantageACI
     // They describe the screen only until something acts on it, so a batch
     // marks them stale after its first step.
     private IReadOnlyList<UiControl> _controls = Array.Empty<UiControl>();
+    private IntPtr _controlsWindow;
     private bool _controlsFresh;
     private int _accessibilityHits;
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, CoordinateConvention> s_conventions = new();
+
     public int AccessibilityHits => _accessibilityHits;
 
-    internal void AssignControls(IReadOnlyList<UiControl> controls)
+    internal void AssignControls(IReadOnlyList<UiControl> controls, IntPtr window)
     {
         _controls = controls;
+        _controlsWindow = window;
         _controlsFresh = controls.Count > 0;
+    }
+
+    // The list describes one window as the model saw it. If the user or the
+    // action moved focus elsewhere, its rectangles belong to something hidden.
+    private bool ControlsUsable =>
+        _controlsFresh && Vantage.Common.NativeInterop.GetForegroundWindow() == _controlsWindow;
+
+    private (int X, int Y) ControlCenterLogical(UiControl control)
+    {
+        var (x, y) = ComputerUseSession.PhysicalToLogical(control.CenterX, control.CenterY);
+        return (Math.Clamp(x, 0, _monitor.LogicalWidth - 1), Math.Clamp(y, 0, _monitor.LogicalHeight - 1));
+    }
+
+    /// <summary>Resolves a `control` number, or explains why it cannot be used.</summary>
+    private ActionResult? TryResolveControlNumber(AgentAction action, out (int X, int Y) point)
+    {
+        point = default;
+        if (action.GetInt("control") is not { } number) return null;
+        if (!ControlsUsable)
+        {
+            return new ActionResult(ActionOutcome.Failed,
+                $"control {number} is out of date: the screen or window changed after that list was made. " +
+                "Use a number from the newest FOREGROUND_CONTROLS, once per turn, as the first step of a batch.");
+        }
+        if (number < 0 || number >= _controls.Count)
+            return new ActionResult(ActionOutcome.Failed, $"control {number} is not in the current FOREGROUND_CONTROLS list");
+
+        var control = _controls[number];
+        if (!control.Enabled || control.Offscreen)
+            return new ActionResult(ActionOutcome.Failed, $"control {number} \"{control.Name}\" is disabled or scrolled out of view");
+
+        point = ControlCenterLogical(control);
+        _lastGroundDescription = control.Name;
+        _accessibilityHits++;
+        return new ActionResult(ActionOutcome.Success, control.Name);
     }
 
     public void AssignScreenshot(byte[] jpegBytes)
@@ -244,6 +283,13 @@ public sealed class VantageACI
 
     private async Task<ActionResult> DoClickAsync(AgentAction action, CancellationToken ct)
     {
+        if (TryResolveControlNumber(action, out var controlPoint) is { } resolved)
+        {
+            return resolved.Outcome != ActionOutcome.Success
+                ? resolved
+                : await DoClickDispatch(action, controlPoint.X, controlPoint.Y, ct, description: $"control \"{resolved.Description}\"");
+        }
+
         var pt = action.GetPoint();
         if (pt is not null)
         {
@@ -264,7 +310,10 @@ public sealed class VantageACI
         // grounding, while Vantage already knows the actual window rect
         // from EnumWindows + GetWindowRect. Saves ~5-15 s and a halluci-
         // nated coord on every "click on the X window" task.
-        var fast = TryClickOnKnownWindow(description);
+        // A named control beats the window-title shortcut: "Settings" as a
+        // sidebar entry must not turn into a click on the Settings window's middle.
+        var namedControl = ControlsUsable && UiControlGrounding.Match(description, _controls) is not null;
+        var fast = namedControl ? null : TryClickOnKnownWindow(description);
         if (fast is { } hit)
         {
             return await DoClickDispatch(action, hit.x, hit.y,
@@ -380,8 +429,19 @@ public sealed class VantageACI
         var overwrite = action.GetBool("overwrite", false);
         var enter = action.GetBool("enter", false);
 
+        if (TryResolveControlNumber(action, out var controlPoint) is { } resolved)
+        {
+            if (resolved.Outcome != ActionOutcome.Success) return resolved;
+            WindowsAutomationService.LeftClick(controlPoint.X, controlPoint.Y);
+            await Task.Yield();
+        }
+
         var pt = action.GetPoint();
-        if (pt is not null)
+        if (action.GetInt("control") is not null)
+        {
+            // Already focused through the control number above.
+        }
+        else if (pt is not null)
         {
             if (IsPointOnCapturedDisplay(pt.Value.X, pt.Value.Y))
             {
@@ -461,9 +521,18 @@ public sealed class VantageACI
         var description = action.GetString("description");
         var clicks = action.GetInt("clicks") ?? 0;
         if (clicks == 0) return new ActionResult(ActionOutcome.Failed, "scroll requires non-zero `clicks`");
-        if (string.IsNullOrWhiteSpace(description)) return new ActionResult(ActionOutcome.Failed, "scroll requires `description`");
 
-        var coords = await GroundAsync(description, ct);
+        (int x, int y)? coords;
+        if (TryResolveControlNumber(action, out var controlPoint) is { } resolved)
+        {
+            if (resolved.Outcome != ActionOutcome.Success) return resolved;
+            coords = (controlPoint.X, controlPoint.Y);
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(description)) return new ActionResult(ActionOutcome.Failed, "scroll requires `description` or `control`");
+            coords = await GroundAsync(description, ct);
+        }
         if (coords is null) return new ActionResult(ActionOutcome.Failed, $"could not locate '{description}' for scroll");
 
         var wheelDelta = Math.Clamp(clicks, -20, 20) * 120;
@@ -522,9 +591,34 @@ public sealed class VantageACI
     {
         var seconds = action.GetInt("seconds") ?? 1;
         if (seconds < 0 || seconds > 30) seconds = Math.Clamp(seconds, 0, 30);
-        await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+        if (action.GetBool("exact", false))
+        {
+            await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+            return new ActionResult(ActionOutcome.Success, $"waited {seconds}s");
+        }
+
+        // A wait exists to let the screen finish changing, so it ends as soon
+        // as the screen has been still for a moment instead of always running
+        // the full, usually over-cautious, duration.
+        var watch = Stopwatch.StartNew();
+        var total = TimeSpan.FromSeconds(seconds);
+        var previous = await Task.Run(ScreenSampler.Capture, ct);
+        var lastMotion = watch.Elapsed;
+        while (watch.Elapsed < total)
+        {
+            await Task.Delay(100, ct);
+            if (previous is null) continue;
+            var frame = await Task.Run(ScreenSampler.Capture, ct);
+            if (frame is null) continue;
+            if (ScreenSampler.Compare(previous, frame).IsMotion) lastMotion = watch.Elapsed;
+            previous = frame;
+            if (watch.Elapsed - lastMotion >= SmartWaitQuiet)
+                return new ActionResult(ActionOutcome.Success, $"screen settled after {watch.Elapsed.TotalSeconds:F1}s of a {seconds}s wait");
+        }
         return new ActionResult(ActionOutcome.Success, $"waited {seconds}s");
     }
+
+    private static readonly TimeSpan SmartWaitQuiet = TimeSpan.FromMilliseconds(1000);
 
     private async Task<ActionResult> DoHighlightSpanAsync(AgentAction action, CancellationToken ct)
     {
@@ -581,12 +675,10 @@ public sealed class VantageACI
         {
             // A named control in the accessibility tree is exact and free;
             // only fall back to the vision model when no control fits.
-            if (useControls && _controlsFresh
+            if (useControls && ControlsUsable
                 && UiControlGrounding.Match(description, _controls) is { } control)
             {
-                var (cx, cy) = ComputerUseSession.PhysicalToLogical(control.CenterX, control.CenterY);
-                cx = Math.Clamp(cx, 0, _monitor.LogicalWidth - 1);
-                cy = Math.Clamp(cy, 0, _monitor.LogicalHeight - 1);
+                var (cx, cy) = ControlCenterLogical(control);
                 _accessibilityHits++;
                 _lastGroundDescription = description;
                 _consecutiveGroundFailures = 0;
@@ -595,70 +687,51 @@ public sealed class VantageACI
                 return (cx, cy);
             }
 
-            _groundingAgent.Reset();
-            // Tell the LLM exactly what space its coords should be in.
-            // Without this the LLM picks one (often the image's pixel
-            // dimensions, which differ from the monitor's logical-pixel
-            // frame at non-100% DPI) and Vantage clicks at the wrong
-            // spot by an entire scale ratio. We then scale back to the
-            // monitor's logical pixels so LeftClick (logical) → physical
-            // lands on the same pixel the LLM pointed at.
-            var prompt =
-                $"The image is {_screenshotWidth}x{_screenshotHeight} pixels.\n" +
-                $"Query: {description}\n" +
-                $"Output only the (x y) coordinate in this { _screenshotWidth}x{_screenshotHeight } pixel space.\n" +
-                $"Reply with exactly two positive integers separated by a single space, or the single word NotFound.\n";
-            _groundingAgent.AddImageMessage(prompt, new[] { Convert.ToBase64String(_screenshotJpeg!) }, role: "user");
-            var resp = await CommonUtils.CallLlmSafeAsync(_groundingAgent, temperature: 0.0, maxNewTokens: 256, ct: ct);
-            if (string.IsNullOrEmpty(resp))
-            {
-                BumpGroundFailure(description);
-                return null;
-            }
-            // Case-insensitive NotFound — sometimes the model emits "not_found",
-            // "Not found", "NO LOCATION". Anything in that family is rejected.
-            var stripped = resp.Trim();
-            if (stripped.Equals("NotFound", StringComparison.OrdinalIgnoreCase)
-                || stripped.Contains("not_found", StringComparison.OrdinalIgnoreCase)
-                || stripped.Contains("not found",  StringComparison.OrdinalIgnoreCase)
-                || stripped.Contains("no location", StringComparison.OrdinalIgnoreCase))
+            var convention = await GetCoordinateConventionAsync(ct);
+            if (await AskVisionAsync(description, ct) is not { } answer)
             {
                 BumpGroundFailure(description);
                 return null;
             }
 
-            var nums = Regex.Matches(resp, @"\d+");
-            if (nums.Count < 2)
-            {
-                BumpGroundFailure(description);
-                return null;
-            }
-            int imgX = int.Parse(nums[0].Value);
-            int imgY = int.Parse(nums[1].Value);
-
-            // Scale image-pixel coords → monitor-logical coords. If the
-            // PNG was 1280x800 but the logical screen is 1536x960, every
-            // raw coord maps to logical = img * (1536/1280) ≈ 1.2x. We
-            // also pull coords that landed outside the image back into
-            // monitor bounds; many LLMs return raw numbers without
-            // clamping them.
+            // Map the answer to the image, then scale image coords → monitor-
+            // logical coords. If the image was 1152x720 but the logical screen
+            // is 1536x960, every coord maps to logical = img * 1.33. We also
+            // pull coords that landed outside the image back into monitor
+            // bounds; many LLMs return raw numbers without clamping them.
+            var (imgX, imgY) = CoordinateCalibration.ToImage(convention, answer.X, answer.Y, _screenshotWidth, _screenshotHeight);
             int x, y;
             if (_screenshotWidth > 0 && _screenshotHeight > 0
                 && (_screenshotWidth != _monitor.LogicalWidth
                     || _screenshotHeight != _monitor.LogicalHeight))
             {
-                x = (int)Math.Round((double)imgX * _monitor.LogicalWidth  / _screenshotWidth);
-                y = (int)Math.Round((double)imgY * _monitor.LogicalHeight / _screenshotHeight);
+                x = (int)Math.Round(imgX * _monitor.LogicalWidth  / _screenshotWidth);
+                y = (int)Math.Round(imgY * _monitor.LogicalHeight / _screenshotHeight);
             }
             else
             {
-                x = imgX;
-                y = imgY;
+                x = (int)Math.Round(imgX);
+                y = (int)Math.Round(imgY);
             }
             // Clamp to monitor bounds — final safety net so a wild LLM
             // response can't move the cursor off-screen.
             x = Math.Clamp(x, 0, _monitor.LogicalWidth  - 1);
             y = Math.Clamp(y, 0, _monitor.LogicalHeight - 1);
+
+            // An estimate that falls on a known control clicks that control's
+            // centre, so being a few pixels off near an edge no longer misses.
+            if (useControls && ControlsUsable)
+            {
+                var scale = _monitor.LogicalToPhysicalScale;
+                if (UiControlGrounding.ControlAt((int)(x * scale), (int)(y * scale), _controls) is { } under
+                    && (long)under.Width * under.Height < (long)_monitor.PhysicalWidth * _monitor.PhysicalHeight / 5)
+                {
+                    (x, y) = ControlCenterLogical(under);
+                }
+            }
+            CommonUtils.LogDiagnostic("grounding-vision",
+                $"target=\"{description}\" answer=({answer.X},{answer.Y}) convention={convention} image={_screenshotWidth}x{_screenshotHeight} at=({x},{y})");
+
             // Grounding succeeded — reset the failure counter so a later
             // well-formed description still works.
             _lastGroundDescription = description;
@@ -675,6 +748,79 @@ public sealed class VantageACI
             groundSw.Stop();
             _groundingMs += groundSw.ElapsedMilliseconds;
         }
+    }
+
+    /// <summary>One vision call: returns the raw numbers the model answered with.</summary>
+    private async Task<(int X, int Y)?> AskVisionAsync(string description, CancellationToken ct)
+    {
+        _groundingAgent.Reset();
+        // Tell the LLM exactly what space its coords should be in. Without this
+        // the LLM picks one (often the image's pixel dimensions, which differ
+        // from the monitor's logical-pixel frame at non-100% DPI).
+        var prompt =
+            $"The image is {_screenshotWidth}x{_screenshotHeight} pixels.\n" +
+            $"Query: {description}\n" +
+            $"Output only the (x y) coordinate in this { _screenshotWidth}x{_screenshotHeight } pixel space.\n" +
+            $"Reply with exactly two positive integers separated by a single space, or the single word NotFound.\n";
+        _groundingAgent.AddImageMessage(prompt, new[] { Convert.ToBase64String(_screenshotJpeg!) }, role: "user");
+        var resp = await CommonUtils.CallLlmSafeAsync(_groundingAgent, temperature: 0.0, maxNewTokens: 256, ct: ct);
+        if (string.IsNullOrEmpty(resp)) return null;
+
+        // Case-insensitive NotFound — sometimes the model emits "not_found",
+        // "Not found", "NO LOCATION". Anything in that family is rejected.
+        var stripped = resp.Trim();
+        if (stripped.Equals("NotFound", StringComparison.OrdinalIgnoreCase)
+            || stripped.Contains("not_found", StringComparison.OrdinalIgnoreCase)
+            || stripped.Contains("not found",  StringComparison.OrdinalIgnoreCase)
+            || stripped.Contains("no location", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var nums = Regex.Matches(resp, @"\d+");
+        if (nums.Count < 2) return null;
+        return (int.Parse(nums[0].Value), int.Parse(nums[1].Value));
+    }
+
+    /// <summary>
+    /// Learns once per model whether it answers in image pixels or on a 0-1000
+    /// grid, by asking for a control whose true position is known. This costs
+    /// one extra call, only for a model that actually needs vision grounding.
+    /// </summary>
+    private async Task<CoordinateConvention> GetCoordinateConventionAsync(CancellationToken ct)
+    {
+        var key = $"{_groundingEngine.BaseUrl}|{_groundingEngine.Model}";
+        if (s_conventions.TryGetValue(key, out var known)) return known;
+        if (!ControlsUsable || _screenshotWidth <= 0 || _screenshotHeight <= 0) return CoordinateConvention.ImagePixels;
+
+        // Far from the top-left corner the two readings land furthest apart,
+        // and a unique name leaves the model nothing to confuse it with.
+        var reference = _controls
+            .Where(c => c.Enabled && !c.Offscreen && c.Name.Length is >= 4 and <= 40)
+            .GroupBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() == 1)
+            .Select(group => group.First())
+            .OrderByDescending(c => c.CenterX + c.CenterY)
+            .FirstOrDefault();
+        if (reference is null) return CoordinateConvention.ImagePixels;
+
+        (int X, int Y)? answer;
+        try
+        {
+            answer = await AskVisionAsync($"the \"{reference.Name}\" {reference.Role}", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return CoordinateConvention.ImagePixels;
+        }
+        if (answer is null) return CoordinateConvention.ImagePixels;
+
+        var (logicalX, logicalY) = ControlCenterLogical(reference);
+        var expectedX = logicalX * (double)_screenshotWidth / _monitor.LogicalWidth;
+        var expectedY = logicalY * (double)_screenshotHeight / _monitor.LogicalHeight;
+        var convention = CoordinateCalibration.Choose(answer.Value.X, answer.Value.Y, expectedX, expectedY, _screenshotWidth, _screenshotHeight);
+        s_conventions[key] = convention;
+        CommonUtils.LogDiagnostic("grounding-calibrated",
+            $"model={_groundingEngine.Model} reference=\"{reference.Name}\" answer=({answer.Value.X},{answer.Value.Y}) expected=({expectedX:F0},{expectedY:F0}) convention={convention}");
+        return convention;
     }
 
     /// <summary>
@@ -1236,6 +1382,14 @@ public sealed class VantageACI
             // The screen the controls were read from may have changed.
             _controlsFresh = false;
             summaries.Add($"{index + 1}:{step.Action}={result.Outcome}");
+            if (result.Outcome == ActionOutcome.Done && BatchPolicy.DoneNeedsAFreshLook(steps.Take(index)))
+            {
+                return new ActionResult(
+                    ActionOutcome.Success,
+                    $"batch ran {index}/{steps.Count - 1} steps; its `done` was not accepted because nobody has seen the result yet. " +
+                    "Check the screenshot, then send `done` on its own if the task is complete: " +
+                    string.Join(", ", summaries));
+            }
             if (result.Outcome == ActionOutcome.Done)
             {
                 return new ActionResult(

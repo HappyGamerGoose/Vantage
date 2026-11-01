@@ -189,8 +189,30 @@ public sealed class LmmAgent
             Temperature = temperature,
             UseThinking = UseThinking
         };
-        return await _engine.GenerateAsync(req, ct);
+        var latencyKey = $"{_engine.BaseUrl}|{_engine.Model}";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var response = await HedgedRequest.RunAsync(
+                token => _engine.GenerateAsync(req, token),
+                LlmLatency.HedgeDelay(latencyKey),
+                ct,
+                () => CommonUtils.LogDiagnostic("llm-hedged-request",
+                    $"model={_engine.Model} no answer after {watch.ElapsedMilliseconds}ms; sent a second request"));
+            LlmLatency.Record(latencyKey, watch.ElapsedMilliseconds);
+            LastInputTokens = response.InputTokens;
+            LastOutputTokens = response.OutputTokens;
+            return response;
+        }
+        catch (LlmRateLimitException)
+        {
+            LlmLatency.NoteRateLimited(latencyKey);
+            throw;
+        }
     }
+
+    public int LastInputTokens { get; private set; }
+    public int LastOutputTokens { get; private set; }
 
     /// <summary>
     /// Retains the system instruction, distilled persistent task state, and only
@@ -245,6 +267,18 @@ public sealed class LmmAgent
         if (Messages.Count == 0
             || !string.Equals(Messages[0]["role"]?.GetValue<string>(), "system", StringComparison.OrdinalIgnoreCase))
             return;
+
+        // Anthropic caches up to a block boundary, so the changing summary gets
+        // its own block and the large static prompt stays a stable cached prefix.
+        if (_engine is AnthropicEngine && !string.IsNullOrWhiteSpace(_contextSummary))
+        {
+            Messages[0]["content"] = new JsonArray
+            {
+                new JsonObject { ["type"] = "text", ["text"] = SystemPrompt },
+                new JsonObject { ["type"] = "text", ["text"] = _contextSummary },
+            };
+            return;
+        }
 
         var text = SystemPrompt;
         if (!string.IsNullOrWhiteSpace(_contextSummary))

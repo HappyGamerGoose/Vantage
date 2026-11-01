@@ -96,16 +96,16 @@ public static class ActionSanitizer
         var feedback =
             $"SANITIZED: action '{tool}' had no usable target " +
             $"(needs {rule.Requires}) — replaced with `screenshot`. " +
-            $"The next turn you should re-locate the target on the FRESH screenshot " +
-            $"using a `description`. Don't emit screen-target actions without one of: " +
-            $"a `description` for grounding, or `x` / `y` numeric coords.";
+            $"The next turn you should re-locate the target on the FRESH screenshot. " +
+            $"Screen-target actions need one of: a `control` number from FOREGROUND_CONTROLS, " +
+            $"a `description`, or `x` / `y` numeric coords.";
         return (screenshot, feedback);
     }
 
     private static bool HasDescription(AgentAction action)
     {
         var desc = action.GetString("description") ?? "";
-        return !string.IsNullOrWhiteSpace(desc) || action.GetPoint() is not null;
+        return !string.IsNullOrWhiteSpace(desc) || action.GetPoint() is not null || action.GetInt("control") is not null;
     }
 
     private static bool HasDragTarget(AgentAction action) =>

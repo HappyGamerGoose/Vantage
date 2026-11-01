@@ -72,9 +72,8 @@ public sealed class Worker
     private const int VisionMaxLongestSide = 1152;
     private const int MaxConsecutiveRateLimits = 5;
     private int _consecutiveRateLimits;
-    private const int SettlePollLimit = 3;
-    private const int SettlePollDelayMs = 80;
-    private const double SettleChangeThreshold = 0.005;
+    private const int FirstCaptureSettleMs = 450;
+    private const int RepeatedTargetNudgeAt = 3;
     private const int ControlsBudgetMs = 700;
     private const int GeneratorMaxNewTokens = 768;
     private const int ReflectionMaxNewTokens = 512;
@@ -87,6 +86,8 @@ public sealed class Worker
     private int _consecutiveObservationOnlyCount;
     private int _sameObservationCount;
     private string _lastObservationKey = "";
+    private string _lastTargetKey = "";
+    private int _sameTargetCount;
 
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
@@ -158,16 +159,18 @@ public sealed class Worker
         // CaptureScreenPng (physical pixel capture) caused a 1.0-1.5x
         // scale mismatch where every click landed ~20-50% off-target
         // on a 1920x1200 panel at 125% DPI.
+        if (_turnCount == 0)
+        {
+            await ScreenSampler.SettleAsync(
+                await Task.Run(ScreenSampler.Capture, ct), FirstCaptureSettleMs, () => null, ct);
+        }
+
         var captureSw = Stopwatch.StartNew();
         var screenshotBytes = WindowsAutomationService.CaptureScreenFastLogical(maxLongestSide: VisionMaxLongestSide, quality: 88);
         _aci.AssignScreenshot(screenshotBytes);
         var b64 = Convert.ToBase64String(screenshotBytes);
         captureSw.Stop();
         captureMs = captureSw.ElapsedMilliseconds;
-        // Local dimensions for verifier-only JPEG captures — these stay
-        // small so the diff path stays cheap. We never send these to the
-        // model, so JPEG quality here is fine.
-        var (captureW, captureH) = VisionCap.Compute(_monitor.LogicalWidth, _monitor.LogicalHeight, maxDim: 1280);
 
         // On turn 0, inject the task description into the generator's
         // system prompt (the placeholder is replaced via string.Replace
@@ -247,14 +250,15 @@ public sealed class Worker
         worldSw.Stop();
         CommonUtils.LogDiagnostic("world-state-elapsed-ms",
             $"turn={_turnCount + 1} elapsed={worldSw.ElapsedMilliseconds}");
-        sbGen.AppendLine(worldState.ToPromptBlock());
+        sbGen.AppendLine(worldState.ToPromptBlock(includeInventory: _turnCount == 0));
 
         // Named controls of the foreground window. The same list backs the
         // grounding step, so a control the model names is clicked exactly.
         var controlsSw = Stopwatch.StartNew();
+        var controlsWindow = NativeInterop.GetForegroundWindow();
         var controls = await UiControlGrounding.SnapshotAsync(
-            NativeInterop.GetForegroundWindow(), TimeSpan.FromMilliseconds(ControlsBudgetMs));
-        _aci.AssignControls(controls);
+            controlsWindow, TimeSpan.FromMilliseconds(ControlsBudgetMs));
+        _aci.AssignControls(controls, controlsWindow);
         if (controls.Count > 0)
         {
             var scale = WindowsAutomationService.GetPrimaryMonitor().LogicalToPhysicalScale;
@@ -270,12 +274,21 @@ public sealed class Worker
 
         // Stuck-state recovery: if we've now hit the same failing
         // description twice in a row, force a strategy pivot.
+        if (_sameTargetCount >= RepeatedTargetNudgeAt)
+        {
+            // Independent of the pixel check, which a hover highlight can fool.
+            sbGen.AppendLine(
+                $"REPEATED_ACTION: You have sent the same action {_sameTargetCount} times in a row. " +
+                "If the screenshot shows no real progress, do not send it again: use a FOREGROUND_CONTROLS number, " +
+                "a keyboard shortcut, a direct launch, or report `fail`.");
+        }
+
         if (_recentFailures.Count >= StuckThreshold && _recentFailures.All(f => IsSameDescription(f, _recentFailures.First())))
         {
             sbGen.AppendLine(
                 "STUCK_RECOVERY: Your last few attempts failed with the same description. " +
                 "Pivot NOW. Do NOT repeat the same description. If FOREGROUND_CONTROLS lists the target, " +
-                "copy that control's exact name into `description`; otherwise try a totally different approach: " +
+                "click it by its number; otherwise try a totally different approach: " +
                 "call `list_windows`, select exactly one returned window_id, then call `get_window_state`. " +
                 "Use a returned accessibility element, or use app-local Tab/Shift+Tab/Enter/Escape only " +
                 "through `press_window_key` after a fresh observation.");
@@ -302,8 +315,8 @@ public sealed class Worker
             // the description). Help the model pick a different approach.
             sbGen.AppendLine(
                 $"GROUNDING_FAILED_RECOVERY: Your last action could not be executed: {_lastActionOutcome}. " +
-                "Call `list_windows`, select one exact returned window, then `get_window_state`; use a " +
-                "returned element index or an app-local key with `press_window_key`. Do not repeat the same guess.");
+                "Use a FOREGROUND_CONTROLS number, a keyboard shortcut or a direct launch. If none fits, call `list_windows`, " +
+                "select one exact returned window, then `get_window_state`. Do not repeat the same guess.");
         }
 
         if (_aci.Notes.Count > 0)
@@ -493,7 +506,7 @@ public sealed class Worker
         // fired; we re-capture here so the diff is "immediately before
         // the action" vs "immediately after", not 5-second-stale.
         WorldSnapshot? preSnapshot = null;
-        byte[]? preScreenshot = null;
+        ScreenFrame? preFrame = null;
 
         // Pre-dispatch safety net: if the model emitted a screen-target
         // action without enough information to actually land it
@@ -520,12 +533,12 @@ public sealed class Worker
             skipVerification = true;
         }
 
-        if (!skipVerification)
-        {
-            preSnapshot = WorldSnapshot.Capture();
-            try { preScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
-            catch { /* diff falls back to world-only signal */ }
-        }
+        // Every action that can change the screen is followed by a settle, so
+        // the next screenshot never shows a half-finished transition. Whether
+        // the outcome is also judged is a separate decision below.
+        var settleBudgetMs = actionWasSanitized ? 0 : SettlePolicy.NoChangeBudgetMs(action);
+        if (!skipVerification) preSnapshot = WorldSnapshot.Capture();
+        if (settleBudgetMs > 0) preFrame = await Task.Run(ScreenSampler.Capture, ct);
 
         var executeSw = Stopwatch.StartNew();
         var result = await _aci.ExecuteAsync(action, ct);
@@ -550,41 +563,26 @@ public sealed class Worker
                           || result.Outcome == ActionOutcome.FailedFatal;
         bool needVerify = !skipVerification && !outcomeFailed;
 
-        // Post-snapshot + post-screenshot for the verifier. Skipped for
-        // terminator actions (no diff to compute) but still run for
-        // observation tools so we can verify they returned valid data.
-        WorldSnapshot? postSnapshot = null;
-        byte[]? postScreenshot = null;
-        if (needVerify)
+        // UI reacts asynchronously and animates: poll real pixels until the
+        // effect has finished drawing, or until nothing has reacted within the
+        // budget. Only a genuine no-op pays the whole budget.
+        ScreenFrame? postFrame = null;
+        if (preFrame is not null && !outcomeFailed)
         {
-            // UI reacts asynchronously: a capture taken the instant SendInput
-            // returns usually predates the redraw, which made correct clicks
-            // look like no-ops. Poll briefly and stop as soon as anything
-            // changes, so only genuine no-ops pay the (short) wait.
-            for (var settle = 0; ; settle++)
-            {
-                postSnapshot = WorldSnapshot.Capture();
-                try { postScreenshot = WindowsAutomationService.CaptureScreenJpeg(captureW, quality: 65); }
-                catch { postScreenshot = null; /* diff falls back to world-only signal */ }
-
-                if (settle >= SettlePollLimit) break;
-                var interim = WorldDiff.Between(preSnapshot!, postSnapshot);
-                var screenMoved = preScreenshot is not null && postScreenshot is not null
-                    && ScreenshotDiffer.Diff(preScreenshot, postScreenshot).IsSignificant(SettleChangeThreshold);
-                if (interim.ForegroundChanged || interim.ForegroundProcessChanged
-                    || interim.WindowsAddedCount > 0 || interim.WindowsRemovedCount > 0
-                    || interim.FingerprintChanged || screenMoved)
-                    break;
-                await Task.Delay(SettlePollDelayMs, ct);
-            }
+            postFrame = await ScreenSampler.SettleAsync(preFrame, settleBudgetMs, CursorPosition, ct);
         }
+        var postSnapshot = needVerify ? WorldSnapshot.Capture() : null;
         var worldDiff = needVerify
             ? WorldDiff.Between(preSnapshot!, postSnapshot!)
             : default;
-        ScreenshotDiff screenDiff = (preScreenshot is not null && postScreenshot is not null)
-            ? ScreenshotDiffer.Diff(preScreenshot, postScreenshot)
+        // Judge around where the pointer ended up, so a toggle that flips or a
+        // focus ring that appears counts even though it is tiny on the screen.
+        var pointerAfter = CursorPosition();
+        ScreenshotDiff screenDiff = preFrame is not null && postFrame is not null
+            ? ScreenSampler.ToScreenshotDiff(ScreenSampler.Compare(preFrame, postFrame, pointerAfter?.X, pointerAfter?.Y))
             : new ScreenshotDiff(0, 0, 0, 0, "(skip — capture unavailable)", TimeSpan.Zero);
-
+        // Without frames there is no evidence either way, so don't report a miss.
+        needVerify = needVerify && preFrame is not null && postFrame is not null;
         var verifySw = Stopwatch.StartNew();
         var verdict = !needVerify
             ? new VerificationResult(true, action.Action,
@@ -592,7 +590,9 @@ public sealed class Worker
                     ? "fast path — input dispatch succeeded; next turn supplies fresh visual state"
                     : skipVerification
                     ? "non-mutating action — skipped verification"
-                    : "action dispatched with Failure result — verification not informative")
+                    : outcomeFailed
+                    ? "action dispatched with Failure result — verification not informative"
+                    : "screen frames unavailable — verification not possible")
             : ActionVerifier.Verify(
                 action.Action,
                 action.Raw,
@@ -703,8 +703,7 @@ public sealed class Worker
                 $"consecutive_failures={_aci.ConsecutiveGroundFailures}");
             _verificationFeedback.Enqueue(
                 $"GROUNDING_LOOP: the grounding LLM returned no coordinates twice in a row for \"{_aci.LastGroundDescription}\". " +
-                "The target isn't where you thought. Call `list_windows`, select one exact returned window, " +
-                "then `get_window_state`; use a returned element index, or `launch_app` if the app is absent. " +
+                "The target isn't where you thought. Use a FOREGROUND_CONTROLS number or a keyboard shortcut, or `launch_app` if the app is absent. " +
                 "Stop guessing click coordinates — they keep failing.");
             while (_verificationFeedback.Count > VerificationFeedbackKept) _verificationFeedback.Dequeue();
             // Reset the counter so the next step starts fresh. The next
@@ -712,6 +711,12 @@ public sealed class Worker
             // a screenshot-or-hotkey action instead of another failed click.
             _aci.ResetGroundFailureTracking();
         }
+
+        var targetKey = action.GetInt("control") is { } controlNumber
+            ? $"{action.Action}|control {_aci.LastGroundDescription}|{controlNumber}"
+            : TryDescribeAction(action);
+        _sameTargetCount = targetKey == _lastTargetKey ? _sameTargetCount + 1 : 1;
+        _lastTargetKey = targetKey;
 
         // Track failures & successes for stuck-detection and history.
         var effectiveFailure = actionWasSanitized
@@ -770,8 +775,23 @@ public sealed class Worker
             $"grounding={groundingMs}ms " +
             $"execute={executeMs}ms " +
             $"verify={verifyMs}ms " +
+            $"tokens_in={_generator.LastInputTokens} tokens_out={_generator.LastOutputTokens} " +
+            $"controls={controls.Count} " +
             $"outcome={result.Outcome}");
         return result;
+    }
+
+    private static (int X, int Y)? CursorPosition()
+    {
+        try
+        {
+            var snapshot = WorldSnapshot.Capture();
+            return (snapshot.CursorX, snapshot.CursorY);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string TryDescribeAction(AgentAction? action)

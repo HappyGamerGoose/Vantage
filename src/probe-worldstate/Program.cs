@@ -75,8 +75,7 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         var tracker = new PersistentTaskContext("conversation", directory);
         tracker.BeginTask("Prepare a release");
         var initialBlock = tracker.BuildPromptBlock();
-        persistentValid = initialBlock.Contains("Planning required", StringComparison.Ordinal)
-            && initialBlock.Contains("Include task_update in each action", StringComparison.Ordinal);
+        persistentValid = initialBlock.Contains("you may include task_update", StringComparison.Ordinal);
         using var action = JsonDocument.Parse("""
             { "description": "Open the release editor", "task_update": { "add": ["Draft release notes"], "complete": ["goal"] } }
             """);
@@ -119,8 +118,25 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
     }
 
-    var valid = windowValid && persistentValid;
-    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
+    // Per-turn state must not leak into remembered facts; command output must.
+    var noisy = new List<JsonObject>
+    {
+        new() { ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "system" } } },
+        new() { ["role"] = "user", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] =
+            "WORLD_STATE = { running_apps=[charmap.exe], hwnd=0x4049C }\nFOREGROUND_CONTROLS (window):\n  [1] \"dfrgui.exe\" button @top-left\n# PERSISTENT TASK STATE\nDiscovered entities & facts:\n  * cleanmgr.exe\nFor a task with several steps you may include task_update.\nCurrent Text Buffer = [out: C:\\logs\\result.txt]" } } },
+        new() { ["role"] = "assistant", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "plan" } } },
+        new() { ["role"] = "user", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "next" } } },
+        new() { ["role"] = "assistant", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "plan" } } },
+        new() { ["role"] = "user", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "latest" } } },
+    };
+    var noisySummary = ContextWindowCompactor.Compact(noisy, keepRecentNonSystemMessages: 1, keepRecentImages: 1).Summary;
+    var factsClean = noisySummary.Contains("C:\\logs\\result.txt", StringComparison.OrdinalIgnoreCase)
+        && !noisySummary.Contains("charmap.exe", StringComparison.OrdinalIgnoreCase)
+        && !noisySummary.Contains("dfrgui.exe", StringComparison.OrdinalIgnoreCase)
+        && !noisySummary.Contains("0x4049C", StringComparison.OrdinalIgnoreCase);
+
+    var valid = windowValid && persistentValid && factsClean;
+    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} FactsWithoutNoise={factsClean} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -404,8 +420,161 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
         try { Directory.Delete(taskRoot, recursive: true); } catch { }
     }
 
-    var valid = verifyOk && groundOk && blockOk && todoOk;
-    Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk}");
+    // Regressions from a real run: a page name in the location clause is not the target.
+    var realRun = new List<UiControl>
+    {
+        Ctl("Windows Update", "list-item", 40, 800),
+        Ctl("Privacy & security", "list-item", 40, 700),
+        Ctl("Search box, Find a setting", "edit", 300, 20),
+    };
+    var contextOnly = UiControlGrounding.Match("the Check for updates button at the top-right of the Windows Update page", realRun);
+    var targetFirst = UiControlGrounding.Match("the Windows Update list-item in the left sidebar of Settings", realRun);
+    var namePrefix = UiControlGrounding.Match("the Search box", realRun);
+    var preposition = UiControlGrounding.Match("the Save in folder button", new List<UiControl> { Ctl("Save in folder", "button", 10, 10) });
+    var contextOk = contextOnly is null && targetFirst?.Name == "Windows Update"
+        && namePrefix?.Role == "edit" && preposition is not null;
+
+    // Numbered list: chrome is hidden, numbers stay valid indexes into the snapshot.
+    var withChrome = new List<UiControl> { Ctl("Minimise Settings", "button", 900, 0), Ctl("Close", "button", 950, 0), Ctl("Close tab", "button", 100, 0), Ctl("Home", "list-item", 40, 160) };
+    var numbered = UiControlGrounding.BuildPromptBlock(withChrome, "Settings", 1536, 960, 1.25);
+    var numberedOk = numbered.Contains("[3] \"Home\"", StringComparison.Ordinal)
+        && numbered.Contains("[2] \"Close tab\"", StringComparison.Ordinal)
+        && !numbered.Contains("Minimise", StringComparison.Ordinal)
+        && !numbered.Contains("\"Close\"", StringComparison.Ordinal);
+    var underPoint = UiControlGrounding.ControlAt(50, 170, settings);
+    var snapOk = underPoint?.Name == "Home" && UiControlGrounding.ControlAt(5000, 5000, settings) is null;
+
+    // Coordinate calibration, including the answer seen in the real run: a
+    // control at image (116,451) answered as (60,622) is a 0-1000 grid.
+    var calibrationOk =
+        CoordinateCalibration.Choose(60, 622, 116, 451, 1152, 720) == CoordinateConvention.Permille
+        && CoordinateCalibration.Choose(118, 455, 116, 451, 1152, 720) == CoordinateConvention.ImagePixels
+        && CoordinateCalibration.Choose(900, 950, 1037, 684, 1152, 720) == CoordinateConvention.Permille
+        && CoordinateCalibration.ToImage(CoordinateConvention.Permille, 500, 500, 1000, 600) == (500d, 300d);
+
+    // A done after state-changing steps needs a look; after waits it does not.
+    AgentAction Named(string name) => CommonUtils.ParseAgentAction($"{{\"action\":\"{name}\"}}")!;
+    var doneOk = BatchPolicy.DoneNeedsAFreshLook(new[] { Named("key"), Named("wait") })
+        && !BatchPolicy.DoneNeedsAFreshLook(new[] { Named("wait") })
+        && !BatchPolicy.DoneNeedsAFreshLook(Array.Empty<AgentAction>());
+    var controlNotSanitized = ActionSanitizer.Sanitize(Parse("{\"action\":\"click\",\"control\":4}")).Replacement is null
+        && ActionSanitizer.Sanitize(Parse("{\"action\":\"click\"}")).Replacement is not null;
+
+    var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized;
+    Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
+                      $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized}");
+    Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    // Settle: real no-op pays its budget, a change waits for stillness, an
+    // endless animation hits the cap, and a tiny redraw is not a change.
+    var change = new FrameDelta(0.05, 0.2);
+    var still = new FrameDelta(0, 0);
+    var noOp = new SettleTracker(900);
+    var noOpOk = !noOp.IsDone(still, still, 200) && !noOp.IsDone(still, still, 800) && noOp.IsDone(still, still, 900) && !noOp.Changed;
+
+    var loads = new SettleTracker(900);
+    var loadsOk = !loads.IsDone(change, change, 100) && !loads.IsDone(change, change, 200)
+        && !loads.IsDone(change, still, 300) && loads.IsDone(change, still, 430) && loads.Changed;
+
+    var spinner = new SettleTracker(900);
+    var spinnerOk = !spinner.IsDone(change, change, 2000) && spinner.IsDone(change, change, 2500);
+
+    var hover = new FrameDelta(0.00003, 0.002);
+    var toggle = new FrameDelta(0.0002, 0.03);
+    var thresholdOk = !hover.IsChange && !hover.IsMotion && toggle.IsChange
+        && ScreenSampler.ToScreenshotDiff(toggle).IsSignificant(0.015) && !ScreenSampler.ToScreenshotDiff(hover).IsSignificant(0.003);
+
+    AgentAction Parse(string json) => CommonUtils.ParseAgentAction(json)!;
+    var policyOk = SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"done\"}")) == 0
+        && SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"get_window_state\"}")) == 0
+        && SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"click\",\"control\":1}")) == 900
+        && SettlePolicy.NoChangeBudgetMs(Parse("{\"action\":\"launch_app\",\"executable\":\"x\"}")) == 1500;
+
+    // Pixel comparison: identical frames, one changed area, and the local reading around the pointer.
+    ScreenFrame Frame(Action<byte[]> paint)
+    {
+        var gray = new byte[960 * 600];
+        paint(gray);
+        return new ScreenFrame(gray, 960, 600, 1536, 960);
+    }
+    var blank = Frame(_ => { });
+    var dot = Frame(g => { for (var y = 300; y < 310; y++) for (var x = 480; x < 500; x++) g[(y * 960) + x] = 255; });
+    var same = ScreenSampler.Compare(blank, blank, 100, 100);
+    var near = ScreenSampler.Compare(blank, dot, 780, 488);
+    var far = ScreenSampler.Compare(blank, dot, 100, 100);
+    var compareOk = same.Global == 0 && same.Local == 0 && near.Local > 0.015 && near.IsChange && far.Local == 0 && !far.IsChange;
+
+    // Real capture of the live screen, with timing: must be cheap enough to poll.
+    var captureWatch = Stopwatch.StartNew();
+    ScreenFrame? live = null;
+    for (var i = 0; i < 10; i++) live = ScreenSampler.Capture();
+    var captureMs = captureWatch.ElapsedMilliseconds / 10;
+    var compareWatch = Stopwatch.StartNew();
+    if (live is not null) ScreenSampler.Compare(live, live, 500, 500);
+    var compareMs = compareWatch.ElapsedMilliseconds;
+    var liveOk = live is { Width: > 0, Height: > 0 };
+
+    // Hedging: fast call sends one; slow call sends two and the fast answer
+    // wins; a failed hedge doesn't sink a primary; a healthy delay stays long.
+    var fastCalls = 0;
+    var fast = await HedgedRequest.RunAsync(async token => { fastCalls++; await Task.Delay(5, token); return "a"; }, TimeSpan.FromMilliseconds(500), CancellationToken.None);
+    var slowCalls = 0;
+    var slow = await HedgedRequest.RunAsync(async token =>
+    {
+        var call = Interlocked.Increment(ref slowCalls);
+        await Task.Delay(call == 1 ? 3000 : 5, token);
+        return $"call{call}";
+    }, TimeSpan.FromMilliseconds(30), CancellationToken.None);
+    var failCalls = 0;
+    var survivor = await HedgedRequest.RunAsync(async token =>
+    {
+        var call = Interlocked.Increment(ref failCalls);
+        if (call == 2) throw new InvalidOperationException("hedge failed");
+        await Task.Delay(120, token);
+        return "primary";
+    }, TimeSpan.FromMilliseconds(20), CancellationToken.None);
+    var bothFail = false;
+    try
+    {
+        await HedgedRequest.RunAsync<string>(async token => { await Task.Delay(1, token); throw new InvalidOperationException("x"); }, TimeSpan.FromMilliseconds(500), CancellationToken.None);
+    }
+    catch (InvalidOperationException) { bothFail = true; }
+    var noHistory = LlmLatency.HedgeDelay("speed-test|none") is null;
+    for (var i = 0; i < 3; i++) LlmLatency.Record("speed-test|m", 2000);
+    var learned = LlmLatency.HedgeDelay("speed-test|m") == TimeSpan.FromSeconds(6);
+    LlmLatency.NoteRateLimited("speed-test|m");
+    var throttled = LlmLatency.HedgeDelay("speed-test|m") is null;
+    var hedgeOk = fast == "a" && fastCalls == 1 && slow == "call2" && slowCalls == 2 && survivor == "primary" && bothFail
+        && noHistory && learned && throttled
+        && LlmLatency.DelayForMedian(500) == TimeSpan.FromSeconds(6) && LlmLatency.DelayForMedian(60_000) == TimeSpan.FromSeconds(25);
+
+    // Provider parameter adaptation, using the error text from the logs.
+    var parameterOk =
+        OpenAICompatEngine.ClassifyParameterRejection("Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.") == OpenAICompatEngine.ParameterRejection.MaxTokens
+        && OpenAICompatEngine.ClassifyParameterRejection("Unsupported value: 'temperature' does not support 0 with this model. Only the default (1) value is supported.") == OpenAICompatEngine.ParameterRejection.Temperature
+        && OpenAICompatEngine.ClassifyParameterRejection("Missing required query parameter: api-version") == OpenAICompatEngine.ParameterRejection.None;
+
+    // Per-turn state shrinks after the first turn.
+    WorldStateProbe.PrimeSessionCache();
+    var world = WorldStateProbe.Capture();
+    var first = world.ToPromptBlock(includeInventory: true);
+    var later = world.ToPromptBlock(includeInventory: false);
+    var worldOk = later.Length <= first.Length && !later.Contains("installed_apps", StringComparison.Ordinal) && !later.Contains("battery", StringComparison.Ordinal);
+
+    var systemPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>());
+    var promptOk = systemPrompt.Contains("\"control\":N", StringComparison.Ordinal)
+        && systemPrompt.Contains("ms-settings:windowsupdate", StringComparison.Ordinal)
+        && !systemPrompt.Contains("Wait at least 3 seconds", StringComparison.Ordinal)
+        && !systemPrompt.Contains("terminate with `done`", StringComparison.Ordinal);
+
+    var valid = noOpOk && loadsOk && spinnerOk && thresholdOk && policyOk && compareOk && liveOk && hedgeOk && parameterOk && worldOk && promptOk;
+    Console.WriteLine($"AgentSpeedValid={valid} NoOp={noOpOk} Loads={loadsOk} Spinner={spinnerOk} Thresholds={thresholdOk} Policy={policyOk} Compare={compareOk} LiveCapture={liveOk} " +
+                      $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk}");
+    Console.WriteLine($"Measured: capture={captureMs}ms per frame at {live?.Width}x{live?.Height}, compare={compareMs}ms, world state first turn={first.Length} chars, later={later.Length} chars, system prompt={systemPrompt.Length} chars");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }

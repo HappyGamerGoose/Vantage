@@ -114,8 +114,8 @@ public static class ContextWindowCompactor
             var role = msg["role"]?.GetValue<string>() ?? "user";
             var text = ExtractText(msg);
 
-            // 1. Extract entities & facts (paths, URLs, error codes, processes)
-            ExtractEntities(text, discoveredEntities);
+            // 1. Extract entities & facts (paths, URLs, error codes, processes).
+            ExtractEntities(WithoutPerTurnState(text), discoveredEntities);
 
             if (role.Equals("user", StringComparison.OrdinalIgnoreCase))
             {
@@ -291,6 +291,36 @@ public static class ContextWindowCompactor
                 entities.Add(proc);
             }
         }
+    }
+
+    /// <summary>
+    /// Removes the state blocks repeated on every turn. They list every running
+    /// app, window handle and recent file, which are not facts about this task,
+    /// while command output and feedback in the same message are.
+    /// </summary>
+    private static string WithoutPerTurnState(string text)
+    {
+        var kept = new StringBuilder(text.Length);
+        var inTaskBlock = false;
+        foreach (var line in text.Split('\n'))
+        {
+            if (line.StartsWith("# PERSISTENT TASK STATE", StringComparison.Ordinal))
+            {
+                inTaskBlock = true;
+                continue;
+            }
+            if (inTaskBlock)
+            {
+                if (line.StartsWith("For a task with several steps", StringComparison.Ordinal)) inTaskBlock = false;
+                continue;
+            }
+            if (line.StartsWith("WORLD_STATE =", StringComparison.Ordinal)
+                || line.StartsWith("FOREGROUND_CONTROLS", StringComparison.Ordinal)
+                || line.StartsWith("  [", StringComparison.Ordinal))
+                continue;
+            kept.Append(line).Append('\n');
+        }
+        return kept.ToString();
     }
 
     private static void ExtractUserDirectives(string text, List<string> directives)
