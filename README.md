@@ -25,7 +25,7 @@ Create a self-contained VeloPack installer:
 .\scripts\pack-velopack.ps1
 ```
 
-The installer and update packages are written to `releases\velopack`.
+The installer and update packages are written to `releases\velopack`. The files to attach to a GitHub release are copied to `releases\github\<version>`, with an update list that names only that version.
 
 ## Run
 

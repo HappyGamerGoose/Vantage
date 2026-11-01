@@ -97,3 +97,5 @@ if (Test-Path -LiteralPath $signingPropsPath) {
 if ($LASTEXITCODE -ne 0) { throw "VeloPack packaging failed." }
 
 Write-Host "Vantage $Version is ready in $releaseDir"
+
+& (Join-Path $PSScriptRoot "prepare-release-assets.ps1") -Version $Version -ReleaseDir $releaseDir
