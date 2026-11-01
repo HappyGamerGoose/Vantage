@@ -326,6 +326,27 @@ internal static class BrowserPolicy
     }
 }
 
+/// <summary>
+/// Whether typing into the address bar would replace a page. Every tab that was
+/// not opened for this navigation may be the user's work, and a tab reached by
+/// Ctrl+Tab looks no different from one the run opened itself, so each navigation
+/// gets its own tab unless the task is about the open one.
+/// </summary>
+internal sealed class BrowserTabTracker
+{
+    private bool _freshTab;
+
+    public void OnNewTabOpened() => _freshTab = true;
+
+    public void OnAddressUsed() => _freshTab = false;
+
+    public bool ShouldOpenNewTab(ForegroundWindowInfo foreground, string? goal)
+    {
+        if (_freshTab || !foreground.IsBrowser) return false;
+        return !BrowserPolicy.GoalAllowsCurrentTab(goal) && !BrowserPolicy.IsBlankTab(foreground.Title);
+    }
+}
+
 internal static class DonePolicy
 {
     /// <summary>

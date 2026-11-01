@@ -33,6 +33,7 @@ internal static class UiControlGrounding
     private const int MaxControls = 160;
     private const int MinNameLength = 2;
     private const int MinPrefixLength = 4;
+    private const string TabRole = "tab-item";
 
     private const int BoundingRectanglePropertyId = 30001;
     private const int ControlTypePropertyId = 30003;
@@ -125,7 +126,10 @@ internal static class UiControlGrounding
 
             found = root.FindAllBuildCache(TreeScope.TreeScope_Descendants, condition, cache);
             var length = found.Length;
-            for (var i = 0; i < length && controls.Count < MaxControls; i++)
+            // Page content comes before the tab strip, so tabs are read even past
+            // the cap: on a long page the model could not see any tab, and a click
+            // meant for one landed on a similarly named link in the page.
+            for (var i = 0; i < length; i++)
             {
                 if (ct.IsCancellationRequested) break;
                 IUIAutomationElement? element = null;
@@ -134,6 +138,7 @@ internal static class UiControlGrounding
                     element = found.GetElement(i);
                     var role = ControlRole(element.CachedControlType);
                     if (!TargetRoles.Contains(role)) continue;
+                    if (controls.Count >= MaxControls && role != TabRole) continue;
                     var name = (element.CachedName ?? string.Empty).Trim();
                     if (name.Length < MinNameLength) continue;
                     var rect = element.CachedBoundingRectangle;
@@ -186,11 +191,13 @@ internal static class UiControlGrounding
         // where it is. A control named in that trailing part is not the target.
         var targetEnd = TargetPhraseEnd(padded);
         var core = TargetCore(padded[..targetEnd]);
+        var requiredRoles = RolesNamedBy(padded[..targetEnd]);
 
         var scored = new List<(UiControl Control, double Score)>();
         foreach (var control in controls)
         {
             if (!control.Enabled || control.Offscreen) continue;
+            if (requiredRoles is not null && !requiredRoles.Contains(control.Role)) continue;
             var name = Normalize(control.Name);
             if (name.Length < MinNameLength) continue;
 
@@ -249,6 +256,32 @@ internal static class UiControlGrounding
         " button", " link", " hyperlink", " tab", " option", " item", " entry", " icon",
         " menu", " list item", " checkbox", " check box", " toggle", " control",
     };
+
+    // Web pages style links as buttons and the reverse, so those two share a group.
+    private static readonly (string Word, string[] Roles)[] RoleNames =
+    {
+        (" tab", new[] { TabRole }),
+        (" button", new[] { "button", "hyperlink", "menu-item" }),
+        (" link", new[] { "hyperlink", "button" }),
+        (" hyperlink", new[] { "hyperlink", "button" }),
+        (" checkbox", new[] { "checkbox" }),
+        (" check box", new[] { "checkbox" }),
+    };
+
+    /// <summary>
+    /// When the target phrase ends by naming a kind of control, only that kind can
+    /// be the target. "The Mount Everest tab" once matched a link with those words
+    /// and replaced the page it was on.
+    /// </summary>
+    private static string[]? RolesNamedBy(string targetPhrase)
+    {
+        var phrase = targetPhrase.TrimEnd();
+        foreach (var (word, roles) in RoleNames)
+        {
+            if (phrase.EndsWith(word, StringComparison.Ordinal)) return roles;
+        }
+        return null;
+    }
 
     /// <summary>Index in <paramref name="padded"/> where the location clause starts.</summary>
     private static int TargetPhraseEnd(string padded)
@@ -342,6 +375,7 @@ internal static class UiControlGrounding
         var usable = controls
             .Select((control, index) => (Control: control, Index: index))
             .Where(c => c.Control.Enabled && !c.Control.Offscreen && !IsWindowChrome(c.Control))
+            .OrderBy(c => c.Control.Role == TabRole ? 0 : 1)
             .ToList();
         if (usable.Count == 0) return string.Empty;
 

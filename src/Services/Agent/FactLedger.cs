@@ -24,6 +24,9 @@ internal sealed class FactLedger
 
     private static readonly Regex UrlOrPath = new(@"\S*(?:://|[\\/])\S*", RegexOptions.Compiled);
     private static readonly Regex Number = new(@"(?<![\w.])\d[\d,]*(?:\.\d+)?(?!\w)", RegexOptions.Compiled);
+    private static readonly Regex ShellWrite = new(
+        @"\b(?:Set-Content|Add-Content|Out-File|Set-Clipboard|WriteAllText|WriteAllLines|AppendAllText)\b|New-Item\b.*-Value\b|(?<![\d&])>{1,2}\s*[\w""'$\\.]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Year = new(@"^(19|20)\d\d$", RegexOptions.Compiled);
 
     private readonly List<string> _notes = new();
@@ -89,6 +92,10 @@ internal sealed class FactLedger
                 break;
             case "set_value":
                 if (action.GetString("value") is { Length: > 0 } value) yield return value;
+                break;
+            case "run_powershell":
+                // Writing a file from the shell is typing by another route.
+                if (action.GetString("command") is { Length: > 0 } command && ShellWrite.IsMatch(command)) yield return command;
                 break;
         }
     }

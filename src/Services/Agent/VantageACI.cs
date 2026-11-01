@@ -23,7 +23,7 @@ public sealed class VantageACI
     private const int MaxBatchSteps = 16;
     private static readonly HashSet<string> BatchableActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "double_click", "click_xy", "type", "type_text", "key", "press_key",
+        "click", "double_click", "right_click", "click_xy", "type", "type_text", "key", "press_key",
         "scroll", "scroll_xy", "drag", "drag_xy", "move_mouse",
         "highlight_text_span", "activate_window", "click_element",
         "click_window_xy", "scroll_window", "drag_window", "set_value",
@@ -164,7 +164,8 @@ public sealed class VantageACI
                 "batch"            => await DoBatchAsync(action, ct),
                 // ── UI-input actions (sent to the grounding layer or click_xy) ──
                 "click"            => await DoClickAsync(action, ct),
-                "double_click"     => await DoClickAsync(AsDoubleClick(action), ct),
+                "double_click"     => await DoClickAsync(WithClickOption(action, "num_clicks", 2), ct),
+                "right_click"      => await DoClickAsync(WithClickOption(action, "button", "right"), ct),
                 "click_xy"         => await DoClickAtAsync(action, ct),
                 "type"             => await DoTypeAsync(action, ct),
                 "type_text"        => await DoTypeTextAsync(action, ct),
@@ -314,30 +315,24 @@ public sealed class VantageACI
 
     // ─── Action implementations ─────────────────────────────────
 
-    private static AgentAction AsDoubleClick(AgentAction action)
+    private static AgentAction WithClickOption(AgentAction action, string field, System.Text.Json.Nodes.JsonNode value)
     {
         var fields = System.Text.Json.Nodes.JsonNode.Parse(action.Raw.GetRawText())!.AsObject();
         fields["action"] = "click";
-        fields["num_clicks"] = 2;
+        fields[field] = value;
         return new AgentAction { Action = "click", Raw = JsonSerializer.SerializeToElement(fields) };
     }
 
     public void SetTaskGoal(string goal) => _taskGoal = goal;
 
-    // Navigating needs a tab of its own: whatever is open belongs to the user.
-    // Decided once per run, at the first attempt to use the address bar. Later
-    // navigation stays in the tab this run opened.
     private string _taskGoal = string.Empty;
-    private bool _browserTabDecided;
+    private readonly BrowserTabTracker _tabs = new();
     private bool _addressBarFocused;
 
     private bool ClaimNewTab()
     {
-        if (_browserTabDecided) return false;
-        var foreground = ForegroundWindowProbe.Read();
-        if (!foreground.IsBrowser) return false;
-        _browserTabDecided = true;
-        if (BrowserPolicy.GoalAllowsCurrentTab(_taskGoal) || BrowserPolicy.IsBlankTab(foreground.Title)) return false;
+        if (!_tabs.ShouldOpenNewTab(ForegroundWindowProbe.Read(), _taskGoal)) return false;
+        _tabs.OnNewTabOpened();
         CommonUtils.LogDiagnostic("browser-new-tab", "opening a new tab so the open one is not replaced");
         return true;
     }
@@ -510,6 +505,7 @@ public sealed class VantageACI
             WindowsAppManager.PressKey("ctrl+t");
             await Task.Delay(NewTabFocusDelayMs, ct);
         }
+        if (intoAddressBar) _tabs.OnAddressUsed();
 
         if (!inOwnTab && TryResolveControlNumber(action, out var controlPoint) is { } resolved)
         {
@@ -578,7 +574,7 @@ public sealed class VantageACI
     {
         if (BrowserPolicy.IsNewTabShortcut(chord))
         {
-            _browserTabDecided = true;
+            _tabs.OnNewTabOpened();
             _addressBarFocused = true;
             return false;
         }
@@ -1022,9 +1018,6 @@ public sealed class VantageACI
         if (string.IsNullOrWhiteSpace(executable))
             return new ActionResult(ActionOutcome.Failed, "launch_app requires `executable` (path or file association)");
 
-        // A URL handed to the system opens in a new tab already.
-        if (SettlePolicy.OpensUrl(action)) _browserTabDecided = true;
-
         var launch = await WindowsAppManager.LaunchAndFocusAppAsync(
             executable,
             timeoutMs: 8_000,
@@ -1299,6 +1292,7 @@ public sealed class VantageACI
             WindowsAppManager.PressKey("ctrl+t");
             await Task.Delay(NewTabFocusDelayMs, ct);
         }
+        if (_addressBarFocused) _tabs.OnAddressUsed();
         _addressBarFocused = false;
         var delay = action.GetInt("delay_ms") ?? 0;
         var typed = await WindowsAppManager.TypeTextAsync(

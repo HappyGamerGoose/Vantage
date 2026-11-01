@@ -604,7 +604,49 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var thresholdOk = new FrameDelta(0.00022, 0).IsChange && !new FrameDelta(0.00003, 0.002).IsChange
         && ScreenSampler.ToScreenshotDiff(new FrameDelta(0.00022, 0)).IsSignificant(0.006);
 
-    ledgerOk = ledgerOk && replyOk && problemOk && noiseOk && clipOk && thresholdOk;
+    // Tabs, replaying the run where a link replaced a tab and a user tab was overwritten.
+    var tabControls = new List<UiControl>
+    {
+        Ctl("Mount Everest", "hyperlink", 500, 400),
+        Ctl("Mount Everest - Wikipedia - Memory usage - 200 MB", "tab-item", 300, 10),
+        Ctl("K2 - Wikipedia - Memory usage - 182 MB", "tab-item", 500, 10),
+        Ctl("Save", "hyperlink", 100, 300),
+    };
+    var linkOnly = tabControls.Where(c => c.Role == "hyperlink").ToList();
+    var tabMatchOk = UiControlGrounding.Match("the Mount Everest - Wikipedia tab at the top of the browser", tabControls)?.Role == "tab-item"
+        && UiControlGrounding.Match("the K2 - Wikipedia tab at the top of the browser", tabControls)?.Left == 500
+        && UiControlGrounding.Match("the Mount Everest - Wikipedia tab at the top of the browser", linkOnly) is null
+        && UiControlGrounding.Match("the Mount Everest link", tabControls)?.Role == "hyperlink"
+        && UiControlGrounding.Match("the Save button", tabControls)?.Role == "hyperlink";
+    var manyControls = Enumerable.Range(0, 80).Select(i => Ctl($"Link {i}", "hyperlink", 10, i)).Append(Ctl("K2 - Wikipedia", "tab-item", 500, 10)).ToList();
+    var listed = UiControlGrounding.BuildPromptBlock(manyControls, "Edge", 1536, 960, 1.25);
+    var tabsListedOk = listed.Contains("[80] \"K2 - Wikipedia\" tab-item", StringComparison.Ordinal)
+        && listed.IndexOf("K2 - Wikipedia", StringComparison.Ordinal) < listed.IndexOf("Link 0", StringComparison.Ordinal);
+
+    // Every address bar use gets a new tab, including on a tab reached by Ctrl+Tab.
+    var tracker = new BrowserTabTracker();
+    var edgeBacklogs = new ForegroundWindowInfo("Backlogs - Claude and 2 more pages - Microsoft Edge", "msedge");
+    var everyUse = tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2") && tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2");
+    tracker.OnNewTabOpened();
+    var noDouble = !tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2");
+    tracker.OnAddressUsed();
+    var againAfter = tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2");
+    var trackerOk = everyUse && noDouble && againAfter
+        && !tracker.ShouldOpenNewTab(new ForegroundWindowInfo("New tab - Microsoft Edge", "msedge"), "x")
+        && !tracker.ShouldOpenNewTab(edgeBacklogs, "Reload this tab")
+        && !tracker.ShouldOpenNewTab(new ForegroundWindowInfo("Report - Notepad", "notepad"), "x");
+
+    // Writing a file through the shell is checked; doing a sum is not.
+    var shell = new FactLedger();
+    var shellWrite = Parse("{\"action\":\"run_powershell\",\"command\":\"Set-Content -Path \\\"C:\\\\Users\\\\Me\\\\mountains.txt\\\" -Value @(\\u0027Difference: 237.86 m\\u0027)\"}");
+    var shellOk = shell.BlockedValues(shellWrite, noSources).SequenceEqual(new[] { "237.86" })
+        && shell.BlockedValues(shellWrite, new string?[] { "Display is 237.86" }).Count == 0
+        && shell.BlockedValues(Parse("{\"action\":\"run_powershell\",\"command\":\"8848.86 - 8611\"}"), noSources).Count == 0
+        && shell.BlockedValues(Parse("{\"action\":\"run_powershell\",\"command\":\"Get-ChildItem 2>$null | Select -First 500\"}"), noSources).Count == 0
+        && shell.BlockedValues(Parse("{\"action\":\"run_powershell\",\"command\":\"echo 555123 > out.txt\"}"), noSources).Count == 1
+        && shell.BlockedValues(Parse("{\"action\":\"run_powershell\",\"command\":\"New-Item -ItemType Directory -Path \\\"C:\\\\Test 500\\\" -Force\"}"), noSources).Count == 0;
+
+    ledgerOk = ledgerOk && replyOk && problemOk && noiseOk && clipOk && thresholdOk && tabMatchOk && tabsListedOk && trackerOk && shellOk;
 
     var ruleOk = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("clicks\\\": -5", StringComparison.Ordinal)
         || PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("\"clicks\": -5", StringComparison.Ordinal);
@@ -612,7 +654,7 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized && ledgerOk && ruleOk;
     Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
                       $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized} " +
-                      $"FloatNoise={noiseOk} Clipboard={clipOk} SmallChange={thresholdOk} Replies={replyOk} ReplyProblem={problemOk} Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
+                      $"TabMatch={tabMatchOk} TabsListed={tabsListedOk} TabTracker={trackerOk} ShellWrites={shellOk} FloatNoise={noiseOk} Clipboard={clipOk} SmallChange={thresholdOk} Replies={replyOk} ReplyProblem={problemOk} Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -900,7 +942,10 @@ if (args.Contains("--controls-timing", StringComparer.OrdinalIgnoreCase))
     {
         var unlimited = Stopwatch.StartNew();
         var read = await UiControlGrounding.SnapshotAsync(window.Handle, TimeSpan.FromSeconds(30));
-        Console.WriteLine($"{unlimited.ElapsedMilliseconds,6}ms controls={read.Count,3} :: {window.Title}");
+        var tabs = read.Where(c => c.Role == "tab-item").Select(c => c.Name).ToList();
+        var askedTab = args.Length > 1 ? UiControlGrounding.Match($"the {args[1]} tab at the top of the browser", read) : null;
+        Console.WriteLine($"{unlimited.ElapsedMilliseconds,6}ms controls={read.Count,3} tabs={tabs.Count} match={askedTab?.Role}:{askedTab?.Name} :: {window.Title}");
+        foreach (var tab in tabs.Take(8)) Console.WriteLine("    tab: " + tab);
     }
     return;
 }
