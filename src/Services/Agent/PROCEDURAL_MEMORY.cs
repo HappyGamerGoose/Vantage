@@ -77,7 +77,11 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("17. To get a value or any exact text, use `read_text` instead of reading the screenshot or scrolling to find it. Screenshots are shrunk and their small digits are often misread. {\"action\":\"read_text\",\"find\":\"Population\"} returns the exact text around that word from the whole page in the front window, into TEXT_READ, where it stays for the rest of the task.");
         sb.AppendLine("18. Vantage refuses to type a number that is not in TEXT_READ, command output or the task. Copy values from TEXT_READ digit for digit, and never estimate, round or recall one. For a sum, use `run_powershell`. Only if read_text reports that a window has no readable text may you pass `unconfirmed: true` on the typing action, and the run will then be reported as needing review.");
         sb.AppendLine("19. Older screens are not kept. Add `note` to any action to leave yourself a reminder of what is done and what is next; a note is not proof of a value.");
-        sb.AppendLine("20. Before `done`, compare what you produced with TEXT_READ. Report only what you can see.");
+        sb.AppendLine("20. Before saving or `done`, look at what you produced and compare it with TEXT_READ. If it is wrong, fix it first: never save or finish with content you can see is wrong. Report only what you can see.");
+        sb.AppendLine("21. If the task names an app for a step, do that step in that app, even if another way is quicker.");
+        sb.AppendLine("22. In Calculator, type the whole sum at once, such as {\"action\":\"type_text\",\"text\":\"8848.86-8611=\"}. Operators only appear in a small line above the display, so a pressed button can look as if nothing happened. Read the answer with `read_text`.");
+        sb.AppendLine("23. A Last action starting with NOT DONE did not happen, so do not continue as if it had.");
+        sb.AppendLine("24. Ctrl+V only works with something you placed on the clipboard yourself, with `vantage_set_clipboard` or Ctrl+C.");
         sb.AppendLine("16. Tabs that are already open are the user's work. To visit a page, open a new tab with Ctrl+T, or pass the URL to `launch_app`; never navigate an existing tab unless the task says to use it. Vantage turns the first use of the address bar into a new tab.");
         sb.AppendLine("12. Reply in the required shape every time, with exactly one action object and no comments or trailing commas. You control the desktop through these actions, so act rather than describing what could be done. If the task is truly impossible, send {\"action\":\"fail\",\"reason\":\"<why>\"}.");
         sb.AppendLine("13. Complete requested sends, installs, deletions, settings changes, uploads, and shell operations directly without asking for a separate approval. Normal physical keyboard or mouse activity does not end the run; continue unless the cancellation token is set by Stop or Escape.");
@@ -200,7 +204,7 @@ public static class PROCEDURAL_MEMORY
             "```\n" +
             "- control (int): number from the current FOREGROUND_CONTROLS list. Exact and instant; prefer it whenever the target is listed.\n" +
             "- description (string, when no control fits): the target first, then where it is, using its visible label.\n" +
-            "- num_clicks (optional, int, default 1): 1 for single-click, 2 for double-click.\n" +
+            "- num_clicks (optional, int, default 1): 1 for single-click, 2 for double-click. `double_click` is the same action with 2.\n" +
             "- button (optional, string, default \"left\"): \"left\" | \"right\" | \"middle\".\n" +
             "- hold_keys (optional, list of strings, default []): keys to hold while clicking, e.g. [\"ctrl\"].\n" +
             "Use for any UI element you can identify by sight but can't address with a hotkey."

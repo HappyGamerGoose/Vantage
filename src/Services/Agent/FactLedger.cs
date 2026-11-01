@@ -19,6 +19,8 @@ internal sealed class FactLedger
     private const int MaxReadExcerpts = 24;
     private const int MaxExcerptLength = 420;
     private const int MinValueDigits = 3;
+    private const int MinNoisyDecimals = 9;
+    private const decimal NoiseTolerance = 0.000000001m;
 
     private static readonly Regex UrlOrPath = new(@"\S*(?:://|[\\/])\S*", RegexOptions.Compiled);
     private static readonly Regex Number = new(@"(?<![\w.])\d[\d,]*(?:\.\d+)?(?!\w)", RegexOptions.Compiled);
@@ -44,9 +46,32 @@ internal sealed class FactLedger
         {
             var written = match.Value.TrimEnd(',');
             var key = written.Replace(",", string.Empty);
-            if (key.Count(char.IsDigit) >= MinValueDigits && !Year.IsMatch(key)) values[key] = written;
+            if (key.Count(char.IsDigit) >= MinValueDigits && !Year.IsMatch(key)) values[Canonical(key)] = written;
         }
         return values;
+    }
+
+    // 237.860 and 237.86 are the same number.
+    private static string Canonical(string digits) =>
+        digits.Contains('.') ? digits.TrimEnd('0').TrimEnd('.') : digits;
+
+    /// <summary>
+    /// Floating-point output such as 237.860000000001 means 237.86, and refusing
+    /// that once blocked a correct answer. Only true noise qualifies: the value
+    /// must sit within a billionth of a shorter number, so 237.87 still fails.
+    /// </summary>
+    internal static string? WithoutFloatingPointNoise(string key)
+    {
+        var point = key.IndexOf('.');
+        if (point < 0 || key.Length - point - 1 < MinNoisyDecimals) return null;
+        if (!decimal.TryParse(key, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value)) return null;
+        for (var decimals = 0; decimals < MinNoisyDecimals; decimals++)
+        {
+            var rounded = Math.Round(value, decimals);
+            if (Math.Abs(value - rounded) < NoiseTolerance)
+                return Canonical(rounded.ToString($"F{decimals}", System.Globalization.CultureInfo.InvariantCulture));
+        }
+        return null;
     }
 
     /// <summary>Everything an action would type, including inside a batch.</summary>
@@ -121,7 +146,10 @@ internal sealed class FactLedger
 
         foreach (var source in _read.Concat(otherSources))
         foreach (var key in ExtractValues(source).Keys)
+        {
             missing.Remove(key);
+            if (WithoutFloatingPointNoise(key) is { } clean) missing.Remove(clean);
+        }
         if (missing.Count == 0) return Array.Empty<string>();
 
         if (_readingUnavailable && action.GetBool("unconfirmed", false))
@@ -154,5 +182,58 @@ internal sealed class FactLedger
             foreach (var note in _notes) sb.Append("  - ").AppendLine(note);
         }
         return sb.ToString().TrimEnd();
+    }
+}
+
+/// <summary>
+/// The clipboard belongs to the user until this run puts something there. A
+/// blocked write once led to Ctrl+V pasting whatever the user had copied, which
+/// could as easily have been a password.
+/// </summary>
+internal static class ClipboardPolicy
+{
+    private static readonly string[] ClipboardWords = { "clipboard", "paste", "pasting", "copied" };
+
+    public static bool GoalAllowsUserClipboard(string? goal) =>
+        goal is not null && ClipboardWords.Any(word => goal.Contains(word, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Follows the action in order. Returns whether it would paste something
+    /// this run did not place, and whether the clipboard is the run's own after it.
+    /// </summary>
+    public static (bool PastesForeignContent, bool OursAfter) Evaluate(AgentAction action, bool oursBefore)
+    {
+        var name = action.Action.Trim().ToLowerInvariant();
+        if (name == "batch")
+        {
+            var ours = oursBefore;
+            foreach (var step in action.GetActionList("steps"))
+            {
+                var (foreign, after) = Evaluate(step, ours);
+                if (foreign) return (true, ours);
+                ours = after;
+            }
+            return (false, ours);
+        }
+
+        if (name == "vantage_set_clipboard") return (false, true);
+        if (name == "run_powershell"
+            && (action.GetString("command") ?? string.Empty).Contains("Set-Clipboard", StringComparison.OrdinalIgnoreCase))
+            return (false, true);
+
+        var chord = name switch
+        {
+            "key" => string.Join("+", action.GetStringList("keys")),
+            "press_key" or "press_window_key" => action.GetString("combo") ?? string.Empty,
+            _ => string.Empty,
+        };
+        var keys = chord.ToLowerInvariant().Replace(" ", string.Empty).Replace("control", "ctrl")
+            .Split('+', StringSplitOptions.RemoveEmptyEntries);
+        if (keys.Length == 2 && keys.Contains("ctrl"))
+        {
+            if (keys.Contains("c") || keys.Contains("x")) return (false, true);
+            if (keys.Contains("v")) return (!oursBefore, oursBefore);
+        }
+        return (false, oursBefore);
     }
 }

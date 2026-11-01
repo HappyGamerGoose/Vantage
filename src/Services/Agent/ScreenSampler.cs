@@ -11,15 +11,20 @@ using System.Runtime.InteropServices;
 
 namespace Vantage.Services.Agent;
 
-internal sealed record ScreenFrame(byte[] Gray, int Width, int Height, int LogicalWidth, int LogicalHeight);
+internal sealed record ScreenFrame(byte[] Gray, int Width, int Height, int LogicalWidth, int LogicalHeight, int PhysicalWidth = 0);
+
+/// <summary>A window's rectangle in physical screen pixels.</summary>
+internal readonly record struct ScreenRegion(int Left, int Top, int Right, int Bottom);
 
 /// <summary>Share of pixels that differ across the screen and around a point.</summary>
 internal readonly record struct FrameDelta(double Global, double Local)
 {
-    // About 0.08% of the screen is a tooltip or a small repaint; a clock tick
-    // and a blinking caret stay below it. Around the pointer a toggle or a
-    // focus ring is enough, however small it is against the whole screen.
-    public bool IsChange => Global >= 0.0008 || Local >= 0.015;
+    // A real but distant change, Calculator's small expression line, measured
+    // 0.022% of the screen, which is why callers compare inside the front window:
+    // across the whole screen, other apps animating reached far more than that.
+    // Around the pointer a toggle or a focus ring is enough, however small it is
+    // against the whole screen.
+    public bool IsChange => Global >= 0.00015 || Local >= 0.015;
 
     public bool IsMotion => Global >= 0.0004;
 }
@@ -63,7 +68,7 @@ internal static class ScreenSampler
             var gray = new byte[width * height];
             for (int i = 0, p = 0; i < gray.Length; i++, p += 4)
                 gray[i] = (byte)((pixels[p] + (pixels[p + 1] * 5) + (pixels[p + 2] * 2)) >> 3);
-            return new ScreenFrame(gray, width, height, geo.LogicalWidth, geo.LogicalHeight);
+            return new ScreenFrame(gray, width, height, geo.LogicalWidth, geo.LogicalHeight, geo.PhysicalWidth);
         }
         catch
         {
@@ -78,11 +83,25 @@ internal static class ScreenSampler
         }
     }
 
-    public static FrameDelta Compare(ScreenFrame before, ScreenFrame after, int? pointerX = null, int? pointerY = null)
+    /// <summary>
+    /// With a region, only that window counts: anything animating elsewhere on
+    /// the screen says nothing about whether this action landed. The global
+    /// figure stays a share of the whole screen, so one threshold fits any window.
+    /// </summary>
+    public static FrameDelta Compare(ScreenFrame before, ScreenFrame after, int? pointerX = null, int? pointerY = null, ScreenRegion? region = null)
     {
         if (before.Width != after.Width || before.Height != after.Height) return new FrameDelta(1, 1);
 
         var width = before.Width;
+        int regionLeft = 0, regionTop = 0, regionRight = width - 1, regionBottom = before.Height - 1;
+        if (region is { } window)
+        {
+            var toFrame = (double)width / (before.PhysicalWidth > 0 ? before.PhysicalWidth : before.LogicalWidth);
+            regionLeft = Math.Clamp((int)(window.Left * toFrame), 0, width - 1);
+            regionRight = Math.Clamp((int)(window.Right * toFrame), 0, width - 1);
+            regionTop = Math.Clamp((int)(window.Top * toFrame), 0, before.Height - 1);
+            regionBottom = Math.Clamp((int)(window.Bottom * toFrame), 0, before.Height - 1);
+        }
         int left = -1, right = -1, top = -1, bottom = -1;
         if (pointerX is { } px && pointerY is { } py && before.LogicalWidth > 0 && before.LogicalHeight > 0)
         {
@@ -99,11 +118,11 @@ internal static class ScreenSampler
         int changed = 0, localChanged = 0, localTotal = 0;
         var a = before.Gray;
         var b = after.Gray;
-        for (var y = 0; y < before.Height; y++)
+        for (var y = regionTop; y <= regionBottom; y++)
         {
             var row = y * width;
             var inLocalRow = top >= 0 && y >= top && y <= bottom;
-            for (var x = 0; x < width; x++)
+            for (var x = regionLeft; x <= regionRight; x++)
             {
                 var different = Math.Abs(a[row + x] - b[row + x]) > PixelTolerance;
                 if (different) changed++;
@@ -165,8 +184,9 @@ internal static class ScreenSampler
             if (frame is null) return latest;
 
             var target = pointer();
-            var fromBase = Compare(baseline, frame, target?.X, target?.Y);
-            var fromPrevious = Compare(previous, frame);
+            var window = ForegroundWindowProbe.ReadRegion();
+            var fromBase = Compare(baseline, frame, target?.X, target?.Y, window);
+            var fromPrevious = Compare(previous, frame, null, null, window);
             latest = frame;
             previous = frame;
             var titleChanged = plan.AwaitTitleMs > 0 && titleBefore is not null
@@ -213,6 +233,24 @@ internal readonly record struct ForegroundWindowInfo(string Title, string Proces
 
 internal static class ForegroundWindowProbe
 {
+    /// <summary>The front window's rectangle, or null to fall back to the whole screen.</summary>
+    public static ScreenRegion? ReadRegion()
+    {
+        var handle = GetForegroundWindow();
+        if (handle == IntPtr.Zero || !GetWindowRect(handle, out var rect)) return null;
+        return rect.Right > rect.Left && rect.Bottom > rect.Top
+            ? new ScreenRegion(rect.Left, rect.Top, rect.Right, rect.Bottom)
+            : null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
     public static ForegroundWindowInfo Read()
     {
         try

@@ -574,7 +574,37 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var problemOk = CommonUtils.DescribeActionProblem("I would click it.").Contains("no JSON", StringComparison.Ordinal)
         && CommonUtils.DescribeActionProblem("```json\n{\"thing\":1}\n```").Contains("no `action`", StringComparison.Ordinal)
         && CommonUtils.DescribeActionProblem("```json\n{\"action\": \n```").Contains("invalid", StringComparison.Ordinal);
-    ledgerOk = ledgerOk && replyOk && problemOk;
+    // Floating-point noise from a real run counts as the short number; real differences do not.
+    var sums = new FactLedger();
+    var noisyOutput = new string?[] { "pwsh_exit=0 out: 237.860000000001" };
+    var noiseOk = sums.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Difference: 237.86 m\"}"), noisyOutput).Count == 0
+        && sums.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Difference: 237.87 m\"}"), noisyOutput).Count == 1
+        && sums.BlockedValues(Parse("{\"action\":\"type_text\",\"text\":\"Difference: 238 m\"}"), noisyOutput).Count == 1
+        && sums.BlockedValues(Parse("{\"action\":\"vantage_set_clipboard\",\"text\":\"Difference: 237.860 m\"}"), noisyOutput).Count == 0
+        && FactLedger.WithoutFloatingPointNoise("237.859999999999") == "237.86"
+        && FactLedger.WithoutFloatingPointNoise("500.000000000001") == "500"
+        && FactLedger.WithoutFloatingPointNoise("3.14159265358") is null
+        && FactLedger.WithoutFloatingPointNoise("237.86") is null;
+
+    // Clipboard: the sequence from the real run is refused, the run's own content is not.
+    var paste = Parse("{\"action\":\"press_key\",\"combo\":\"ctrl+v\"}");
+    var clipOk = ClipboardPolicy.Evaluate(paste, false).PastesForeignContent
+        && !ClipboardPolicy.Evaluate(paste, true).PastesForeignContent
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"key\",\"keys\":[\"ctrl\",\"v\"]}"), false).PastesForeignContent
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"vantage_set_clipboard\",\"text\":\"a\"}"), false).OursAfter
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"key\",\"keys\":[\"ctrl\",\"c\"]}"), false).OursAfter
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"press_key\",\"combo\":\"Control + X\"}"), false).OursAfter
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"run_powershell\",\"command\":\"Set-Clipboard x\"}"), false).OursAfter
+        && !ClipboardPolicy.Evaluate(Parse("{\"action\":\"type_text\",\"text\":\"ctrl+c\"}"), false).OursAfter
+        && !ClipboardPolicy.Evaluate(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"vantage_set_clipboard\",\"text\":\"a\"},{\"action\":\"key\",\"keys\":[\"ctrl\",\"v\"]}]}"), false).PastesForeignContent
+        && ClipboardPolicy.Evaluate(Parse("{\"action\":\"batch\",\"steps\":[{\"action\":\"key\",\"keys\":[\"ctrl\",\"v\"]},{\"action\":\"vantage_set_clipboard\",\"text\":\"a\"}]}"), false).PastesForeignContent
+        && ClipboardPolicy.GoalAllowsUserClipboard("Paste my clipboard into Notepad") && !ClipboardPolicy.GoalAllowsUserClipboard("Write the numbers in Notepad");
+
+    // Calculator's expression line was a real change the old threshold missed.
+    var thresholdOk = new FrameDelta(0.00022, 0).IsChange && !new FrameDelta(0.00003, 0.002).IsChange
+        && ScreenSampler.ToScreenshotDiff(new FrameDelta(0.00022, 0)).IsSignificant(0.006);
+
+    ledgerOk = ledgerOk && replyOk && problemOk && noiseOk && clipOk && thresholdOk;
 
     var ruleOk = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("clicks\\\": -5", StringComparison.Ordinal)
         || PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>()).Contains("\"clicks\": -5", StringComparison.Ordinal);
@@ -582,7 +612,7 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
     var valid = verifyOk && groundOk && blockOk && todoOk && contextOk && numberedOk && snapOk && calibrationOk && doneOk && controlNotSanitized && ledgerOk && ruleOk;
     Console.WriteLine($"AgentAccuracyValid={valid} VerifiedGuessedTargets={verifyOk} ControlMatching={groundOk} ControlPromptBlock={blockOk} TodoByText={todoOk} " +
                       $"ContextClause={contextOk} NumberedList={numberedOk} SnapToControl={snapOk} Calibration={calibrationOk} DoneNeedsLook={doneOk} ControlAccepted={controlNotSanitized} " +
-                      $"Replies={replyOk} ReplyProblem={problemOk} Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
+                      $"FloatNoise={noiseOk} Clipboard={clipOk} SmallChange={thresholdOk} Replies={replyOk} ReplyProblem={problemOk} Refused={refusedOk} FlagRefused={flagRefused} ReadIsSource={readOk} NoTextWindow={blindOk} Sources={sourceOk} Excerpts={excerptOk} ReadAction={readAction} FactLedger={ledgerOk} ScrollExample={ruleOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -626,7 +656,13 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
     var same = ScreenSampler.Compare(blank, blank, 100, 100);
     var near = ScreenSampler.Compare(blank, dot, 780, 488);
     var far = ScreenSampler.Compare(blank, dot, 100, 100);
-    var compareOk = same.Global == 0 && same.Local == 0 && near.Local > 0.015 && near.IsChange && far.Local == 0 && !far.IsChange;
+    var speck = Frame(g => { for (var y = 300; y < 303; y++) for (var x = 480; x < 483; x++) g[(y * 960) + x] = 255; });
+    var inWindow = ScreenSampler.Compare(blank, dot, null, null, new ScreenRegion(700, 400, 900, 600));
+    var elsewhere = ScreenSampler.Compare(blank, dot, null, null, new ScreenRegion(0, 0, 400, 300));
+    var compareOk = same.Global == 0 && same.Local == 0 && near.Local > 0.015 && near.IsChange && far.Local == 0
+        && !ScreenSampler.Compare(blank, speck).IsChange
+        && inWindow.IsChange && Math.Abs(inWindow.Global - far.Global) < 0.000001
+        && elsewhere.Global == 0 && !elsewhere.IsChange;
 
     // Real capture of the live screen, with timing: must be cheap enough to poll.
     var captureWatch = Stopwatch.StartNew();
@@ -768,6 +804,72 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
                       $"Hedging={hedgeOk} Parameters={parameterOk} WorldState={worldOk} Prompt={promptOk} PageLoad={pageOk} LoadCap={capOk} VideoCap={videoOk} Plans={planOk} DoneMoved={doneOk} Tabs={tabOk} Combobox={comboOk} Remembered={storeOk} HedgeReported={reportOk}");
     Console.WriteLine($"Measured: capture={captureMs}ms per frame at {live?.Width}x{live?.Height}, compare={compareMs}ms, world state first turn={first.Length} chars, later={later.Length} chars, system prompt={systemPrompt.Length} chars");
     Environment.ExitCode = valid ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--screen-noise", StringComparer.OrdinalIgnoreCase))
+{
+    // How much an untouched screen changes between frames, for the change threshold.
+    var noiseSamples = new List<double>();
+    var previousFrame = ScreenSampler.Capture();
+    for (var i = 0; i < 40; i++)
+    {
+        await Task.Delay(250);
+        var currentFrame = ScreenSampler.Capture();
+        if (previousFrame is not null && currentFrame is not null) noiseSamples.Add(ScreenSampler.Compare(previousFrame, currentFrame).Global);
+        previousFrame = currentFrame;
+    }
+    noiseSamples.Sort();
+    Console.WriteLine($"samples={noiseSamples.Count} median={noiseSamples[noiseSamples.Count / 2]:P4} p90={noiseSamples[(int)(noiseSamples.Count * 0.9)]:P4} max={noiseSamples[^1]:P4}");
+    return;
+}
+
+if (args.Contains("--calculator-live", StringComparer.OrdinalIgnoreCase))
+{
+    // Types a sum into Calculator the way the agent would, then reads the answer.
+    // Refuses to type unless Calculator really has focus.
+    var calculator = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title.Equals("Calculator", StringComparison.OrdinalIgnoreCase));
+    if (calculator is null)
+    {
+        Process.Start(new ProcessStartInfo("calc") { UseShellExecute = true });
+        await Task.Delay(2000);
+        calculator = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title.Equals("Calculator", StringComparison.OrdinalIgnoreCase));
+    }
+    if (calculator is null || !WindowsAppManager.FocusWindow(calculator) || ForegroundWindowProbe.Read().Title != "Calculator")
+    {
+        Console.WriteLine("Calculator did not take focus; nothing was typed");
+        Environment.ExitCode = 1;
+        return;
+    }
+    WindowsAppManager.PressKey("escape");
+    await Task.Delay(150);
+    var region = ForegroundWindowProbe.ReadRegion();
+
+    // How much the window changes on its own while nothing is being done.
+    var quietFrames = new List<double>();
+    var quietPrevious = ScreenSampler.Capture();
+    for (var i = 0; i < 12; i++)
+    {
+        await Task.Delay(200);
+        var quietFrame = ScreenSampler.Capture();
+        if (quietPrevious is not null && quietFrame is not null) quietFrames.Add(ScreenSampler.Compare(quietPrevious, quietFrame, null, null, region).Global);
+        quietPrevious = quietFrame;
+    }
+    Console.WriteLine($"window at rest: max={quietFrames.Max():P4}");
+
+    await WindowsAppManager.TypeTextAsync("8848.86", 0, CancellationToken.None);
+    await Task.Delay(300);
+    var beforeMinus = ScreenSampler.Capture();
+    await WindowsAppManager.TypeTextAsync("-", 0, CancellationToken.None);
+    await Task.Delay(300);
+    var afterMinus = ScreenSampler.Capture();
+    var minusDelta = ScreenSampler.Compare(beforeMinus!, afterMinus!, null, null, region);
+    Console.WriteLine($"minus changed {minusDelta.Global:P4} of screen, IsChange={minusDelta.IsChange}");
+
+    var typedChars = await WindowsAppManager.TypeTextAsync("8611=", 0, CancellationToken.None);
+    await Task.Delay(400);
+    var shown = await PageTextReader.ReadAsync(calculator.Handle, TimeSpan.FromSeconds(3));
+    Console.WriteLine($"typed={typedChars} answer_found={shown.Contains("237.86", StringComparison.Ordinal)} text: " + string.Join(" | ", shown.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(6)));
     return;
 }
 

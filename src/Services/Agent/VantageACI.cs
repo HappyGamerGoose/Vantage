@@ -23,7 +23,7 @@ public sealed class VantageACI
     private const int MaxBatchSteps = 16;
     private static readonly HashSet<string> BatchableActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "click_xy", "type", "type_text", "key", "press_key",
+        "click", "double_click", "click_xy", "type", "type_text", "key", "press_key",
         "scroll", "scroll_xy", "drag", "drag_xy", "move_mouse",
         "highlight_text_span", "activate_window", "click_element",
         "click_window_xy", "scroll_window", "drag_window", "set_value",
@@ -164,6 +164,7 @@ public sealed class VantageACI
                 "batch"            => await DoBatchAsync(action, ct),
                 // ── UI-input actions (sent to the grounding layer or click_xy) ──
                 "click"            => await DoClickAsync(action, ct),
+                "double_click"     => await DoClickAsync(AsDoubleClick(action), ct),
                 "click_xy"         => await DoClickAtAsync(action, ct),
                 "type"             => await DoTypeAsync(action, ct),
                 "type_text"        => await DoTypeTextAsync(action, ct),
@@ -312,6 +313,14 @@ public sealed class VantageACI
     }
 
     // ─── Action implementations ─────────────────────────────────
+
+    private static AgentAction AsDoubleClick(AgentAction action)
+    {
+        var fields = System.Text.Json.Nodes.JsonNode.Parse(action.Raw.GetRawText())!.AsObject();
+        fields["action"] = "click";
+        fields["num_clicks"] = 2;
+        return new AgentAction { Action = "click", Raw = JsonSerializer.SerializeToElement(fields) };
+    }
 
     public void SetTaskGoal(string goal) => _taskGoal = goal;
 
@@ -704,7 +713,7 @@ public sealed class VantageACI
             if (previous is null) continue;
             var frame = await Task.Run(ScreenSampler.Capture, ct);
             if (frame is null) continue;
-            if (ScreenSampler.Compare(previous, frame).IsMotion) lastMotion = watch.Elapsed;
+            if (ScreenSampler.Compare(previous, frame, null, null, ForegroundWindowProbe.ReadRegion()).IsMotion) lastMotion = watch.Elapsed;
             previous = frame;
             if (watch.Elapsed - lastMotion >= SmartWaitQuiet)
                 return new ActionResult(ActionOutcome.Success, $"screen settled after {watch.Elapsed.TotalSeconds:F1}s of a {seconds}s wait");

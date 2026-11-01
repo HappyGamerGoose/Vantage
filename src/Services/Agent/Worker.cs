@@ -98,6 +98,7 @@ public sealed class Worker
     private string _goal = "";
     private const int MaxValueBlocks = 4;
     private int _valueBlocks;
+    private bool _clipboardIsOurs;
 
     /// <summary>Numbers typed with no source, to report honestly at the end.</summary>
     internal IReadOnlyList<string> UnconfirmedValues => _facts.Unconfirmed();
@@ -499,20 +500,32 @@ public sealed class Worker
                     $"stopped before typing {values}, because these values could not be confirmed from any text on screen");
             }
             var challenge =
-                $"BLOCKED_VALUE: nothing was typed. {values} is not in TEXT_READ, command output or the task, and a value read from a screenshot is not reliable. " +
+                $"NOT DONE: BLOCKED_VALUE: nothing was typed, set or copied. {values} is not in TEXT_READ, command output or the task, and a value read from a screenshot is not reliable. " +
                 "Go back to the window that shows it and send {\"action\":\"read_text\",\"find\":\"<word next to the value>\"}, then copy the value from TEXT_READ. " +
                 "If you calculated it, do the sum with run_powershell. Sending the same value again will not work.";
             HoldAction(challenge);
             return new ActionResult(ActionOutcome.Success, challenge);
         }
         _facts.RecordNotes(action);
+
+        var clipboard = ClipboardPolicy.Evaluate(action, _clipboardIsOurs);
+        if (clipboard.PastesForeignContent && !ClipboardPolicy.GoalAllowsUserClipboard(_goal))
+        {
+            const string refusal =
+                "NOT DONE: nothing was pasted. The clipboard holds something this run did not put there, which may be private. " +
+                "Type the text instead, or copy it first with `vantage_set_clipboard` or Ctrl+C. If your last clipboard action was refused, the clipboard did not change.";
+            HoldAction(refusal);
+            CommonUtils.LogDiagnostic("worker-paste-blocked", $"turn={_turnCount}");
+            return new ActionResult(ActionOutcome.Success, refusal);
+        }
+
         // Asked once per finish: a screen that keeps moving, such as a playing
         // video, must not be able to hold the run open forever.
         if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
         {
             if (!_doneRechecked && frameAtLook is not null
                 && await Task.Run(ScreenSampler.Capture, ct) is { } frameNow
-                && DonePolicy.ScreenMovedSinceLook(ScreenSampler.Compare(frameAtLook, frameNow)))
+                && DonePolicy.ScreenMovedSinceLook(ScreenSampler.Compare(frameAtLook, frameNow, null, null, ForegroundWindowProbe.ReadRegion())))
             {
                 _doneRechecked = true;
                 const string recheck = "The screen changed after the screenshot your `done` was based on. Check this newer screenshot and send `done` again only if it shows the result.";
@@ -632,6 +645,7 @@ public sealed class Worker
                 $"turn={_turnCount + 1} excerpts={_aci.LastReadExcerpts.Count} unavailable={_aci.LastReadUnavailable} elapsed={executeMs}ms");
         }
         _lastActionOutcome = $"{result.Outcome}: {result.Description}";
+        if (result.Outcome == ActionOutcome.Success) _clipboardIsOurs = clipboard.OursAfter;
 
         // Grounding was already measured separately inside _aci.ExecuteAsync
         // when it ran, but most actions don't ground — leave at 0 then.
@@ -662,7 +676,7 @@ public sealed class Worker
         // focus ring that appears counts even though it is tiny on the screen.
         var pointerAfter = CursorPosition();
         ScreenshotDiff screenDiff = preFrame is not null && postFrame is not null
-            ? ScreenSampler.ToScreenshotDiff(ScreenSampler.Compare(preFrame, postFrame, pointerAfter?.X, pointerAfter?.Y))
+            ? ScreenSampler.ToScreenshotDiff(ScreenSampler.Compare(preFrame, postFrame, pointerAfter?.X, pointerAfter?.Y, ForegroundWindowProbe.ReadRegion()))
             : new ScreenshotDiff(0, 0, 0, 0, "(skip — capture unavailable)", TimeSpan.Zero);
         // Without frames there is no evidence either way, so don't report a miss.
         needVerify = needVerify && preFrame is not null && postFrame is not null;
