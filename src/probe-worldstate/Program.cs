@@ -1189,6 +1189,25 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && loopPrompt.Contains("Vantage refuses a new sum until the last one is read", StringComparison.Ordinal);
     var calculatorStepsOk = sumsOk && roundingOk && batchCheckOk;
 
+    // Echoing a number through PowerShell does not make it read; working it out does.
+    var echoed = FactLedger.WithoutEchoedValues("pwsh_exit=0\nout:\n1920 x 1200\nerr:", "Write-Output '1920 x 1200'");
+    var worked = FactLedger.WithoutEchoedValues("pwsh_exit=0\nout:\n325.3\nerr:", "[math]::Round(325.2860638931146, 1)");
+    var echoLedger = new FactLedger();
+    echoLedger.RememberOutput(new[] { echoed, worked });
+    var echoOk = !FactLedger.ExtractValues(echoed).ContainsKey("1920") && !FactLedger.ExtractValues(echoed).ContainsKey("1200")
+        // 1920 passes as a year, as it did in the run; 1200 is the value that was echoed.
+        && echoLedger.BlockedValues(ActOf(new { action = "type_text", text = "Display: 1920 x 1200" }), Array.Empty<string?>()) is ["1200"]
+        && echoLedger.BlockedValues(ActOf(new { action = "type_text", text = "Japan | Tokyo | 325.3" }), Array.Empty<string?>()).Count == 0
+        && FactLedger.WithoutEchoedValues("out: 4.2", null) == "out: 4.2"
+        && FactLedger.WithoutEchoedValues("out: 21841425", "$areas = @(9984670, 7688287); ($areas | Measure-Object -Sum).Sum") == "out: 21841425";
+
+    // Keys pressed back to back get a person's pause; other steps do not.
+    var ctrlW = ActOf(new { action = "key", keys = new[] { "ctrl", "w" } });
+    var keyGapOk = BatchPolicy.PauseBetween(ctrlW, ctrlW) == BatchPolicy.KeyGap
+        && BatchPolicy.PauseBetween(ctrlW, ActOf(new { action = "press_key", combo = "enter" })) == BatchPolicy.KeyGap
+        && BatchPolicy.PauseBetween(ctrlW, ActOf(new { action = "type_text", text = "x" })) is null
+        && BatchPolicy.PauseBetween(ActOf(new { action = "click", control = 3 }), ctrlW) is null;
+
     // Paths with spaces: whole, or not at all. New-Item's output once gave the
     // model C:\Users\Akshith\Desktop\Vantage as a fact on every turn.
     var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1335,8 +1354,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

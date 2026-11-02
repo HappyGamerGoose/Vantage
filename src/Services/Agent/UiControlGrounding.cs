@@ -557,6 +557,19 @@ internal static class BatchPolicy
     /// </summary>
     public static bool DoneNeedsAFreshLook(IEnumerable<AgentAction> stepsBeforeDone) =>
         stepsBeforeDone.Any(step => step.Action.Trim().ToLowerInvariant() is not ("wait" or "screenshot"));
+
+    public static readonly TimeSpan KeyGap = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>
+    /// Shortcuts sent back to back arrive far faster than anyone types. Seven
+    /// Ctrl+W in one batch closed one Edge tab of seven, so a key that follows
+    /// another key waits a moment, as it would under a person's hands.
+    /// </summary>
+    public static TimeSpan? PauseBetween(AgentAction step, AgentAction next) =>
+        IsKeyPress(step) && IsKeyPress(next) ? KeyGap : null;
+
+    private static bool IsKeyPress(AgentAction step) =>
+        step.Action.Trim().ToLowerInvariant() is "key" or "press_key" or "hotkey";
 }
 
 /// <summary>

@@ -1225,7 +1225,8 @@ public sealed class VantageACI
             s.Length <= max ? s : s.Substring(0, max / 2) + "\n…[truncated]…\n" + s.Substring(s.Length - max / 2);
         var outTrunc = HeadTail(r.StdOut, 800);
         var errTrunc = HeadTail(r.StdErr, 400);
-        AddNote($"pwsh_exit={r.ExitCode}\nout:\n{outTrunc}\nerr:\n{errTrunc}".Trim());
+        var pwshNote = $"pwsh_exit={r.ExitCode}\nout:\n{outTrunc}\nerr:\n{errTrunc}".Trim();
+        AddNote(pwshNote, FactLedger.WithoutEchoedValues(pwshNote, command));
         var timedOut = r.StdErr.Contains("[timeout after", StringComparison.Ordinal);
         var summary = $"pwsh exit={r.ExitCode} out={outTrunc.Length}ch err={errTrunc.Length}ch";
         if (timedOut) summary += $" (timed out after {timeoutSeconds}s; retry with a larger timeout_seconds)";
@@ -1506,10 +1507,11 @@ public sealed class VantageACI
     private static string Truncate(string s, int n) =>
         s.Length <= n ? s : s.Substring(0, n) + "…";
 
-    private void AddNote(string note)
+    /// <param name="asSource">What of the note counts as a source of values, when not all of it does.</param>
+    private void AddNote(string note, string? asSource = null)
     {
         if (string.IsNullOrWhiteSpace(note)) return;
-        _toolOutput.Add(Truncate(note, 4_000));
+        _toolOutput.Add(Truncate(asSource ?? note, 4_000));
         if (_toolOutput.Count > 32) _toolOutput.RemoveAt(0);
         Notes.Add(Truncate(note, 4_000));
         if (Notes.Count > 32)
@@ -1588,7 +1590,10 @@ public sealed class VantageACI
             }
 
             if (index < steps.Count - 1)
-                await Task.Yield();
+            {
+                if (BatchPolicy.PauseBetween(step, steps[index + 1]) is { } pause) await Task.Delay(pause, ct);
+                else await Task.Yield();
+            }
         }
 
         return new ActionResult(

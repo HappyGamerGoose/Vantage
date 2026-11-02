@@ -66,6 +66,20 @@ internal sealed class FactLedger
         return values;
     }
 
+    /// <summary>
+    /// Command output without the numbers the command spelled out itself.
+    /// Write-Output '1920 x 1200' proves nothing about the display, yet its
+    /// output counted as a source, and a value nothing had read was typed. A
+    /// number the command worked out, such as a rounded density, still counts.
+    /// </summary>
+    internal static string WithoutEchoedValues(string output, string? command)
+    {
+        var spelled = ExtractValues(command).Keys.ToHashSet(StringComparer.Ordinal);
+        if (spelled.Count == 0) return output;
+        return Number.Replace(output, match =>
+            spelled.Contains(Canonical(match.Value.TrimEnd(',').Replace(",", string.Empty))) ? "#" : match.Value);
+    }
+
     // 237.860 and 237.86 are the same number.
     private static string Canonical(string digits) =>
         digits.Contains('.') ? digits.TrimEnd('0').TrimEnd('.') : digits;

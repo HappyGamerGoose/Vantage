@@ -20,6 +20,9 @@ internal static class PageTextReader
     private const int DocumentControlType = 50030;
     private const int TextControlType = 50020;
     private const int EditControlType = 50004;
+    private const int ComboBoxControlType = 50003;
+    private const int ListItemControlType = 50007;
+    private const int DataItemControlType = 50029;
     private const int ControlTypePropertyId = 30003;
     private const int NamePropertyId = 30005;
     private const int ValuePropertyId = 30045;
@@ -95,21 +98,34 @@ internal static class PageTextReader
     }
 
     // Native windows usually have no document, but their labels and fields do
-    // carry the text shown on screen.
+    // carry the text shown on screen. A setting's current choice is the
+    // selected item of a drop-down: Settings shows the display resolution
+    // "1920 × 1200 (Recommended)" only that way, so it was never read and the
+    // model had to echo it through PowerShell before it could type it.
+    private static readonly int[] TextBearingControlTypes =
+    {
+        TextControlType, EditControlType, ComboBoxControlType, ListItemControlType, DataItemControlType,
+    };
+
     private static string ReadElementText(IUIAutomation automation, IUIAutomationElement root)
     {
         IUIAutomationCacheRequest? cache = null;
-        IUIAutomationCondition? isText = null, isEdit = null, either = null;
+        var conditions = new List<IUIAutomationCondition>();
+        IUIAutomationCondition? any = null;
         IUIAutomationElementArray? found = null;
         try
         {
             cache = automation.CreateCacheRequest();
             cache.AddProperty(NamePropertyId);
             cache.AddProperty(ValuePropertyId);
-            isText = automation.CreatePropertyCondition(ControlTypePropertyId, TextControlType);
-            isEdit = automation.CreatePropertyCondition(ControlTypePropertyId, EditControlType);
-            either = automation.CreateOrCondition(isText, isEdit);
-            found = root.FindAllBuildCache(TreeScope.TreeScope_Descendants, either, cache);
+            foreach (var type in TextBearingControlTypes)
+            {
+                var one = automation.CreatePropertyCondition(ControlTypePropertyId, type);
+                conditions.Add(one);
+                any = any is null ? one : automation.CreateOrCondition(any, one);
+                conditions.Add(any);
+            }
+            found = root.FindAllBuildCache(TreeScope.TreeScope_Descendants, any!, cache);
 
             var sb = new StringBuilder();
             for (var i = 0; i < found.Length && sb.Length < MaxFallbackLength; i++)
@@ -139,9 +155,7 @@ internal static class PageTextReader
         finally
         {
             Release(found);
-            Release(either);
-            Release(isEdit);
-            Release(isText);
+            foreach (var condition in conditions.Distinct()) Release(condition);
             Release(cache);
         }
     }
