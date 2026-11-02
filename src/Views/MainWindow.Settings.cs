@@ -20,7 +20,7 @@ public sealed partial class MainWindow
         try
         {
             var version = typeof(App).Assembly.GetName().Version
-                ?? new Version(1, 5, 86);
+                ?? new Version(1, 6, 0);
             AboutVersionText.Text =
                 $"Vantage v{version.Major}.{version.Minor}.{version.Build} - Local-first AI control panel for Windows.";
         }
