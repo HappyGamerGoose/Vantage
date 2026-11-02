@@ -485,6 +485,7 @@ public sealed class PersistentTaskContext
 internal static class SavedFileTitle
 {
     private static readonly Regex FileTitle = new(@"^(?<unsaved>\*?)(?<name>[^\\/:*?""<>|]+\.\w{1,8})\s+-\s+", RegexOptions.Compiled);
+    private static readonly Regex BareFileName = new(@"^[^\\/:*?""<>|]+\.\w{1,8}$", RegexOptions.Compiled);
 
     /// <summary>
     /// The file's name when the title went from a save dialog, or from that file
@@ -499,11 +500,26 @@ internal static class SavedFileTitle
         var name = now.Groups["name"].Value;
 
         var previous = before.Trim();
-        var fromDialog = previous.StartsWith("Save", StringComparison.OrdinalIgnoreCase) && !previous.Contains(" - ", StringComparison.Ordinal);
+        var fromDialog = IsSaveDialog(previous);
         var earlier = FileTitle.Match(previous);
         var fromUnsaved = earlier.Success && earlier.Groups["unsaved"].Length > 0
             && earlier.Groups["name"].Value.Equals(name, StringComparison.OrdinalIgnoreCase);
         return fromDialog || fromUnsaved ? name : null;
+    }
+
+    private static bool IsSaveDialog(string? title) =>
+        title is not null
+        && title.TrimStart().StartsWith("Save", StringComparison.OrdinalIgnoreCase)
+        && !title.Contains(" - ", StringComparison.Ordinal);
+
+    /// <summary>The text of a typing action that gives a save dialog a file name with no folder.</summary>
+    internal static string? BareNameInSaveDialog(AgentAction action, string? title)
+    {
+        if (!IsSaveDialog(title)) return null;
+        if (action.Action.Trim().ToLowerInvariant() is not ("type" or "type_text")) return null;
+        var text = action.GetString("text")?.Trim();
+        if (string.IsNullOrEmpty(text) || text.Contains('\\') || text.Contains('/')) return null;
+        return BareFileName.IsMatch(text) ? text : null;
     }
 
     /// <summary>The file's name when the title shows a file with no unsaved changes.</summary>

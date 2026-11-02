@@ -164,7 +164,7 @@ public static class PhaseParser
             // malformed so the user can see at a glance the model emitted
             // a bad action (rather than the parser failing silently).
             var fallbackTitle = string.IsNullOrWhiteSpace(d) ? "(malformed action)" : "Other";
-            var fallbackSub = string.IsNullOrWhiteSpace(d) ? "agent emitted an empty action; see agent-debug.log" : d;
+            var fallbackSub = string.IsNullOrWhiteSpace(d) ? "agent emitted an empty action; see agent-verbose.log" : d;
             return (PhaseKind.Other, fallbackTitle, fallbackSub);
     }
 

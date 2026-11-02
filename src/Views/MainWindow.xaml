@@ -1063,7 +1063,7 @@
                                                         <Border Padding="12,8" CornerRadius="10" Visibility="{Binding AgentRun.IsFinishedVisibility}"
                                                                 Background="{StaticResource SubtleSurfaceBrush}">
                                                             <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}"
-                                                                       Text="{Binding AgentRun.TerminationLabel}" TextWrapping="Wrap" />
+                                                                       Text="{Binding AgentRun.TerminationLabel}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
                                                         </Border>
                                                     </StackPanel>
                                                 </Grid>

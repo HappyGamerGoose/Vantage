@@ -105,6 +105,10 @@ internal sealed class FactLedger
             case "set_value":
                 if (action.GetString("value") is { Length: > 0 } value) yield return value;
                 break;
+            case "done":
+                // Telling the user a number is no safer than typing it.
+                if (action.GetString("answer") is { Length: > 0 } answer) yield return answer;
+                break;
             case "run_powershell":
                 // Writing a file from the shell is typing by another route.
                 if (action.GetString("command") is { Length: > 0 } command && ShellWrite.IsMatch(command)) yield return command;

@@ -1015,8 +1015,40 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && WorldStateProbe.OsName("Windows 10 Pro", "19045") == "Windows 10 Pro"
         && WorldStateProbe.OsName("Windows 10 Pro", null) == "Windows 10 Pro";
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk}");
+    // An answer given to the user is held to the same standard as typed text.
+    var answers = new FactLedger();
+    answers.RecordRead(new[] { "Population 41,798,407" }, "Canada");
+    var answerOk = answers.BlockedValues(Act("{\"action\":\"done\",\"answer\":\"Canada has 41,798,407 people\"}"), Array.Empty<string?>()).Count == 0
+        && answers.BlockedValues(Act("{\"action\":\"done\",\"answer\":\"Canada has 41,465,298 people\"}"), Array.Empty<string?>()).Count == 1
+        && answers.BlockedValues(Act("{\"action\":\"done\"}"), Array.Empty<string?>()).Count == 0
+        && loopPrompt.Contains("`answer` field", StringComparison.Ordinal);
+
+    // A bare file name in a save dialog is caught; a full path or another window is not.
+    var bareOk = SavedFileTitle.BareNameInSaveDialog(Act("{\"action\":\"type\",\"control\":3,\"text\":\"Canada.txt\"}"), "Save as") == "Canada.txt"
+        && SavedFileTitle.BareNameInSaveDialog(Act("{\"action\":\"type\",\"text\":\"C:\\\\Users\\\\Name\\\\Canada.txt\"}"), "Save as") is null
+        && SavedFileTitle.BareNameInSaveDialog(Act("{\"action\":\"type_text\",\"text\":\"Canada.txt\"}"), "Canada.txt - Notepad") is null
+        && SavedFileTitle.BareNameInSaveDialog(Act("{\"action\":\"type_text\",\"text\":\"some words\"}"), "Save as") is null;
+
+    // A log over the limit moves aside once; one under it stays where it is.
+    var logFolder = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(logFolder);
+    var logFile = Path.Combine(logFolder, "test.log");
+    File.WriteAllText(logFile, "0123456789");
+    CommonUtils.RotateIfLarge(logFile, 100);
+    var keptSmall = File.Exists(logFile) && !File.Exists(logFile + ".old");
+    CommonUtils.RotateIfLarge(logFile, 5);
+    var movedLarge = !File.Exists(logFile) && File.Exists(logFile + ".old");
+    File.WriteAllText(logFile, "abcdefghij");
+    CommonUtils.RotateIfLarge(logFile, 5);
+    var rotateOk = keptSmall && movedLarge && File.ReadAllText(logFile + ".old") == "abcdefghij";
+    try { Directory.Delete(logFolder, true); } catch { }
+
+    var windowsOk = ContextWindowLimits.GetModelContextWindow("gpt-4.1") == 1_000_000
+        && ContextWindowLimits.GetModelContextWindow("gpt-5") > 100_000
+        && ContextWindowLimits.GetModelContextWindow("gpt-4") == 8_192;
+
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 }

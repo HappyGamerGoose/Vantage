@@ -50,6 +50,14 @@ public static class ContextWindowLimits
         // OpenAI flagship & reasoning models
         if (m.Contains("gpt-4o") || m.Contains("gpt-4-turbo") || m.Contains("o1") || m.Contains("o3-mini") || m.Contains("chatgpt-4o"))
             return 128_000;
+        // Newer models have far larger windows than the original GPT-4, whose
+        // limit would otherwise leave no room for even the instructions.
+        if (m.Contains("gpt-5"))
+            return 272_000;
+        if (m.Contains("gpt-4.1"))
+            return 1_000_000;
+        if (m.Contains("gpt-4.5"))
+            return 128_000;
         if (m.Contains("gpt-4"))
             return 8_192;
         if (m.Contains("gpt-3.5"))

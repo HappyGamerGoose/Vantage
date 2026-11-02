@@ -29,6 +29,7 @@ public static class CommonUtils
     private static LogWriter? _verboseWriter;
 
     private const int FlushEvery = 16;
+    private const long MaxLogBytes = 20 * 1024 * 1024;
 
     /// <summary>
     /// Append a single-line diagnostic to %LOCALAPPDATA%\Vantage\_diag.log.
@@ -48,7 +49,7 @@ public static class CommonUtils
 
     /// <summary>
     /// Append a multi-line block (full prompt, full response, full verifier
-    /// diff record) to a separate, unbounded verbose log at the same
+    /// diff record) to a separate verbose log at the same
     /// %LOCALAPPDATA%\Vantage\ directory. Use this when you need the
     /// uncut content for debugging — the truncated single-line log above
     /// hides details like the model's reason text and the JSON block.
@@ -78,8 +79,24 @@ public static class CommonUtils
         if (slot is { Disposed: false }) return slot;
         var path = PathFor(fileName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        RotateIfLarge(path, MaxLogBytes);
         slot = new LogWriter(path, LogLock, FlushEvery);
         return slot;
+    }
+
+    /// <summary>
+    /// Logs hold the text of whatever a run read and were never trimmed, so they
+    /// only grew. The newest <paramref name="maxBytes"/> or so stay, and one older
+    /// file is kept for looking back at the run before.
+    /// </summary>
+    internal static void RotateIfLarge(string path, long maxBytes)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            if (file.Exists && file.Length > maxBytes) file.MoveTo(path + ".old", overwrite: true);
+        }
+        catch { /* a log still in use just rotates on a later open */ }
     }
 
     /// <summary>

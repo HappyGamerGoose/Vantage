@@ -118,6 +118,9 @@ public sealed class Worker
     /// <summary>Numbers typed with no source, to report honestly at the end.</summary>
     internal IReadOnlyList<string> UnconfirmedValues => _facts.Unconfirmed();
 
+    /// <summary>What the model told the user when it finished, if anything.</summary>
+    internal string? FinalAnswer { get; private set; }
+
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
 
@@ -474,7 +477,7 @@ public sealed class Worker
 
             if (_emptyResponseStreak >= MaxEmptyStreak)
                 return new ActionResult(ActionOutcome.FailedFatal,
-                    $"aborted after {_emptyResponseStreak} consecutive empty LLM responses. See %LOCALAPPDATA%\\Vantage\\agent-debug.log for raw provider output.");
+                    $"aborted after {_emptyResponseStreak} consecutive empty LLM responses. See %LOCALAPPDATA%\\Vantage\\_diag.log for the provider's replies.");
 
             return new ActionResult(ActionOutcome.Failed,
                 "LLM returned an empty response. Will prompt for a JSON action next turn.");
@@ -558,6 +561,19 @@ public sealed class Worker
             HoldAction(finishedRefusal);
             CommonUtils.LogDiagnostic("worker-finished-file-held", $"turn={_turnCount + 1} file={finishedFile}");
             return new ActionResult(ActionOutcome.Success, finishedRefusal);
+        }
+
+        // Asked once: a Save As dialog opens on whichever folder it used last, so a
+        // bare name only landed in the right folder because of an earlier run.
+        if (SavedFileTitle.BareNameInSaveDialog(action, worldState.ForegroundTitle) is { } bareName
+            && _heldFinishedFileText.Add($"save dialog|{bareName}"))
+        {
+            var bareNameRefusal =
+                $"NOT DONE: nothing was typed. {bareName} has no folder, and this dialog may be showing a different folder from the one you want. " +
+                "Type the whole path, such as C:\\Users\\Name\\Documents\\notes.txt. If the file really belongs in the folder the dialog is showing, send the same action again.";
+            HoldAction(bareNameRefusal);
+            CommonUtils.LogDiagnostic("worker-bare-name-held", $"turn={_turnCount + 1} name={bareName}");
+            return new ActionResult(ActionOutcome.Success, bareNameRefusal);
         }
 
         var clipboard = ClipboardPolicy.Evaluate(action, _clipboardIsOurs);
@@ -700,13 +716,16 @@ public sealed class Worker
         // its accumulated latency so per-step logs can show how much of the
         // budget the grounding LLM chewed.
         groundingMs = _aci.LastGroundingMs;
+        if (result.Outcome == ActionOutcome.Done) FinalAnswer = action.GetString("answer");
+        var foundNewText = false;
         if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
         {
             _valueBlocks = 0;
             if (RequiredToolUse.IsCalculatorWindow(_aci.LastReadTitle) && !_aci.LastReadUnavailable && _aci.LastReadExcerpts.Count > 0)
                 _calculatorRead = true;
             var newPassages = _facts.RecordRead(_aci.LastReadExcerpts, _aci.LastReadTitle);
-            if (newPassages > 0) _repeats.Clear();
+            foundNewText = newPassages > 0;
+            if (foundNewText) _repeats.Clear();
             if (_aci.LastReadUnavailable) _facts.RecordReadingUnavailable();
             CommonUtils.LogDiagnostic("worker-read-text",
                 $"turn={_turnCount + 1} excerpts={_aci.LastReadExcerpts.Count} new={newPassages} unavailable={_aci.LastReadUnavailable} elapsed={executeMs}ms");
@@ -881,7 +900,7 @@ public sealed class Worker
         var targetKey = action.GetInt("control") is { } controlNumber
             ? $"{action.Action}|control {_aci.LastGroundDescription}|{controlNumber}"
             : TryDescribeAction(action);
-        _sameTargetCount = targetKey == _lastTargetKey ? _sameTargetCount + 1 : 1;
+        _sameTargetCount = targetKey == _lastTargetKey && !foundNewText ? _sameTargetCount + 1 : 1;
         _lastTargetKey = targetKey;
 
         // Track failures & successes for stuck-detection and history.
@@ -932,7 +951,7 @@ public sealed class Worker
         // Per-phase wall-clock log — the easiest way to attribute slow
         // steps to the right thing (LLM round-trip vs local execution
         // vs verifier). Logged at TRACE-style so it doesn't drown the
-        // single-line agent-debug.log; show `worker-step-timing`.
+        // single-line _diag.log; show `worker-step-timing`.
         totalSw.Stop();
         CommonUtils.LogVerbose($"worker-step-timing turn={_turnCount}",
             $"total={totalSw.ElapsedMilliseconds}ms " +

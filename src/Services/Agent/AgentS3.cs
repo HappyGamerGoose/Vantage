@@ -81,9 +81,13 @@ public sealed class AgentS3
                 {
                     // A claim of success must not hide values nothing could confirm.
                     var unconfirmed = _worker.UnconfirmedValues;
-                    _hooks.OnRunFinished(unconfirmed.Count == 0
+                    var finished = unconfirmed.Count == 0
                         ? $"done in {step} steps"
-                        : $"needs review: finished in {step} steps, but these values could not be confirmed and may be wrong: {string.Join(", ", unconfirmed)}");
+                        : $"needs review: finished in {step} steps, but these values could not be confirmed and may be wrong: {string.Join(", ", unconfirmed)}";
+                    // The hook reads the outcome from how the text starts, so the answer goes last.
+                    _hooks.OnRunFinished(string.IsNullOrWhiteSpace(_worker.FinalAnswer)
+                        ? finished
+                        : $"{finished}\n\n{_worker.FinalAnswer.Trim()}");
                     return result;
                 }
                 if (result.Outcome == ActionOutcome.FailedFatal)
