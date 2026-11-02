@@ -99,6 +99,7 @@ public sealed class Worker
     private bool _doneRechecked;
     private readonly FactLedger _facts = new();
     private string? _lastForegroundTitle;
+    private string _earlierConversation = "";
     private readonly HashSet<string> _heldFinishedFileText = new(StringComparer.Ordinal);
     private bool _calculatorRead;
     private bool _doneHeldForCalculator;
@@ -161,12 +162,13 @@ public sealed class Worker
             activeVisualHistoryTurns: 1);
     }
 
-    public void BeginTask(string instruction)
+    public void BeginTask(string instruction, string? earlierConversation = null)
     {
         _taskContext.BeginTask(instruction);
         _generator.ActiveTaskGoal = instruction;
         _aci.SetTaskGoal(instruction);
         _goal = instruction;
+        _earlierConversation = earlierConversation ?? "";
     }
 
     /// <summary>
@@ -324,6 +326,11 @@ public sealed class Worker
         sbGen.AppendLine(_taskContext.BuildPromptBlock());
         var factsBlock = _facts.BuildPromptBlock();
         if (factsBlock.Length > 0) sbGen.AppendLine(factsBlock);
+        if (_earlierConversation.Length > 0)
+        {
+            sbGen.AppendLine("EARLIER_IN_THIS_CHAT (background for words like \"that\" or \"the same\"; the task is the Goal above):");
+            sbGen.AppendLine(_earlierConversation);
+        }
 
         // Stuck-state recovery: if we've now hit the same failing
         // description twice in a row, force a strategy pivot.
@@ -527,8 +534,8 @@ public sealed class Worker
         // A number with no source never reaches the screen. Sending it again
         // changes nothing, and a model that keeps trying is stopped rather than
         // left looping, with the values named so the failure explains itself.
-        var sources = new List<string?> { _goal };
-        sources.AddRange(_aci.ToolOutput);
+        _facts.RememberOutput(_aci.ToolOutput);
+        var sources = new List<string?> { _goal, _earlierConversation };
         sources.AddRange(controls.Select(control => control.Name));
         var blocked = _facts.BlockedValues(action, sources);
         if (blocked.Count > 0)

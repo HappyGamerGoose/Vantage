@@ -55,9 +55,9 @@ public sealed class AgentS3
     /// on cancellation / generic exception (caller's existing catch
     /// blocks already handle those paths and AppendText a message).
     /// </summary>
-    public async Task<ActionResult> RunAsync(string instruction, CancellationToken ct)
+    public async Task<ActionResult> RunAsync(string instruction, CancellationToken ct, string? earlierConversation = null)
     {
-        _worker.BeginTask(instruction);
+        _worker.BeginTask(instruction, earlierConversation);
         await _hooks.OnRunStartedAsync(
             _monitor.LogicalWidth,
             _monitor.LogicalHeight,

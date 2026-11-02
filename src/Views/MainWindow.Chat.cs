@@ -129,6 +129,13 @@ public sealed partial class MainWindow
             allowDesktopControl);
     }
 
+    // What a turn said. A run keeps its outcome and answer on the run itself, and
+    // leaving those out meant a follow-up question knew nothing of what it found.
+    private static string? TextOfTurn(ChatMessage message) =>
+        message.IsAgentRun && !string.IsNullOrWhiteSpace(message.AgentRun?.TerminationLabel)
+            ? message.AgentRun!.TerminationLabel
+            : message.Text;
+
     private async Task BeginAssistantDraftAsync(
         Conversation conversation,
         ChatMessage userMessage,
@@ -183,9 +190,13 @@ public sealed partial class MainWindow
                 enableReflection: true,
                 temperature: 0.0);
 
+            var request = conversation.Messages.LastOrDefault(m => m.Role.Equals("user", StringComparison.OrdinalIgnoreCase));
             var result = await agentS3.RunAsync(
-                conversation.Messages.LastOrDefault(m => m.Role.Equals("user", StringComparison.OrdinalIgnoreCase))?.Text ?? "",
-                agentRunCts.Token);
+                request?.Text ?? "",
+                agentRunCts.Token,
+                EarlierConversation.Build(conversation.Messages
+                    .Where(m => !ReferenceEquals(m, request) && !ReferenceEquals(m, assistantMessage))
+                    .Select(m => (m.Role, TextOfTurn(m)))));
 
             // RunAsync returns normally for a graceful fatal abort
             // (e.g. consecutive empty LLM responses). The catch
@@ -262,8 +273,7 @@ public sealed partial class MainWindow
 
             var history = conversation.Messages
                 .Where(m => !ReferenceEquals(m, assistantMessage)
-                    && !m.IsAgentRun
-                    && !string.IsNullOrWhiteSpace(m.Text))
+                    && !string.IsNullOrWhiteSpace(TextOfTurn(m)))
                 .ToList();
             agent.ActiveTaskGoal = conversation.Title;
             foreach (var message in history)
@@ -272,7 +282,7 @@ public sealed partial class MainWindow
                 var role = message.Role.Equals("user", StringComparison.OrdinalIgnoreCase)
                     ? "user"
                     : "assistant";
-                agent.AddTextMessage(message.Text, role);
+                agent.AddTextMessage(TextOfTurn(message)!, role);
             }
 
             var reply = await CommonUtils.CallLlmSafeAsync(

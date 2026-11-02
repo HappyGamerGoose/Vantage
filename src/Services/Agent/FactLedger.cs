@@ -150,6 +150,18 @@ internal sealed class FactLedger
         return added;
     }
 
+    /// <summary>
+    /// Command output stays a source for the whole run too, however many later
+    /// commands push it out of the short list the action layer keeps.
+    /// </summary>
+    public void RememberOutput(IEnumerable<string> outputs)
+    {
+        foreach (var output in outputs)
+        {
+            if (_seen.Add($"output\n{output}")) _readValues.UnionWith(ExtractValues(output).Keys);
+        }
+    }
+
     /// <summary>The window has no readable text, so a screenshot is all there is.</summary>
     public void RecordReadingUnavailable() => _readingUnavailable = true;
 

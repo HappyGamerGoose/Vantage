@@ -154,11 +154,6 @@ public static class ActionVerifier
         ["wait"]              = WaitVerify(),
         ["wait_seconds"]      = WaitVerify(),
 
-        // ── convenience (alias of existing tool combos) ──────────
-        ["snap_window"]            = KeyVerify(),
-        ["screenshot_to_clipboard"] = ObservationVerify(),
-        ["wait_for_process"]       = TerminateVerify(), // passed if dispatcher returned Ok
-
         // ── terminators ───────────────────────────────────────────
         ["done"]              = TerminateVerify(),
         ["fail"]              = TerminateVerify(),

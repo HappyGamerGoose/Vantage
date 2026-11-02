@@ -481,6 +481,31 @@ public sealed class PersistentTaskContext
     }
 }
 
+/// <summary>
+/// The recent turns of a chat, for a task that refers back to them. A run used to
+/// see only the newest message, so "do the same for Brazil" meant nothing to it.
+/// </summary>
+internal static class EarlierConversation
+{
+    private const int MaxTurns = 6;
+    private const int MaxTurnLength = 400;
+
+    public static string Build(IEnumerable<(string Role, string? Text)> messages)
+    {
+        var lines = messages
+            .Where(message => !string.IsNullOrWhiteSpace(message.Text))
+            .TakeLast(MaxTurns)
+            .Select(message =>
+            {
+                var text = message.Text!.Trim();
+                if (text.Length > MaxTurnLength) text = text[..MaxTurnLength] + "…";
+                var speaker = message.Role.Equals("user", StringComparison.OrdinalIgnoreCase) ? "User" : "Vantage";
+                return $"{speaker}: {text}";
+            });
+        return string.Join(Environment.NewLine, lines);
+    }
+}
+
 /// <summary>What a window title shows about a file having just been saved.</summary>
 internal static class SavedFileTitle
 {
@@ -507,6 +532,19 @@ internal static class SavedFileTitle
         return fromDialog || fromUnsaved ? name : null;
     }
 
+    // The typing this action does in the window now in front. In a batch that is
+    // only a first step: anything later runs after the window may have changed.
+    private static AgentAction? TypingStep(AgentAction action)
+    {
+        var name = action.Action.Trim().ToLowerInvariant();
+        if (name == "batch")
+        {
+            var first = action.GetActionList("steps").FirstOrDefault();
+            return first is null ? null : TypingStep(first);
+        }
+        return name is "type" or "type_text" ? action : null;
+    }
+
     private static bool IsSaveDialog(string? title) =>
         title is not null
         && title.TrimStart().StartsWith("Save", StringComparison.OrdinalIgnoreCase)
@@ -516,8 +554,8 @@ internal static class SavedFileTitle
     internal static string? BareNameInSaveDialog(AgentAction action, string? title)
     {
         if (!IsSaveDialog(title)) return null;
-        if (action.Action.Trim().ToLowerInvariant() is not ("type" or "type_text")) return null;
-        var text = action.GetString("text")?.Trim();
+        var typing = TypingStep(action);
+        var text = typing?.GetString("text")?.Trim();
         if (string.IsNullOrEmpty(text) || text.Contains('\\') || text.Contains('/')) return null;
         return BareFileName.IsMatch(text) ? text : null;
     }
@@ -537,9 +575,9 @@ internal static class SavedFileTitle
     /// </summary>
     internal static string? FinishedFileTypedInto(AgentAction action, string? title, IEnumerable<string> finishedWork)
     {
-        if (action.Action.Trim().ToLowerInvariant() is not ("type" or "type_text")) return null;
-        if (action.GetInt("control") is not null || action.GetPoint() is not null) return null;
-        if (string.IsNullOrWhiteSpace(action.GetString("text"))) return null;
+        var typing = TypingStep(action);
+        if (typing is null || typing.GetInt("control") is not null || typing.GetPoint() is not null) return null;
+        if (string.IsNullOrWhiteSpace(typing.GetString("text"))) return null;
         var name = SavedName(title);
         return name is not null && finishedWork.Any(done => done.Contains(name, StringComparison.OrdinalIgnoreCase))
             ? name

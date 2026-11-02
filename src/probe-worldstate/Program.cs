@@ -1047,10 +1047,54 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && ContextWindowLimits.GetModelContextWindow("gpt-5") > 100_000
         && ContextWindowLimits.GetModelContextWindow("gpt-4") == 8_192;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk}");
+    // Every action the agent is told about has somewhere to go.
+    var promptActions = System.Text.RegularExpressions.Regex.Matches(loopPrompt, @"^## (\w+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline)
+        .Select(match => match.Groups[1].Value).ToList();
+    var aciSource = FindSource("Services", "Agent", "VantageACI.cs");
+    var missingActions = aciSource is null
+        ? new List<string>()
+        : promptActions.Where(name => !aciSource.Contains($"\"{name}\"", StringComparison.Ordinal)).ToList();
+    var docsOk = promptActions.Count > 20 && aciSource is not null && missingActions.Count == 0
+        && !loopPrompt.Contains("snap_window", StringComparison.Ordinal);
+
+    // Command output outlasts the short list the action layer keeps.
+    var outputs = new FactLedger();
+    outputs.RememberOutput(new[] { "pwsh_exit=0 out: 325.3" });
+    outputs.RememberOutput(Enumerable.Range(0, 40).Select(i => $"pwsh_exit=0 out: {1000 + i}"));
+    var outputOk = outputs.BlockedValues(Act("{\"action\":\"type_text\",\"text\":\"Japan 325.3\"}"), Array.Empty<string?>()).Count == 0
+        && outputs.BlockedValues(Act("{\"action\":\"type_text\",\"text\":\"Japan 325.9\"}"), Array.Empty<string?>()).Count == 1;
+
+    // A batch cannot walk past the checks on typing by putting it in a first step.
+    var batched = Act("{\"action\":\"batch\",\"steps\":[{\"action\":\"type_text\",\"text\":\"Capital: Canberra\"},{\"action\":\"key\",\"keys\":[\"ctrl\",\"s\"]}]}");
+    var newDocument = Act("{\"action\":\"batch\",\"steps\":[{\"action\":\"press_key\",\"combo\":\"ctrl+n\"},{\"action\":\"type_text\",\"text\":\"Capital: Canberra\"}]}");
+    var batchOk = SavedFileTitle.FinishedFileTypedInto(batched, "Canada.txt - Notepad", finishedList) == "Canada.txt"
+        && SavedFileTitle.FinishedFileTypedInto(newDocument, "Canada.txt - Notepad", finishedList) is null
+        && SavedFileTitle.BareNameInSaveDialog(Act("{\"action\":\"batch\",\"steps\":[{\"action\":\"type\",\"text\":\"Canada.txt\"}]}"), "Save as") == "Canada.txt";
+
+    // Follow-up context keeps the latest turns, trimmed, and skips empty ones.
+    var earlierText = EarlierConversation.Build(Enumerable.Range(1, 9)
+        .Select(i => (Role: i % 2 == 1 ? "user" : "assistant", Text: (string?)(i == 8 ? " " : $"turn {i}")))
+        .Append((Role: "assistant", Text: (string?)new string('z', 900))));
+    var earlierOk = !earlierText.Contains("turn 1\r", StringComparison.Ordinal) && !earlierText.Contains("turn 2", StringComparison.Ordinal)
+        && earlierText.Contains("User: turn 9", StringComparison.Ordinal) && earlierText.Contains("Vantage: zzz", StringComparison.Ordinal)
+        && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
+        && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
+
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
+
+    // Walks up from the running probe to the repository's source tree.
+    static string? FindSource(params string[] parts)
+    {
+        for (var folder = new DirectoryInfo(AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
+        {
+            var path = Path.Combine(new[] { folder.FullName, "src" }.Concat(parts).ToArray());
+            if (File.Exists(path)) return File.ReadAllText(path);
+        }
+        return null;
+    }
 }
 
 if (args.Contains("--agent-turn-handles", StringComparer.OrdinalIgnoreCase))

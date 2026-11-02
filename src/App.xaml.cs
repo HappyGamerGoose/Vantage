@@ -69,6 +69,9 @@ public partial class App : Application
         }
     }
 
+    private const long MaxStartupLogBytes = 2 * 1024 * 1024;
+    private static bool _startupLogChecked;
+
     public static void LogStartup(string message)
     {
         try
@@ -77,9 +80,13 @@ public partial class App : Application
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Vantage");
             Directory.CreateDirectory(folder);
-            File.AppendAllText(
-                Path.Combine(folder, "startup.log"),
-                $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
+            var path = Path.Combine(folder, "startup.log");
+            if (!_startupLogChecked)
+            {
+                _startupLogChecked = true;
+                Vantage.Services.Agent.CommonUtils.RotateIfLarge(path, MaxStartupLogBytes);
+            }
+            File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
         }
         catch
         {

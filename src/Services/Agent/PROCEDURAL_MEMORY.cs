@@ -519,37 +519,6 @@ public static class PROCEDURAL_MEMORY
         );
 
         yield return (
-            "snap_window",
-            "## snap_window\n" +
-            "Snap the foreground window to a desktop quadrant. Uses `key win+<arrow>` under the hood. Useful for split-screen workflows.\n" +
-            "```json\n" +
-            "{ \"action\": \"snap_window\", \"position\": \"left\" }\n" +
-            "```\n" +
-            "- position (required, string): \"left\" | \"right\" | \"top-left\" | \"top-right\" | \"bottom-left\" | \"bottom-right\" | \"maximize\" | \"minimize\"."
-        );
-
-        yield return (
-            "screenshot_to_clipboard",
-            "## screenshot_to_clipboard\n" +
-            "Capture the entire screen to the clipboard so the user can paste it anywhere. Equivalent to Win+PrtScn when the receiver is the clipboard.\n" +
-            "```json\n" +
-            "{ \"action\": \"screenshot_to_clipboard\" }\n" +
-            "```"
-        );
-
-        yield return (
-            "wait_for_process",
-            "## wait_for_process\n" +
-            "Poll for a process to appear (or disappear) by name. Bounded timeout.\n" +
-            "```json\n" +
-            "{ \"action\": \"wait_for_process\", \"name\": \"code\", \"appear\": true, \"timeout_seconds\": 15 }\n" +
-            "```\n" +
-            "- name (required, string): process name without `.exe`.\n" +
-            "- appear (bool, default true): true to wait until it's running; false to wait until it's gone.\n" +
-            "- timeout_seconds (int, default 10, max 60)."
-        );
-
-        yield return (
             "done",
             "## done\n" +
             "Mark the task as successfully complete. Emit this as your final action when you've verified the goal was met.\n" +

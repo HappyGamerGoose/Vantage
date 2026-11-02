@@ -157,6 +157,14 @@ public sealed partial class MainWindow
                     vm.IsFinished = true;
                     vm.TerminationLabel = reason;
                     vm.TerminationKind  = kindLabel;
+                    // The last step's name and "Working on…" are wrong once it is over.
+                    vm.HeaderTitle = kindLabel switch
+                    {
+                        "fail"   => "Did not finish",
+                        "review" => "Finished, needs review",
+                        _        => "Finished on your desktop",
+                    };
+                    vm.StatusText = kindLabel == "fail" ? "Failed" : "Done";
                 });
                 ScrollIntoViewIfVisible();
 

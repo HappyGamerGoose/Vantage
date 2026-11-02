@@ -55,6 +55,9 @@ dotnet run --project $probe -- --flow-self-test
 dotnet run --project $probe -- --provider-models-self-test
 dotnet run --project $probe -- --agent-accuracy-self-test
 dotnet run --project $probe -- --agent-speed-self-test
+dotnet run --project $probe -- --agent-loop-self-test
+dotnet run --project $probe -- --model-name-self-test
+dotnet run --project $probe -- --computer-use-self-test
 ```
 
 ## License
