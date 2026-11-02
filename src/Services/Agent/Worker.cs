@@ -109,6 +109,7 @@ public sealed class Worker
     private readonly HashSet<string> _heldFinishedFileText = new(StringComparer.Ordinal);
     private bool _calculatorRead;
     private bool _doneHeldForCalculator;
+    private string? _calculatorSumUnread;
     private string _lastActionProblem = "";
     private bool _lastReplyCutOff;
     private int _lastReplyThinkingTokens;
@@ -632,6 +633,22 @@ public sealed class Worker
             return new ActionResult(ActionOutcome.Success, notepadRefusal);
         }
 
+        // Calculator shows only its latest answer, so each one is read before the
+        // next sum goes in. Refused every time: reading always moves things on.
+        var calculatorSums = RequiredToolUse.CalculatorRequired(_goal)
+            ? RequiredToolUse.CalculatorSumsTyped(action, worldState.ForegroundTitle)
+            : new List<string>();
+        if (calculatorSums.Count > 0 && (_calculatorSumUnread is not null || calculatorSums.Count > 1))
+        {
+            var sumRefusal = _calculatorSumUnread is not null
+                ? $"NOT DONE: nothing was typed. The answer to {_calculatorSumUnread} has not been read, and Calculator shows only its latest answer, so it would be lost. " +
+                  "Send {\"action\":\"read_text\",\"find\":\"Display\"} now, then type the next sum."
+                : "NOT DONE: nothing was typed. Calculator shows only its latest answer, so type one sum, read its answer with {\"action\":\"read_text\",\"find\":\"Display\"}, and only then type the next.";
+            CommonUtils.LogDiagnostic("worker-calculator-sum-held", $"turn={_turnCount + 1} unread={_calculatorSumUnread} sums={calculatorSums.Count}");
+            HoldAction(sumRefusal);
+            return new ActionResult(ActionOutcome.Success, sumRefusal);
+        }
+
         var clipboard = ClipboardPolicy.Evaluate(action, _clipboardIsOurs);
         if (clipboard.PastesForeignContent && !ClipboardPolicy.GoalAllowsUserClipboard(_goal))
         {
@@ -648,11 +665,13 @@ public sealed class Worker
         if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
         {
             // Asked once, so a Calculator that cannot be read does not hold the run open.
-            if (RequiredToolUse.CalculatorRequired(_goal) && !_calculatorRead && !_doneHeldForCalculator)
+            if (RequiredToolUse.CalculatorRequired(_goal) && (!_calculatorRead || _calculatorSumUnread is not null) && !_doneHeldForCalculator)
             {
                 _doneHeldForCalculator = true;
-                const string calculatorRefusal =
-                    "NOT DONE: the task says to use the Windows Calculator, but no answer has been read from it. " +
+                var calculatorRefusal =
+                    (_calculatorRead
+                        ? $"NOT DONE: the answer to {_calculatorSumUnread} was never read from Calculator. "
+                        : "NOT DONE: the task says to use the Windows Calculator, but no answer has been read from it. ") +
                     "Open Calculator, type each sum, read the answer with {\"action\":\"read_text\",\"find\":\"Display\"}, " +
                     "and use run_powershell only to round or format what Calculator showed. Then send `done` again.";
                 HoldAction(calculatorRefusal);
@@ -774,11 +793,14 @@ public sealed class Worker
         groundingMs = _aci.LastGroundingMs;
         if (result.Outcome == ActionOutcome.Done) FinalAnswer = action.GetString("answer");
         var foundNewText = false;
+        if (calculatorSums.Count > 0 && result.Outcome == ActionOutcome.Success) _calculatorSumUnread = calculatorSums[^1];
         if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
         {
             _valueBlocks = 0;
             if (RequiredToolUse.IsCalculatorWindow(_aci.LastReadTitle) && !_aci.LastReadUnavailable && _aci.LastReadExcerpts.Count > 0)
                 _calculatorRead = true;
+            // Even an unreadable Calculator must not hold every later sum back.
+            if (RequiredToolUse.IsCalculatorWindow(_aci.LastReadTitle)) _calculatorSumUnread = null;
             var newPassages = _facts.RecordRead(_aci.LastReadExcerpts, _aci.LastReadTitle);
             foundNewText = newPassages > 0;
             if (foundNewText) _repeats.Clear();

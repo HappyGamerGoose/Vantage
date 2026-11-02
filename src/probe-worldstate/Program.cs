@@ -1152,6 +1152,43 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !RequiredToolUse.WritesFileWithPowerShell(CommonUtils.ParseAgentAction("{\"action\":\"type_text\",\"text\":\"a > b.txt\"}")!)
         && loopPrompt.Contains("29. When the task says to use Notepad", StringComparison.Ordinal);
 
+    // Calculator: each answer read before the next sum, and a rounded answer counts as read.
+    AgentAction ActOf(object value) => CommonUtils.ParseAgentAction(JsonSerializer.Serialize(value))!;
+    var sumIntoCalculator = ActOf(new { action = "type_text", target_title = "Calculator", text = "27801023/7688287=" });
+    var sumsOk = RequiredToolUse.CalculatorSumsTyped(sumIntoCalculator, "Canada.txt - Notepad").Count == 1
+        && RequiredToolUse.CalculatorSumsTyped(ActOf(new { action = "type_text", text = "27801023/7688287=" }), "Calculator").Count == 1
+        && RequiredToolUse.CalculatorSumsTyped(ActOf(new { action = "type_text", text = "a=b" }), "Untitled - Notepad").Count == 0
+        && RequiredToolUse.CalculatorSumsTyped(ActOf(new { action = "type_text", text = "41798407/9984670" }), "Calculator").Count == 0
+        && RequiredToolUse.CalculatorSumsTyped(ActOf(new
+        {
+            action = "batch",
+            steps = new object[]
+            {
+                new { action = "focus_app", title = "Calculator" },
+                new { action = "type_text", text = "1/2=" },
+                new { action = "type_text", text = "3/4=" },
+            },
+        }), "Canada.txt - Notepad").Count == 2
+        && RequiredToolUse.CalculatorSumsTyped(ActOf(new
+        {
+            action = "batch",
+            steps = new object[] { new { action = "focus_app", title = "Notepad" }, new { action = "type_text", text = "x=1" } },
+        }), "Calculator").Count == 0;
+    var calcLedger = new FactLedger();
+    calcLedger.RecordRead(new[] { "Calculator Expression is 122950000 ÷ 377975= Display is 325.2860638931146 Standard Calculator mode" }, "Calculator");
+    IReadOnlyList<string> Blocked(string text) => calcLedger.BlockedValues(ActOf(new { action = "type_text", text }), Array.Empty<string?>());
+    var roundingOk = Blocked("Japan | Tokyo | 325.3 people per km²").Count == 0
+        && Blocked("325.29").Count == 0 && Blocked("325").Count == 1
+        && Blocked("325.4").Count == 1 && Blocked("Egypt | Cairo | 118.9 people per km²").Count == 1
+        && FactLedger.IsRoundingOf("12.2", "12.25") && FactLedger.IsRoundingOf("12.3", "12.25")
+        && !FactLedger.IsRoundingOf("12.4", "12.25") && !FactLedger.IsRoundingOf("12.25", "12.25")
+        && !FactLedger.IsRoundingOf("325.3", "325");
+    var unbatchable = VantageACI.UnbatchableStep(new[] { sumIntoCalculator, ActOf(new { action = "read_text", find = "Display" }) }) ?? "";
+    var batchCheckOk = unbatchable.StartsWith("nothing in the batch ran: step 2/2 is `read_text`", StringComparison.Ordinal)
+        && VantageACI.UnbatchableStep(new[] { sumIntoCalculator, ActOf(new { action = "key", keys = new[] { "enter" } }) }) is null
+        && loopPrompt.Contains("Vantage refuses a new sum until the last one is read", StringComparison.Ordinal);
+    var calculatorStepsOk = sumsOk && roundingOk && batchCheckOk;
+
     // Paths with spaces: whole, or not at all. New-Item's output once gave the
     // model C:\Users\Akshith\Desktop\Vantage as a fact on every turn.
     var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1298,8 +1335,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

@@ -1545,19 +1545,14 @@ public sealed class VantageACI
         // front instead of running half of them and then failing.
         if (ValidateObservationUse(steps) is { } observationError)
             return new ActionResult(ActionOutcome.Failed, observationError);
+        if (UnbatchableStep(steps) is { } unbatchable)
+            return new ActionResult(ActionOutcome.Failed, unbatchable);
 
         var summaries = new List<string>(steps.Count);
         for (var index = 0; index < steps.Count; index++)
         {
             ct.ThrowIfCancellationRequested();
             var step = steps[index];
-            if (!BatchableActions.Contains(step.Action))
-            {
-                return new ActionResult(
-                    ActionOutcome.Failed,
-                    $"batch step {index + 1}/{steps.Count} uses non-batchable action `{step.Action}`");
-            }
-
             var (replacement, feedback) = ActionSanitizer.Sanitize(step);
             if (replacement is not null)
             {
@@ -1606,6 +1601,22 @@ public sealed class VantageACI
         "click_element", "click_window_xy", "scroll_window", "drag_window",
         "set_value", "type_window_text", "press_window_key"
     };
+
+    /// <summary>
+    /// Checked before any step runs. Found mid-batch, the steps before it had
+    /// already run, and "uses non-batchable action `read_text`" left Gemini
+    /// unsure whether the sum it had batched with it was typed.
+    /// </summary>
+    internal static string? UnbatchableStep(IReadOnlyList<AgentAction> steps)
+    {
+        for (var index = 0; index < steps.Count; index++)
+        {
+            if (BatchableActions.Contains(steps[index].Action)) continue;
+            return $"nothing in the batch ran: step {index + 1}/{steps.Count} is `{steps[index].Action}`, which cannot go in a batch. " +
+                   $"Send the steps before it as a batch or one by one, then `{steps[index].Action}` as an action of its own.";
+        }
+        return null;
+    }
 
     internal static string? ValidateObservationUse(IReadOnlyList<AgentAction> steps)
     {

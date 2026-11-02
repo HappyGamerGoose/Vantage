@@ -89,6 +89,27 @@ internal sealed class FactLedger
         return null;
     }
 
+    /// <summary>
+    /// True when <paramref name="typed"/> is <paramref name="source"/> rounded to
+    /// fewer decimal places, either way a halfway value can go: PowerShell's
+    /// [math]::Round rounds 12.25 to 12.2, most people to 12.3. A whole number
+    /// does not count, so 238 is still refused where only 237.86 was read.
+    /// </summary>
+    internal static bool IsRoundingOf(string typed, string source)
+    {
+        var point = typed.IndexOf('.');
+        if (point < 0) return false;
+        var decimals = typed.Length - point - 1;
+        var sourcePoint = source.IndexOf('.');
+        if (sourcePoint < 0 || source.Length - sourcePoint - 1 <= decimals) return false;
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        if (!decimal.TryParse(typed, System.Globalization.NumberStyles.Float, culture, out var shown)
+            || !decimal.TryParse(source, System.Globalization.NumberStyles.Float, culture, out var exact))
+            return false;
+        return Math.Round(exact, decimals, MidpointRounding.AwayFromZero) == shown
+            || Math.Round(exact, decimals, MidpointRounding.ToEven) == shown;
+    }
+
     /// <summary>Everything an action would type, including inside a batch.</summary>
     internal static IEnumerable<string> TypedText(AgentAction action)
     {
@@ -202,10 +223,17 @@ internal sealed class FactLedger
             missing[key] = written;
         if (missing.Count == 0) return Array.Empty<string>();
 
-        foreach (var key in _readValues.Concat(otherSources.SelectMany(source => ExtractValues(source).Keys)))
+        var sources = _readValues.Concat(otherSources.SelectMany(source => ExtractValues(source).Keys)).ToList();
+        foreach (var key in sources)
         {
             missing.Remove(key);
             if (WithoutFloatingPointNoise(key) is { } clean) missing.Remove(clean);
+        }
+        // Calculator showed 325.2860638931146 and the task wanted one decimal place.
+        // Refusing 325.3 sent the model to work every density out again in PowerShell.
+        foreach (var key in missing.Keys.ToList())
+        {
+            if (sources.Any(source => IsRoundingOf(key, source))) missing.Remove(key);
         }
         if (missing.Count == 0) return Array.Empty<string>();
 
@@ -255,6 +283,34 @@ internal static class RequiredToolUse
 
     public static bool IsCalculatorWindow(string? title) =>
         title is not null && title.Contains("calculator", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The sums the action types into Calculator, in order. Calculator shows only
+    /// the latest answer, and Gemini 3.8 Flash typed four sums in a row and read
+    /// only the last, so three of five answers were never taken from Calculator.
+    /// </summary>
+    public static List<string> CalculatorSumsTyped(AgentAction action, string? foregroundTitle)
+    {
+        var sums = new List<string>();
+        var inCalculator = IsCalculatorWindow(foregroundTitle);
+        var steps = action.Action.Trim().Equals("batch", StringComparison.OrdinalIgnoreCase)
+            ? action.GetActionList("steps") : new List<AgentAction> { action };
+        foreach (var step in steps)
+        {
+            var name = step.Action.Trim().ToLowerInvariant();
+            if (name is "focus_app" or "launch_app" or "focus_window" or "activate_window")
+            {
+                var app = step.GetString("title") ?? step.GetString("executable") ?? step.GetString("app") ?? step.GetString("name") ?? string.Empty;
+                inCalculator = app.Contains("calc", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (name is not ("type" or "type_text" or "type_window_text")) continue;
+            if (step.GetString("text") is not { } text || !text.Contains('=')) continue;
+            var target = step.GetString("target_title") ?? step.GetString("window_title");
+            if (target is not null ? IsCalculatorWindow(target) : inCalculator) sums.Add(text.Trim());
+        }
+        return sums;
+    }
 
     // "Use Notepad to save", "in Notepad, type": Notepad is the tool. "Close Notepad" alone is not.
     private static readonly Regex NotepadAsTool = new(
