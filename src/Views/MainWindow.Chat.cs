@@ -503,12 +503,13 @@ public sealed partial class MainWindow
         var verdict0 = await _visionCapability.SupportsAsync(activeProvider);
         if (verdict0 == VisionVerdict.No)
         {
+            // Telling people to force Vision on sent a text-only model a
+            // screenshot, which its provider refused with a bare HTTP 400.
             return (null,
-                $"The active provider \"{activeProvider.Name}\" uses model \"{activeProvider.DefaultModel}\", " +
-                "which the vision classifier rejects. Vantage's desktop-control agent needs a vision-capable " +
-                "model to read your screen and drive the mouse and keyboard. Either pick a vision model " +
-                "(claude-sonnet-4-5, gpt-4o, gemini-2.5-pro, llama-3.2-90b-vision, pixtral-12b), or — if you " +
-                "know this endpoint accepts images — flip the **Vision override** to Force Yes on the provider card.");
+                $"{activeProvider.DefaultModel} on {activeProvider.Name} does not accept images. Act sends a screenshot " +
+                "every turn so the model can see your screen, so it needs a model that accepts images: pick one in the " +
+                "model menu, or turn Act off to chat with this one. Set Vision to Force Yes on the provider card only " +
+                "if the provider says this model takes images.");
         }
 
         return (activeProvider, null);

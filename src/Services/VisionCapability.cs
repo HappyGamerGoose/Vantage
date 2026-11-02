@@ -276,14 +276,13 @@ public sealed class VisionCapability
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             using var req  = new HttpRequestMessage(HttpMethod.Post,
-                isAnthropic ? $"{baseUrl}/v1/messages" : $"{baseUrl}/chat/completions");
+                isAnthropic ? $"{Agent.AnthropicEngine.ApiRoot(baseUrl)}/v1/messages" : $"{baseUrl}/chat/completions");
 
             var apiKey = provider.ApiKey.Trim();
             if (isAnthropic)
             {
                 req.Headers.Add("x-api-key", apiKey);
                 req.Headers.Add("anthropic-version", "2023-06-01");
-                req.Headers.Add("anthropic-beta", "computer-use-2025-01-24");
             }
             else
             {
@@ -307,7 +306,8 @@ public sealed class VisionCapability
                 try { body = await resp.Content.ReadAsStringAsync(); }
                 catch { return null; }
                 var lower = body.ToLowerInvariant();
-                if (lower.Contains("vision")                  ||
+                if (Agent.LmmErrorClassifier.RejectsImages(body) ||
+                    lower.Contains("vision")                  ||
                     lower.Contains("image_url")               ||
                     lower.Contains("multimodal")              ||
                     lower.Contains("image input")             ||

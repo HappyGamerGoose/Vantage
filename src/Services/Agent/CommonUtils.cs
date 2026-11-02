@@ -493,32 +493,68 @@ internal static class LmmErrorClassifier
         {
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            // Groq / OpenAI shape: { "error": { "message": "..." } }
-            if (root.TryGetProperty("error", out var err) &&
-                err.ValueKind == JsonValueKind.Object &&
-                err.TryGetProperty("message", out var msg) &&
-                msg.ValueKind == JsonValueKind.String)
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            // OpenAI and Anthropic: { "error": { "message": ... } }
+            if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object &&
+                err.TryGetProperty("message", out var msg) && TextOf(msg) is { } errorText)
             {
-                return msg.GetString();
+                return errorText;
             }
-            // OpenAI alternate: top-level "message" (older shape)
-            if (root.TryGetProperty("message", out var m2) && m2.ValueKind == JsonValueKind.String)
+            // Older shape: top-level "message"; FastAPI servers: top-level "detail".
+            foreach (var field in new[] { "message", "detail" })
             {
-                return m2.GetString();
-            }
-            // Anthropic shape: { "type":"error", "error": { "type":..., "message": ... } }
-            if (root.TryGetProperty("type", out _) &&
-                root.TryGetProperty("error", out var e2) &&
-                e2.ValueKind == JsonValueKind.Object &&
-                e2.TryGetProperty("message", out var am) &&
-                am.ValueKind == JsonValueKind.String)
-            {
-                return am.GetString();
+                if (root.TryGetProperty(field, out var value) && TextOf(value) is { } text) return text;
             }
         }
         catch { /* not JSON */ }
         return null;
     }
+
+    // A message is usually a string, but some servers send a list of validation
+    // errors with the text in "msg". Read only as a string, Inception's "this
+    // model does not take images" reached the user as a bare "HTTP 400".
+    private static string? TextOf(JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                var text = value.GetString()?.Trim();
+                if (text?.StartsWith("Value error, ", StringComparison.Ordinal) == true) text = text["Value error, ".Length..];
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            case JsonValueKind.Array:
+                var parts = value.EnumerateArray().Select(TextOf).Where(part => part is not null).Distinct().ToList();
+                return parts.Count == 0 ? null : string.Join("; ", parts);
+            case JsonValueKind.Object:
+                if (value.TryGetProperty("msg", out var msg)) return TextOf(msg);
+                if (value.TryGetProperty("message", out var message)) return TextOf(message);
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>True when the provider refused a request because the model does not take images.</summary>
+    public static bool RejectsImages(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        var lower = body.ToLowerInvariant();
+        var aboutImages = lower.Contains("image") || lower.Contains("vision") || lower.Contains("multimodal");
+        var refused = lower.Contains("not support") || lower.Contains("unsupported") || lower.Contains("does not accept");
+        // A picture in the wrong format or size is a different problem.
+        var aboutOnePicture = lower.Contains("format") || lower.Contains("too large") || lower.Contains("size");
+        return aboutImages && refused && !aboutOnePicture;
+    }
+
+    /// <summary>
+    /// What to tell the user about a refused request: a plain explanation when
+    /// the model does not take images, otherwise the provider's own message.
+    /// </summary>
+    public static string? Describe(string body, string model) =>
+        RejectsImages(body)
+            ? $"{model} does not accept images. Act sends a screenshot every turn so the model can see your screen, " +
+              "so it needs a model that accepts images: pick one in the model menu, or turn Act off to chat with this one. " +
+              "If this model's Vision setting on its provider card is Force Yes, set it back to Auto."
+            : ExtractMessage(body);
 }
 
 public sealed class AgentAction

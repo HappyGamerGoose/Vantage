@@ -189,7 +189,7 @@ public sealed class AnthropicEngine : LMMEngine
                     throw new LlmRateLimitException(status, retry, Model, bodyText, kind);
                 }
                 throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
-                    LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from Anthropic",
+                    LmmErrorClassifier.Describe(bodyText, Model) ?? $"HTTP {status} from Anthropic",
                     bodyText);
             }
 
@@ -436,7 +436,7 @@ public sealed class OpenAICompatEngine : LMMEngine
                 // (notably "invalid format" / "invalid_request_error") so
                 // downstream code can react rather than treat it as a fault.
                 throw new LmmProviderException(status, resp.ReasonPhrase ?? "error",
-                    LmmErrorClassifier.ExtractMessage(bodyText) ?? $"HTTP {status} from {BaseUrl}",
+                    LmmErrorClassifier.Describe(bodyText, Model) ?? $"HTTP {status} from {BaseUrl}",
                     bodyText);
             }
 

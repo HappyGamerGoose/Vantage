@@ -317,8 +317,23 @@ if (args.Contains("--provider-models-self-test", StringComparer.OrdinalIgnoreCas
         && AnthropicEngine.InputTokensUsed(usage.RootElement) == 9120
         && AnthropicEngine.InputTokensUsed(default) == 0;
 
-    var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk && anthropicOk;
-    Console.WriteLine($"ProviderModelsValid={valid} OneModel={oneModel} Idempotent={idempotent} RoundTrip={roundTrip} Pinned={pinnedOk} Anthropic={anthropicOk}");
+    // Inception's reply to a screenshot, word for word: its message is a list,
+    // which once reached the user as a bare "HTTP 400".
+    const string noImages = """{"error":{"message":[{"type":"value_error","loc":["body"],"msg":"Value error, Image inputs are not supported for this model","ctx":{"error":"Image inputs are not supported for this model"}}],"type":"invalid_request_error","param":null,"code":"invalid_request_error"}}""";
+    var described = LmmErrorClassifier.Describe(noImages, "mercury-3") ?? "";
+    var errorsOk = LmmErrorClassifier.ExtractMessage(noImages) == "Image inputs are not supported for this model"
+        && LmmErrorClassifier.RejectsImages(noImages)
+        && described.StartsWith("mercury-3 does not accept images.", StringComparison.Ordinal)
+        && described.Contains("turn Act off", StringComparison.Ordinal)
+        && LmmErrorClassifier.ExtractMessage("""{"detail":[{"msg":"field required"},{"msg":"bad model"}]}""") == "field required; bad model"
+        && LmmErrorClassifier.ExtractMessage("""{"error":{"message":"Invalid API key"}}""") == "Invalid API key"
+        && LmmErrorClassifier.Describe("""{"error":{"message":"Invalid API key"}}""", "m") == "Invalid API key"
+        && !LmmErrorClassifier.RejectsImages("""{"error":{"message":"Image too large: size exceeds 5 MB"}}""")
+        && !LmmErrorClassifier.RejectsImages("""{"error":{"message":"Unsupported parameter: temperature"}}""")
+        && LmmErrorClassifier.ExtractMessage("not json") is null;
+
+    var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk && anthropicOk && errorsOk;
+    Console.WriteLine($"ProviderModelsValid={valid} OneModel={oneModel} Idempotent={idempotent} RoundTrip={roundTrip} Pinned={pinnedOk} Anthropic={anthropicOk} Errors={errorsOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
