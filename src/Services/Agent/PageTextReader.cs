@@ -149,8 +149,17 @@ internal static class PageTextReader
     /// The text around each search term, with white space collapsed. With no
     /// search terms, the start of the text.
     /// </summary>
-    internal static List<string> ExtractExcerpts(string text, IReadOnlyList<string> searches)
+    internal static List<string> ExtractExcerpts(string text, IReadOnlyList<string> searches) =>
+        ExtractExcerpts(text, searches, null, out _);
+
+    /// <summary>
+    /// With <paramref name="progress"/>, each search carries on after the matches
+    /// it already returned. Asking again used to return the same first matches,
+    /// and a model looking for one further down asked 20 times.
+    /// </summary>
+    internal static List<string> ExtractExcerpts(string text, IReadOnlyList<string> searches, IDictionary<string, int>? progress, out bool moreMatches)
     {
+        moreMatches = false;
         var clean = Whitespace.Replace(text.Replace('￼', ' '), " ").Trim();
         var excerpts = new List<string>();
         if (clean.Length == 0) return excerpts;
@@ -163,7 +172,10 @@ internal static class PageTextReader
         foreach (var search in searches.Where(s => !string.IsNullOrWhiteSpace(s)))
         {
             var term = search.Trim();
+            var key = term.ToLowerInvariant();
             var position = 0;
+            if (progress is not null && progress.TryGetValue(key, out var reached)) position = Math.Min(reached, clean.Length);
+            var found = 0;
             for (var hits = 0; hits < MaxExcerptsPerSearch; hits++)
             {
                 var index = clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase);
@@ -172,7 +184,15 @@ internal static class PageTextReader
                 var end = Math.Min(clean.Length, index + term.Length + ExcerptContext);
                 excerpts.Add(clean[start..end]);
                 position = end;
+                found++;
             }
+            if (progress is null) continue;
+
+            // Once a search runs out it starts over, in case the earliest matches
+            // have since dropped out of TEXT_READ.
+            if (found == 0) progress.Remove(key);
+            else progress[key] = position;
+            if (clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase) >= 0) moreMatches = true;
         }
         return excerpts;
     }

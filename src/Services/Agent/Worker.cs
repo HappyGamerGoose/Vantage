@@ -93,6 +93,7 @@ public sealed class Worker
     private string _lastObservationKey = "";
     private string _lastTargetKey = "";
     private int _sameTargetCount;
+    private readonly RepeatGuard _repeats = new();
     private bool _doneRechecked;
     private readonly FactLedger _facts = new();
     private string _goal = "";
@@ -481,6 +482,24 @@ public sealed class Worker
                 $"the model reply could not be used, because {CommonUtils.DescribeActionProblem(plan!)}");
         }
         _parseFailStreak = 0;
+
+        var repeats = _repeats.Register(action);
+        if (repeats >= RepeatGuard.RefuseAt)
+        {
+            var repeated = TryDescribeAction(action);
+            CommonUtils.LogDiagnostic("worker-repeat-held", $"turn={_turnCount + 1} repeats={repeats} action={repeated}");
+            if (repeats >= RepeatGuard.StopAt)
+            {
+                _turnCount++;
+                return new ActionResult(ActionOutcome.FailedFatal,
+                    $"stopped because the same action was sent {repeats} times without the task moving on: {repeated}");
+            }
+            var repeatRefusal =
+                $"NOT DONE: REPEATED_ACTION: nothing was done. You have sent this {repeats} times and it has not moved the task on, whatever the screen did. " +
+                $"The run stops at {RepeatGuard.StopAt}. Do something different: check in Last action what your last attempt really did, use another control, a keyboard shortcut or a different search word, or report `fail`.";
+            HoldAction(repeatRefusal);
+            return new ActionResult(ActionOutcome.Success, repeatRefusal);
+        }
 
         // A number with no source never reaches the screen. Sending it again
         // changes nothing, and a model that keeps trying is stopped rather than
@@ -893,8 +912,8 @@ public sealed class Worker
     {
         try
         {
-            var snapshot = WorldSnapshot.Capture();
-            return (snapshot.CursorX, snapshot.CursorY);
+            // Polled while the screen settles, so it must not take a full world snapshot.
+            return WindowsAutomationService.GetCursorPositionLogical();
         }
         catch
         {

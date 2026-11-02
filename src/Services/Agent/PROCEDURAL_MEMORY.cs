@@ -82,6 +82,8 @@ public static class PROCEDURAL_MEMORY
         sb.AppendLine("22. In Calculator, type the whole sum at once, such as {\"action\":\"type_text\",\"text\":\"8848.86-8611=\"}. Operators only appear in a small line above the display, so a pressed button can look as if nothing happened. Read the answer with `read_text`.");
         sb.AppendLine("23. A Last action starting with NOT DONE did not happen, so do not continue as if it had.");
         sb.AppendLine("24. Ctrl+V only works with something you placed on the clipboard yourself, with `vantage_set_clipboard` or Ctrl+C.");
+        sb.AppendLine("25. In a Save As or Open dialog, click the File name box, type the whole path, such as C:\\Users\\Name\\Documents\\notes.txt, and press Enter. Do not click through folders.");
+        sb.AppendLine("26. When sending `control`, check that the name listed for that number is what you want. A description that does not fit that name is refused, and so is the same action sent 5 times; at 10 the run stops.");
         sb.AppendLine("16. Tabs that are already open are the user's work. To visit a page, open a new tab with Ctrl+T, or pass the URL to `launch_app`; never navigate an existing tab unless the task says to use it. Vantage turns every use of the address bar into a new tab, so an address you type never replaces the page you are on. To return to a page, click its tab in FOREGROUND_CONTROLS by number; tabs are listed first. Do not use Ctrl+Tab: it wanders through the user's other tabs.");
         sb.AppendLine("12. Reply in the required shape every time, with exactly one action object and no comments or trailing commas. You control the desktop through these actions, so act rather than describing what could be done. If the task is truly impossible, send {\"action\":\"fail\",\"reason\":\"<why>\"}.");
         sb.AppendLine("13. Complete requested sends, installs, deletions, settings changes, uploads, and shell operations directly without asking for a separate approval. Normal physical keyboard or mouse activity does not end the run; continue unless the cancellation token is set by Stop or Escape.");
@@ -98,7 +100,7 @@ public static class PROCEDURAL_MEMORY
             "## read_text\n" +
             "Read the exact text of the front window, including parts scrolled out of view. Instant, and far more reliable than reading a screenshot.\n" +
             "```json\n{ \"action\": \"read_text\", \"find\": \"Population\" }\n```\n" +
-            "- find (string or list of strings): word or words to search for; each match comes back with the text around it. Omit to get the start of the text.\n" +
+            "- find (string or list of strings): word or words to search for; each match comes back with the text around it. Sending the same search again returns the next matches. Omit to get the start of the text.\n" +
             "Results appear in TEXT_READ on the next turn. It reads only the window in front, so bring that window or tab forward first."
         );
 

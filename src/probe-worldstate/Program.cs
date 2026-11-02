@@ -849,6 +849,91 @@ if (args.Contains("--agent-speed-self-test", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
+{
+    AgentAction Act(string json) => CommonUtils.ParseAgentAction(json)!;
+    UiControl Named(string name, string role) => new(name, role, true, false, 10, 10, 100, 30);
+
+    // A control number whose name is not what the description says is refused.
+    const string desktop = "Desktop in the left navigation pane of Save As dialog";
+    var contradictOk = UiControlGrounding.DescriptionContradicts(desktop, Named("Save as type:", "combobox"))
+        && !UiControlGrounding.DescriptionContradicts(desktop, Named("Desktop", "tree-item"))
+        && !UiControlGrounding.DescriptionContradicts(null, Named("Save as type:", "combobox"))
+        && !UiControlGrounding.DescriptionContradicts("the Australia tab", Named("Australia - Wikipedia", "tab-item"))
+        && !UiControlGrounding.DescriptionContradicts("the address bar", Named("Address and search bar", "edit"))
+        && !UiControlGrounding.DescriptionContradicts("the File name field", Named("File name:", "edit"))
+        && !UiControlGrounding.DescriptionContradicts("the first result", Named("Mount Everest", "hyperlink"))
+        && !UiControlGrounding.DescriptionContradicts("the Downloads folder", Named("Download", "tree-item"))
+        && !UiControlGrounding.DescriptionContradicts("Save as type dropdown", Named("Save as type:", "combobox"));
+
+    // The same action is refused at 5 and stopped at 10, including alternating loops.
+    var same = new RepeatGuard();
+    var counts = Enumerable.Range(0, 10).Select(_ => same.Register(Act("{\"action\":\"click\",\"control\":31,\"description\":\"Desktop\"}"))).ToList();
+    var sameOk = counts.SequenceEqual(Enumerable.Range(1, 10));
+
+    var alternating = new RepeatGuard();
+    var alternated = 0;
+    for (var i = 0; i < 10; i++) alternated = alternating.Register(Act(i % 2 == 0 ? "{\"action\":\"key\",\"combo\":\"a\"}" : "{\"action\":\"key\",\"combo\":\"b\"}"));
+
+    var varied = new RepeatGuard();
+    var variedMost = Enumerable.Range(0, 20).Select(i => varied.Register(Act($"{{\"action\":\"type_text\",\"text\":\"row {i}\"}}"))).Max();
+
+    var expectations = new RepeatGuard();
+    expectations.Register(Act("{\"action\":\"click\",\"control\":1,\"expected_state\":\"opens\"}"));
+    var expectationsCount = expectations.Register(Act("{\"action\":\"click\",\"control\":1,\"expected_state\":\"opens now\"}"));
+
+    var exempt = new RepeatGuard();
+    var exemptMost = Enumerable.Range(0, 20).Select(_ => exempt.Register(Act("{\"action\":\"scroll\",\"clicks\":-5}"))).Max();
+    var repeatOk = sameOk && alternated == 5 && variedMost == 1 && expectationsCount == 2 && exemptMost == 0;
+
+    // Asking again returns the next matches, then says when they run out.
+    var matches = string.Join(' ', Enumerable.Range(1, 9).Select(i => $"Area {i} " + new string('x', 400)));
+    var progress = new Dictionary<string, int>();
+    var pages = new List<(int Count, bool More)>();
+    for (var i = 0; i < 4; i++)
+    {
+        var excerpts = PageTextReader.ExtractExcerpts(matches, new[] { "Area" }, progress, out var more);
+        pages.Add((excerpts.Count, more));
+    }
+    var restarted = PageTextReader.ExtractExcerpts(matches, new[] { "Area" }, progress, out _);
+    var pagingOk = pages.SequenceEqual(new[] { (4, true), (4, true), (1, false), (0, false) })
+        && restarted.Count == 4 && restarted[0].Contains("Area 1 ", StringComparison.Ordinal);
+
+    var loopPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>());
+    var loopRuleOk = loopPrompt.Contains("Save As", StringComparison.Ordinal) && loopPrompt.Contains("next matches", StringComparison.Ordinal);
+
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk}");
+    Environment.ExitCode = loopOk ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--handle-growth", StringComparer.OrdinalIgnoreCase))
+{
+    // Calls what the agent calls every turn and watches the process's handle
+    // count, which should stay flat however long a run goes on.
+    var process = System.Diagnostics.Process.GetCurrentProcess();
+    process.Refresh();
+    var startHandles = process.HandleCount;
+    var appsSeen = WindowsAppManager.ListRunningApps().Count;
+    Console.WriteLine($"start handles={startHandles} apps={appsSeen}");
+    var growthRounds = 30_000;
+    for (var round = 1; round <= growthRounds; round++)
+    {
+        WindowsAppManager.ListRunningApps();
+        WindowsAppManager.GetFrontmostApp();
+        if (round % 250 != 0) continue;
+        process.Refresh();
+        Console.WriteLine($"round={round} handles={process.HandleCount}");
+        if (process.HandleCount < startHandles + 500 && round >= 5000) break;
+    }
+    process.Refresh();
+    var flat = process.HandleCount < startHandles + 500;
+    Console.WriteLine($"end handles={process.HandleCount} flat={flat}");
+    Environment.ExitCode = flat ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--screen-noise", StringComparer.OrdinalIgnoreCase))
 {
     // How much an untouched screen changes between frames, for the change threshold.

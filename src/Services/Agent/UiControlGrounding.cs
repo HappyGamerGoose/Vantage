@@ -296,6 +296,43 @@ internal static class UiControlGrounding
         return end;
     }
 
+    // Words that say what kind of thing a target is, or where, but not which one.
+    private static readonly HashSet<string> GenericTargetWords = new(StringComparer.Ordinal)
+    {
+        "the", "a", "an", "this", "that", "my", "and", "or", "to", "for", "click", "open", "select", "press", "choose",
+        "button", "btn", "link", "hyperlink", "tab", "menu", "item", "entry", "icon", "option", "control", "element",
+        "field", "box", "input", "textbox", "bar", "dropdown", "drop", "down", "combo", "combobox", "selector",
+        "checkbox", "check", "toggle", "radio", "list", "row", "result", "page", "window", "dialog", "pane", "panel",
+        "section", "area", "first", "second", "third", "fourth", "fifth", "last", "next", "previous",
+        "top", "bottom", "left", "right", "middle", "navigation", "sidebar", "main",
+    };
+
+    /// <summary>
+    /// True when a control number and the description sent with it name different
+    /// things. A model once clicked "Save as type:" 146 times while describing it
+    /// as Desktop: the dropdown opened and closed, so every click looked like
+    /// progress. Only the target phrase counts, since "Desktop in the Save As
+    /// dialog" shares words with that dropdown only through its location.
+    /// </summary>
+    public static bool DescriptionContradicts(string? description, UiControl control)
+    {
+        var padded = " " + Normalize(description ?? string.Empty) + " ";
+        var wanted = padded[..TargetPhraseEnd(padded)]
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(word => !GenericTargetWords.Contains(word))
+            .ToList();
+        if (wanted.Count == 0) return false;
+
+        var named = Normalize(control.Name).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return !wanted.Any(word => named.Any(name => SameWord(word, name)));
+    }
+
+    // "Download" and "Downloads" are one word to a person.
+    private static bool SameWord(string a, string b) =>
+        a == b
+        || (Math.Min(a.Length, b.Length) >= MinPrefixLength
+            && (a.StartsWith(b, StringComparison.Ordinal) || b.StartsWith(a, StringComparison.Ordinal)));
+
     private static string TargetCore(string phrase)
     {
         var core = phrase.Trim();

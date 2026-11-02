@@ -24,6 +24,8 @@ public sealed partial class MainWindow
         private readonly Conversation _conversation;
         private readonly ChatMessage _assistantMessage;
         private readonly AgentRunViewModel _run;
+        private static readonly TimeSpan RunSaveInterval = TimeSpan.FromSeconds(15);
+        private DateTimeOffset _lastSave = DateTimeOffset.UtcNow;
 
         public MainWindowAgentHooks(
             MainWindow self,
@@ -111,6 +113,14 @@ public sealed partial class MainWindow
                         _run.AddPhase(phase);
                         ScrollIntoViewIfVisible();
                     }
+                }
+
+                // A run can last many minutes, and its record used to reach the
+                // disk only when it ended, so a crash lost all of it.
+                if (DateTimeOffset.UtcNow - _lastSave >= RunSaveInterval)
+                {
+                    _lastSave = DateTimeOffset.UtcNow;
+                    _ = _self.PersistCoreAsync();
                 }
             });
         }

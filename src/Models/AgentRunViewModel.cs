@@ -335,6 +335,16 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
         // immediately so ElapsedLabel stays frozen.
         vm._tickTimer?.Stop();
 
+        // Runs are saved while they work, so one saved unfinished was cut short
+        // and must not reopen looking as if it were still going.
+        var interrupted = !snap.IsFinished;
+        if (interrupted)
+        {
+            vm.IsFinished = true;
+            vm.TerminationLabel = "Interrupted: Vantage closed before this run finished";
+            vm.TerminationKind = "fail";
+        }
+
         foreach (var ps in snap.Phases)
         {
             vm.Phases.Add(new PhaseRecord
@@ -342,7 +352,7 @@ public sealed class AgentRunViewModel : INotifyPropertyChanged
                 Index     = ps.Index,
                 Kind      = ps.Kind,
                 Counter   = ps.Counter,
-                Status    = ps.Status,
+                Status    = interrupted && ps.Status == PhaseStatus.Running ? PhaseStatus.Failed : ps.Status,
                 Title     = ps.Title,
                 Subtitle  = ps.Subtitle,
                 StartedAt = ps.StartedAt,

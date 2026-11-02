@@ -108,10 +108,29 @@ public sealed class VantageACI
         if (!control.Enabled || control.Offscreen)
             return new ActionResult(ActionOutcome.Failed, $"control {number} \"{control.Name}\" is disabled or scrolled out of view");
 
+        var description = action.GetString("description");
+        if (UiControlGrounding.DescriptionContradicts(description, control))
+        {
+            var fitting = UiControlGrounding.Match(description!, _controls);
+            var instead = fitting is not null
+                ? $"\"{fitting.Name}\" is control {IndexOfControl(fitting)}."
+                : "Pick the number whose name is what you want, or reach it another way if it is not listed.";
+            return new ActionResult(ActionOutcome.Failed,
+                $"nothing was clicked: control {number} is \"{control.Name}\" ({control.Role}), which is not \"{description}\". {instead} " +
+                $"If you do mean \"{control.Name}\", send it with no description.");
+        }
+
         point = ControlCenterLogical(control);
         _lastGroundDescription = control.Name;
         _accessibilityHits++;
         return new ActionResult(ActionOutcome.Success, control.Name);
+    }
+
+    private int IndexOfControl(UiControl control)
+    {
+        for (var i = 0; i < _controls.Count; i++)
+            if (ReferenceEquals(_controls[i], control)) return i;
+        return -1;
     }
 
     public void AssignScreenshot(byte[] jpegBytes)
@@ -276,18 +295,36 @@ public sealed class VantageACI
         var searches = action.GetStringList("find");
         if (searches.Count == 0 && action.GetString("find") is { Length: > 0 } single) searches = new List<string> { single };
 
-        var text = await PageTextReader.ReadAsync(Vantage.Common.NativeInterop.GetForegroundWindow(), ReadTextBudget);
+        var window = Vantage.Common.NativeInterop.GetForegroundWindow();
+        var page = $"{window}|{ForegroundWindowProbe.Read().Title}";
+        if (page != _readProgressPage)
+        {
+            _readProgressPage = page;
+            _readProgress.Clear();
+        }
+        var resumed = searches.Any(search => _readProgress.ContainsKey(search.Trim().ToLowerInvariant()));
+
+        var text = await PageTextReader.ReadAsync(window, ReadTextBudget);
         LastReadUnavailable = text.Trim().Length < PageTextReader.MinUsableLength;
-        LastReadExcerpts = PageTextReader.ExtractExcerpts(text, searches);
+        LastReadExcerpts = PageTextReader.ExtractExcerpts(text, searches, _readProgress, out var moreMatches);
         if (LastReadUnavailable)
         {
             return new ActionResult(ActionOutcome.Success,
                 "this window exposes no readable text. A value here can only come from the screenshot: pass `unconfirmed: true` when typing it, and the run will be reported as needing review.");
         }
-        return new ActionResult(ActionOutcome.Success, LastReadExcerpts.Count > 0
-            ? $"read_text found {LastReadExcerpts.Count} passage(s); they are in TEXT_READ"
+        if (LastReadExcerpts.Count > 0)
+        {
+            return new ActionResult(ActionOutcome.Success,
+                $"read_text found {LastReadExcerpts.Count} passage(s); they are in TEXT_READ" +
+                (moreMatches ? ". There are more matches: send the same read_text again for the next ones, or search a more specific word." : ""));
+        }
+        return new ActionResult(ActionOutcome.Success, resumed
+            ? "there are no further matches: every match has been returned and is in TEXT_READ. Search a different word."
             : "the text was read but contains no match. Try a shorter or different search word.");
     }
+
+    private string _readProgressPage = "";
+    private readonly Dictionary<string, int> _readProgress = new();
 
     private ActionResult HandleSaveToKnowledge(AgentAction action)
     {

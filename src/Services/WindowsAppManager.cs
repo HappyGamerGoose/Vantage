@@ -1158,7 +1158,7 @@ public static class WindowsAppManager
                 }
                 return null;
             }
-            finally { Marshal.FreeHGlobal(hProc); }
+            finally { CloseHandle(hProc); }
         }
         catch { return null; }
     }
