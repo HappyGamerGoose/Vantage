@@ -958,8 +958,23 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
     var batches = new RepeatGuard();
     batches.Register(Act("{\"action\":\"batch\",\"actions\":[{\"action\":\"click\",\"control\":31,\"description\":\"Save\"},{\"action\":\"key\",\"combo\":\"enter\",\"intent\":\"confirm\"}]}"), saveAs);
     var batchCount = batches.Register(Act("{\"action\":\"batch\",\"actions\":[{\"action\":\"click\",\"control\":31,\"description\":\"the Save button\"},{\"action\":\"key\",\"combo\":\"enter\",\"intent\":\"confirm it\"}]}"), saveAs);
+    // A plain click on a text box is recognised, and the model is told the one action to send next.
+    var dialog = new List<UiControl> { Named("File name:", "combobox"), Named("File name:", "edit"), Named("Save", "button") };
+    var field = UiControlGrounding.TextFieldClicked(Act("{\"action\":\"click\",\"control\":1,\"expected_state\":\"The file name field will be focused\"}"), dialog);
+    var saveHint = field is null ? "" : UiControlGrounding.TypeIntoField(field, 1, "Save as");
+    var noteHint = field is null ? "" : UiControlGrounding.TypeIntoField(field, 1, "Untitled - Notepad");
+    var fieldOk = field?.Name == "File name:"
+        && UiControlGrounding.TextFieldClicked(Act("{\"action\":\"double_click\",\"control\":1}"), dialog) is null
+        && UiControlGrounding.TextFieldClicked(Act("{\"action\":\"click\",\"control\":1,\"button\":\"right\"}"), dialog) is null
+        && UiControlGrounding.TextFieldClicked(Act("{\"action\":\"click\",\"control\":2}"), dialog) is null
+        && UiControlGrounding.TextFieldClicked(Act("{\"action\":\"click\",\"control\":9}"), dialog) is null
+        && saveHint.Contains("{\"action\":\"type\",\"control\":1,\"text\":\"<the file's whole path>\",\"overwrite\":true}", StringComparison.Ordinal)
+        && noteHint.Contains("\"text\":\"<the text>\"", StringComparison.Ordinal)
+        && PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>())
+            .Contains("never click a field first", StringComparison.Ordinal);
+
     var repeatOk = sameOk && alternated == 5 && variedMost == 1 && expectationsCount == 2 && exemptMost == 0
-        && saveLoopOk && otherControl == 1 && batchCount == 2;
+        && saveLoopOk && otherControl == 1 && batchCount == 2 && fieldOk;
 
     // Asking again returns the next matches, then says when they run out.
     var matches = string.Join(' ', Enumerable.Range(1, 9).Select(i => $"Area {i} " + new string('x', 400)));

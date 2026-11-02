@@ -523,7 +523,12 @@ public sealed class Worker
         _parseFailStreak = 0;
 
         var repeats = _repeats.Register(action, controls);
-        if (repeats >= RepeatGuard.RefuseAt)
+        // Clicking a text box only puts the caret in it, so clicking it again is
+        // never progress. A model planning "click the box, then type" clicked the
+        // File name box ten times and never typed, and the general refusal below
+        // sent it looking for another control when it needed to type.
+        var clickedField = UiControlGrounding.TextFieldClicked(action, controls);
+        if (repeats >= RepeatGuard.RefuseAt || (repeats >= 2 && clickedField is not null))
         {
             var repeated = TryDescribeAction(action);
             CommonUtils.LogDiagnostic("worker-repeat-held", $"turn={_turnCount + 1} repeats={repeats} action={repeated}");
@@ -533,9 +538,11 @@ public sealed class Worker
                 return new ActionResult(ActionOutcome.FailedFatal,
                     $"stopped because the same action was sent {repeats} times without the task moving on: {repeated}");
             }
-            var repeatRefusal =
-                $"NOT DONE: REPEATED_ACTION: nothing was done. You have sent this {repeats} times and it has not moved the task on, whatever the screen did. " +
-                $"The run stops at {RepeatGuard.StopAt}. Do something different: check in Last action what your last attempt really did, use another control, a keyboard shortcut or a different search word, or report `fail`.";
+            var repeatRefusal = clickedField is not null
+                ? $"NOT DONE: REPEATED_ACTION: nothing was clicked. {UiControlGrounding.TypeIntoField(clickedField, action.GetInt("control")!.Value, worldState.ForegroundTitle)} " +
+                  $"The run stops if the same action is sent {RepeatGuard.StopAt} times."
+                : $"NOT DONE: REPEATED_ACTION: nothing was done. You have sent this {repeats} times and it has not moved the task on, whatever the screen did. " +
+                  $"The run stops at {RepeatGuard.StopAt}. Do something different: check in Last action what your last attempt really did, use another control, a keyboard shortcut or a different search word, or report `fail`.";
             HoldAction(repeatRefusal);
             return new ActionResult(ActionOutcome.Success, repeatRefusal);
         }
@@ -803,6 +810,18 @@ public sealed class Worker
                 screenDiff);
         verifySw.Stop();
         verifyMs = verifySw.ElapsedMilliseconds;
+
+        // A caret is too small to count as a change on screen, but it is all
+        // the click was for. Reported as a miss, it sent the model back to
+        // click the box again, so it is told to type instead.
+        if (clickedField is not null && !actionWasSanitized && result.Outcome == ActionOutcome.Success)
+        {
+            if (!verdict.Met) verdict = new VerificationResult(true, action.Action, "the caret is in the text box");
+            result = result with
+            {
+                Description = $"{result.Description.TrimEnd('.')}. {UiControlGrounding.TypeIntoField(clickedField, action.GetInt("control")!.Value, worldState.ForegroundTitle)}",
+            };
+        }
 
         // Self-critique: capture the model's `expected_state` + `confidence`
         // and compare against actual outcome. If the model said `high`

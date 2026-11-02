@@ -545,7 +545,7 @@ internal static class SavedFileTitle
         return name is "type" or "type_text" ? action : null;
     }
 
-    private static bool IsSaveDialog(string? title) =>
+    internal static bool IsSaveDialog(string? title) =>
         title is not null
         && title.TrimStart().StartsWith("Save", StringComparison.OrdinalIgnoreCase)
         && !title.Contains(" - ", StringComparison.Ordinal);

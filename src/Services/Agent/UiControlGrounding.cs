@@ -307,6 +307,24 @@ internal static class UiControlGrounding
         "top", "bottom", "left", "right", "middle", "navigation", "sidebar", "main",
     };
 
+    /// <summary>The text box a plain left click on a listed control lands in, if it is one.</summary>
+    public static UiControl? TextFieldClicked(AgentAction action, IReadOnlyList<UiControl> controls)
+    {
+        if (!action.Action.Trim().Equals("click", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!(action.GetString("button") ?? "left").Equals("left", StringComparison.OrdinalIgnoreCase)) return null;
+        if ((action.GetInt("num_clicks") ?? 1) != 1) return null;
+        if (action.GetInt("control") is not { } number || number < 0 || number >= controls.Count) return null;
+        return controls[number].Role.Equals("edit", StringComparison.OrdinalIgnoreCase) ? controls[number] : null;
+    }
+
+    /// <summary>The one action to send once a text box has the caret.</summary>
+    public static string TypeIntoField(UiControl field, int number, string? windowTitle)
+    {
+        var text = SavedFileTitle.IsSaveDialog(windowTitle) ? "<the file's whole path>" : "<the text>";
+        return $"The \"{field.Name}\" box has the caret now, and clicking it again changes nothing. " +
+               $"Type into it next: {{\"action\":\"type\",\"control\":{number},\"text\":\"{text}\",\"overwrite\":true}}.";
+    }
+
     /// <summary>
     /// True when a control number and the description sent with it name different
     /// things. A model once clicked "Save as type:" 146 times while describing it

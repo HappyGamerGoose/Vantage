@@ -221,7 +221,7 @@ public static class PROCEDURAL_MEMORY
             "```json\n" +
             "{ \"action\": \"type\", \"description\": \"the address bar at the top of the browser\", \"text\": \"https://example.com\", \"overwrite\": false, \"enter\": true, \"target_title\": \"Edge\" }\n" +
             "```\n" +
-            "- control (optional, int): number of the input field in FOREGROUND_CONTROLS.\n" +
+            "- control (optional, int): number of the input field in FOREGROUND_CONTROLS. `type` clicks the field itself, so never click a field first.\n" +
             "- description (optional, string): the target input field, when it is not listed. Omit both to type into the currently focused element.\n" +
             "- text (required, string): the text to type.\n" +
             "- overwrite (optional, bool, default false): true to select-all + delete before typing.\n" +
