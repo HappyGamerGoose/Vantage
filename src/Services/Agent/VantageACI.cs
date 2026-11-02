@@ -587,17 +587,7 @@ public sealed class VantageACI
 
         if (overwrite)
         {
-            WindowsAutomationService.KeyDown(Windows.System.VirtualKey.Control);
-            try
-            {
-                WindowsAutomationService.SendKey(Windows.System.VirtualKey.A);
-            }
-            finally
-            {
-                WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Control);
-            }
-            WindowsAutomationService.SendKey(Windows.System.VirtualKey.Back);
-            await Task.Yield();
+            await ClearFocusedFieldAsync();
         }
 
         var typed = text.Length > 0
@@ -607,6 +597,21 @@ public sealed class VantageACI
         if (enter) WindowsAutomationService.SendKey(Windows.System.VirtualKey.Enter);
 
         return new ActionResult(ActionOutcome.Success, $"typed {typed} character(s)");
+    }
+
+    private static async Task ClearFocusedFieldAsync()
+    {
+        WindowsAutomationService.KeyDown(Windows.System.VirtualKey.Control);
+        try
+        {
+            WindowsAutomationService.SendKey(Windows.System.VirtualKey.A);
+        }
+        finally
+        {
+            WindowsAutomationService.KeyUp(Windows.System.VirtualKey.Control);
+        }
+        WindowsAutomationService.SendKey(Windows.System.VirtualKey.Back);
+        await Task.Yield();
     }
 
     private const int NewTabFocusDelayMs = 200;
@@ -1340,6 +1345,9 @@ public sealed class VantageACI
         }
         if (_addressBarFocused) _tabs.OnAddressUsed();
         _addressBarFocused = false;
+        // Typing replaced nothing here, so a file that already held text got the
+        // new text after it. The model asked for a replacement and never got one.
+        if (action.GetBool("overwrite", false)) await ClearFocusedFieldAsync();
         var delay = action.GetInt("delay_ms") ?? 0;
         var typed = await WindowsAppManager.TypeTextAsync(
             text,
@@ -1361,7 +1369,17 @@ public sealed class VantageACI
         if (string.IsNullOrWhiteSpace(combo))
             return new ActionResult(ActionOutcome.Failed, "press_key requires `combo` like \"ctrl+s\" or \"Return\"");
         if (ShortcutShouldOpenNewTab(combo)) combo = "ctrl+t";
+        var savedBefore = combo.Replace(" ", string.Empty).Equals("ctrl+s", StringComparison.OrdinalIgnoreCase)
+            ? SavedFileTitle.SavedName(ForegroundWindowProbe.Read().Title)
+            : null;
         var ok = WindowsAppManager.PressKey(combo);
+        if (ok && savedBefore is not null)
+        {
+            // Pressing it again looked to the model like a Save As that had not opened yet.
+            return new ActionResult(ActionOutcome.Success,
+                $"pressed {combo}, but {savedBefore} has no unsaved changes, so nothing happened and no dialog opens. " +
+                "To save under a new name press ctrl+shift+s; for a new document press ctrl+n.");
+        }
         return new ActionResult(ok ? ActionOutcome.Success : ActionOutcome.Failed,
             ok ? $"pressed {combo}" : $"press_key failed for '{combo}' (unknown token or SendInput rejected)");
     }

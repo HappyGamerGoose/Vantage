@@ -97,6 +97,7 @@ public sealed class Worker
     private bool _doneRechecked;
     private readonly FactLedger _facts = new();
     private string? _lastForegroundTitle;
+    private readonly HashSet<string> _heldFinishedFileText = new(StringComparer.Ordinal);
 
     // Looking at something is not progress, and listing it as a milestone pushed
     // out the steps that were.
@@ -541,6 +542,19 @@ public sealed class Worker
             return new ActionResult(ActionOutcome.Success, challenge);
         }
         _facts.RecordNotes(action);
+
+        // Asked once per text: sending it again means the edit is meant.
+        if (SavedFileTitle.FinishedFileTypedInto(action, worldState.ForegroundTitle, _taskContext.FinishedWork) is { } finishedFile
+            && _heldFinishedFileText.Add($"{finishedFile}|{action.GetString("text")}"))
+        {
+            var finishedRefusal =
+                $"NOT DONE: nothing was typed. This window holds {finishedFile}, which you already saved and finished, so typing here would change it. " +
+                "For the next file press ctrl+n for a new document first, then type and save it under its own name. " +
+                $"If you really mean to change {finishedFile}, send the same action again.";
+            HoldAction(finishedRefusal);
+            CommonUtils.LogDiagnostic("worker-finished-file-held", $"turn={_turnCount + 1} file={finishedFile}");
+            return new ActionResult(ActionOutcome.Success, finishedRefusal);
+        }
 
         var clipboard = ClipboardPolicy.Evaluate(action, _clipboardIsOurs);
         if (clipboard.PastesForeignContent && !ClipboardPolicy.GoalAllowsUserClipboard(_goal))

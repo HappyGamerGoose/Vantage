@@ -943,6 +943,19 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && SavedFileTitle.Detect("Canada - Wikipedia", "Canada.txt - Notepad") is null
         && SavedFileTitle.Detect("Canada.txt - Notepad", "Canada.txt - Notepad") is null;
 
+    // The second country's text is held back while the window still holds the first country's file.
+    var finishedList = new[] { "Saved Canada.txt (the window title confirms it)" };
+    var intoFinished = SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type_text\",\"text\":\"Capital: Canberra\",\"target_title\":\"Canada.txt - Notepad\"}"), "Canada.txt - Notepad", finishedList) == "Canada.txt"
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type_text\",\"text\":\"Capital: Canberra\",\"overwrite\":true}"), "Canada.txt - Notepad", finishedList) == "Canada.txt"
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type_text\",\"text\":\"Capital: Canberra\"}"), "Untitled - Notepad", finishedList) is null
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type_text\",\"text\":\"Capital: Canberra\"}"), "*Canada.txt - Notepad", finishedList) is null
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type_text\",\"text\":\"x\"}"), "Notes.txt - Notepad", finishedList) is null
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"type\",\"control\":3,\"text\":\"Canada.txt\"}"), "Canada.txt - Notepad", finishedList) is null
+        && SavedFileTitle.FinishedFileTypedInto(Act("{\"action\":\"press_key\",\"combo\":\"ctrl+n\"}"), "Canada.txt - Notepad", finishedList) is null
+        && SavedFileTitle.SavedName("Canada.txt - Notepad") == "Canada.txt" && SavedFileTitle.SavedName("*Canada.txt - Notepad") is null && SavedFileTitle.SavedName("Save as") is null;
+    var notepadRule = loopPrompt.Contains("ctrl+n", StringComparison.Ordinal) && loopPrompt.Contains("Ctrl+Shift+S", StringComparison.Ordinal);
+    savedOk = savedOk && intoFinished && notepadRule;
+
     // Finished work stays in the prompt however many milestones follow it.
     var contextRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
     var finishedOk = false;

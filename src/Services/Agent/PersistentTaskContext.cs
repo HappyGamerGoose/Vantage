@@ -498,4 +498,28 @@ internal static class SavedFileTitle
             && earlier.Groups["name"].Value.Equals(name, StringComparison.OrdinalIgnoreCase);
         return fromDialog || fromUnsaved ? name : null;
     }
+
+    /// <summary>The file's name when the title shows a file with no unsaved changes.</summary>
+    internal static string? SavedName(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var match = FileTitle.Match(title.Trim());
+        return match.Success && match.Groups["unsaved"].Length == 0 ? match.Groups["name"].Value : null;
+    }
+
+    /// <summary>
+    /// The finished file a typing action would put new text into. Notepad stays
+    /// on a file after saving it, so the next country's figures went into
+    /// Canada.txt and were saved over it. Null when the text goes somewhere else.
+    /// </summary>
+    internal static string? FinishedFileTypedInto(AgentAction action, string? title, IEnumerable<string> finishedWork)
+    {
+        if (action.Action.Trim().ToLowerInvariant() is not ("type" or "type_text")) return null;
+        if (action.GetInt("control") is not null || action.GetPoint() is not null) return null;
+        if (string.IsNullOrWhiteSpace(action.GetString("text"))) return null;
+        var name = SavedName(title);
+        return name is not null && finishedWork.Any(done => done.Contains(name, StringComparison.OrdinalIgnoreCase))
+            ? name
+            : null;
+    }
 }
