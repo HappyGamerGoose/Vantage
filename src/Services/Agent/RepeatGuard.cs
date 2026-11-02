@@ -43,6 +43,13 @@ internal sealed class RepeatGuard
         return repeats;
     }
 
+    /// <summary>
+    /// The last action moved the task on, so it starts a new count. A read_text
+    /// that keeps finding new passages looks like a repeat but is doing what the
+    /// app told it to do.
+    /// </summary>
+    public void Clear() => _recent.Clear();
+
     private int CyclesAtEnd(int length)
     {
         var cycles = 1;

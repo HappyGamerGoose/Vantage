@@ -16,7 +16,8 @@ internal sealed class FactLedger
 {
     private const int MaxNotes = 40;
     private const int MaxNoteLength = 240;
-    private const int MaxReadExcerpts = 24;
+    private const int MaxReadExcerpts = 60;
+    private const int MaxExcerptsPerPage = 12;
     private const int MaxExcerptLength = 420;
     private const int MinValueDigits = 3;
     private const int MinNoisyDecimals = 9;
@@ -28,9 +29,20 @@ internal sealed class FactLedger
         @"\b(?:Set-Content|Add-Content|Out-File|Set-Clipboard|WriteAllText|WriteAllLines|AppendAllText)\b|New-Item\b.*-Value\b|(?<![\d&])>{1,2}\s*[\w""'$\\.]",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Year = new(@"^(19|20)\d\d$", RegexOptions.Compiled);
+    private static readonly Regex BrowserSuffix = new(
+        @"(?:\s+and \d+ more pages?)?(?:\s+-\s+(?:Personal|Work|Profile \d+))?\s+-\s+(?:Microsoft Edge|Google Chrome|Mozilla Firefox)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private sealed record ReadExcerpt(string Page, string Text);
 
     private readonly List<string> _notes = new();
-    private readonly List<string> _read = new();
+    private readonly List<ReadExcerpt> _read = new();
+
+    // A long task reads more than the prompt can show. Five articles once pushed
+    // out the first one's figures before they were typed, so correct values were
+    // refused and read again until the run gave up. What was read stays a source.
+    private readonly HashSet<string> _readValues = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _typedUnconfirmed = new(StringComparer.Ordinal);
     private bool _readingUnavailable;
 
@@ -100,15 +112,38 @@ internal sealed class FactLedger
         }
     }
 
-    /// <summary>Text read from the window this turn: shown to the model, and a source.</summary>
-    public void RecordRead(IEnumerable<string> excerpts)
+    /// <summary>The page a window title names, without the browser's own words.</summary>
+    internal static string PageLabel(string? windowTitle)
     {
+        var title = (windowTitle ?? string.Empty).Replace("​", string.Empty).Trim();
+        title = BrowserSuffix.Replace(title, string.Empty);
+        return title.Length == 0 ? "this window" : title;
+    }
+
+    /// <summary>
+    /// Text read from the window this turn: shown to the model, and a source.
+    /// Returns how many passages have not been read before in this run.
+    /// </summary>
+    public int RecordRead(IEnumerable<string> excerpts, string? windowTitle = null)
+    {
+        var page = PageLabel(windowTitle);
+        var added = 0;
         foreach (var excerpt in excerpts)
         {
-            var text = excerpt.Length <= MaxExcerptLength ? excerpt : excerpt[..MaxExcerptLength];
-            if (!_read.Contains(text, StringComparer.Ordinal)) _read.Add(text);
+            _readValues.UnionWith(ExtractValues(excerpt).Keys);
+            if (_seen.Add($"{page}\n{excerpt}")) added++;
+
+            // Reading a passage again makes it the newest, so it is the last to go.
+            var entry = new ReadExcerpt(page, excerpt.Length <= MaxExcerptLength ? excerpt : excerpt[..MaxExcerptLength]);
+            _read.Remove(entry);
+            _read.Add(entry);
         }
+
+        // One long page must not push the other pages out of view.
+        while (_read.Count(entry => entry.Page == page) > MaxExcerptsPerPage)
+            _read.RemoveAt(_read.FindIndex(entry => entry.Page == page));
         while (_read.Count > MaxReadExcerpts) _read.RemoveAt(0);
+        return added;
     }
 
     /// <summary>The window has no readable text, so a screenshot is all there is.</summary>
@@ -151,8 +186,7 @@ internal sealed class FactLedger
             missing[key] = written;
         if (missing.Count == 0) return Array.Empty<string>();
 
-        foreach (var source in _read.Concat(otherSources))
-        foreach (var key in ExtractValues(source).Keys)
+        foreach (var key in _readValues.Concat(otherSources.SelectMany(source => ExtractValues(source).Keys)))
         {
             missing.Remove(key);
             if (WithoutFloatingPointNoise(key) is { } clean) missing.Remove(clean);
@@ -168,11 +202,8 @@ internal sealed class FactLedger
     }
 
     /// <summary>Values typed without a source that nothing has confirmed since.</summary>
-    public IReadOnlyList<string> Unconfirmed()
-    {
-        var read = new HashSet<string>(_read.SelectMany(text => ExtractValues(text).Keys), StringComparer.Ordinal);
-        return _typedUnconfirmed.Where(pair => !read.Contains(pair.Key)).Select(pair => pair.Value).ToList();
-    }
+    public IReadOnlyList<string> Unconfirmed() =>
+        _typedUnconfirmed.Where(pair => !_readValues.Contains(pair.Key)).Select(pair => pair.Value).ToList();
 
     public string BuildPromptBlock()
     {
@@ -180,8 +211,12 @@ internal sealed class FactLedger
         var sb = new StringBuilder();
         if (_read.Count > 0)
         {
-            sb.AppendLine("TEXT_READ (exact text from read_text; take values from here, digit for digit):");
-            foreach (var excerpt in _read) sb.Append("  - ").AppendLine(excerpt);
+            sb.AppendLine("TEXT_READ (exact text from read_text, by page; take values from here, digit for digit, and do not read again what is already here):");
+            foreach (var page in _read.GroupBy(entry => entry.Page))
+            {
+                sb.Append("  From \"").Append(page.Key).AppendLine("\":");
+                foreach (var entry in page) sb.Append("    - ").AppendLine(entry.Text);
+            }
         }
         if (_notes.Count > 0)
         {

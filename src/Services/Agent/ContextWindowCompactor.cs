@@ -99,6 +99,7 @@ public static class ContextWindowCompactor
         if (taskContext != null)
         {
             foreach (var entity in taskContext.DiscoveredEntities) discoveredEntities.Add(entity);
+            foreach (var finished in taskContext.FinishedWork) milestones.Add(finished);
             foreach (var milestone in taskContext.Milestones) milestones.Add(milestone);
             foreach (var pitfall in taskContext.FailedAttempts) pitfalls.Add(pitfall);
         }

@@ -96,6 +96,15 @@ public sealed class Worker
     private readonly RepeatGuard _repeats = new();
     private bool _doneRechecked;
     private readonly FactLedger _facts = new();
+    private string? _lastForegroundTitle;
+
+    // Looking at something is not progress, and listing it as a milestone pushed
+    // out the steps that were.
+    private static readonly HashSet<string> LookOnlyActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "read_text", "screenshot", "wait", "scroll", "scroll_xy", "focus_app", "move_mouse", "cursor_position",
+        "frontmost_app", "displays", "list_apps", "list_processes", "list_windows", "get_window_state", "vantage_get_clipboard",
+    };
     private string _goal = "";
     private const int MaxValueBlocks = 4;
     private int _valueBlocks;
@@ -269,6 +278,12 @@ public sealed class Worker
         CommonUtils.LogDiagnostic("world-state-elapsed-ms",
             $"turn={_turnCount + 1} elapsed={worldSw.ElapsedMilliseconds}");
         sbGen.AppendLine(worldState.ToPromptBlock(includeInventory: _turnCount == 0));
+        if (SavedFileTitle.Detect(_lastForegroundTitle, worldState.ForegroundTitle) is { } savedFile)
+        {
+            _taskContext.RecordFinishedWork($"Saved {savedFile} (the window title confirms it)");
+            CommonUtils.LogDiagnostic("worker-file-saved", $"turn={_turnCount + 1} file={savedFile}");
+        }
+        _lastForegroundTitle = worldState.ForegroundTitle;
 
         // Named controls of the foreground window. The same list backs the
         // grounding step, so a control the model names is clicked exactly.
@@ -658,10 +673,13 @@ public sealed class Worker
         if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
         {
             _valueBlocks = 0;
-            _facts.RecordRead(_aci.LastReadExcerpts);
+            var newPassages = _facts.RecordRead(_aci.LastReadExcerpts, _aci.LastReadTitle);
+            if (newPassages > 0) _repeats.Clear();
             if (_aci.LastReadUnavailable) _facts.RecordReadingUnavailable();
             CommonUtils.LogDiagnostic("worker-read-text",
-                $"turn={_turnCount + 1} excerpts={_aci.LastReadExcerpts.Count} unavailable={_aci.LastReadUnavailable} elapsed={executeMs}ms");
+                $"turn={_turnCount + 1} excerpts={_aci.LastReadExcerpts.Count} new={newPassages} unavailable={_aci.LastReadUnavailable} elapsed={executeMs}ms");
+            CommonUtils.LogVerbose($"worker-read-text-excerpts turn={_turnCount + 1}",
+                $"page={FactLedger.PageLabel(_aci.LastReadTitle)}\n{string.Join("\n", _aci.LastReadExcerpts)}");
         }
         _lastActionOutcome = $"{result.Outcome}: {result.Description}";
         if (result.Outcome == ActionOutcome.Success) _clipboardIsOurs = clipboard.OursAfter;
@@ -869,7 +887,8 @@ public sealed class Worker
         if (taskResult.Outcome is ActionOutcome.Success or ActionOutcome.Done)
         {
             var desc = action.GetString("description") ?? action.Action;
-            _taskContext.RecordMilestone($"{desc}: {taskResult.Description}");
+            if (!LookOnlyActions.Contains(action.Action) && !_aci.IsTabControl(action.GetInt("control")))
+                _taskContext.RecordMilestone($"{desc}: {taskResult.Description}");
         }
         else if (taskResult.Outcome is ActionOutcome.Failed or ActionOutcome.FailedFatal)
         {

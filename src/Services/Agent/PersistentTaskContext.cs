@@ -21,6 +21,8 @@ public sealed class PersistentTaskContext
         @"(?:\s*,?\s+\bthen\b\s+)|(?:\r?\n\s*(?:[-*]|\d+[.)])\s+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    private const int MaxFinishedWork = 30;
+
     private readonly string _filePath;
     private readonly string _scopeKey;
     private TaskContextSnapshot _snapshot;
@@ -84,6 +86,15 @@ public sealed class PersistentTaskContext
             foreach (var entity in _snapshot.DiscoveredEntities.TakeLast(8))
             {
                 sb.Append("  * ").AppendLine(entity);
+            }
+        }
+
+        if (_snapshot.FinishedWork.Count > 0)
+        {
+            sb.AppendLine("Finished work (confirmed; do not do it again):");
+            foreach (var finished in _snapshot.FinishedWork)
+            {
+                sb.Append("  [✓] ").AppendLine(finished);
             }
         }
 
@@ -166,6 +177,21 @@ public sealed class PersistentTaskContext
         }
     }
 
+    /// <summary>
+    /// Real progress, kept for the whole task. Ordinary milestones roll off, and a
+    /// run that lost "saved Canada.txt" among its clicks went back and redid it.
+    /// </summary>
+    public void RecordFinishedWork(string finished)
+    {
+        if (string.IsNullOrWhiteSpace(finished)) return;
+        var normalized = Normalize(finished, 240);
+        if (_snapshot.FinishedWork.Contains(normalized, StringComparer.OrdinalIgnoreCase)) return;
+        _snapshot.FinishedWork.Add(normalized);
+        while (_snapshot.FinishedWork.Count > MaxFinishedWork) _snapshot.FinishedWork.RemoveAt(0);
+        _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
+        Save();
+    }
+
     public void RecordFailedAttempt(string description, string reason)
     {
         if (string.IsNullOrWhiteSpace(description)) return;
@@ -190,6 +216,7 @@ public sealed class PersistentTaskContext
     public IReadOnlyList<TaskTodoItem> Todos => _snapshot.Todos;
     public IReadOnlyList<string> DiscoveredEntities => _snapshot.DiscoveredEntities;
     public IReadOnlyList<string> Milestones => _snapshot.Milestones;
+    public IReadOnlyList<string> FinishedWork => _snapshot.FinishedWork;
     public IReadOnlyList<string> FailedAttempts => _snapshot.FailedAttempts;
     public string CompactedMemorySummary => _snapshot.CompactedMemorySummary;
 
@@ -433,6 +460,7 @@ public sealed class PersistentTaskContext
         public List<TaskTodoItem> Todos { get; set; } = new();
         public List<string> DiscoveredEntities { get; set; } = new();
         public List<string> Milestones { get; set; } = new();
+        public List<string> FinishedWork { get; set; } = new();
         public List<string> FailedAttempts { get; set; } = new();
         public string CompactedMemorySummary { get; set; } = "";
         public DateTimeOffset UpdatedAt { get; set; }
@@ -443,5 +471,31 @@ public sealed class PersistentTaskContext
         public string Id { get; set; } = "";
         public string Text { get; set; } = "";
         public bool IsCompleted { get; set; }
+    }
+}
+
+/// <summary>What a window title shows about a file having just been saved.</summary>
+internal static class SavedFileTitle
+{
+    private static readonly Regex FileTitle = new(@"^(?<unsaved>\*?)(?<name>[^\\/:*?""<>|]+\.\w{1,8})\s+-\s+", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The file's name when the title went from a save dialog, or from that file
+    /// with unsaved changes, to the file with none. Anything else is null, so
+    /// switching to another window that holds a file does not count.
+    /// </summary>
+    internal static string? Detect(string? before, string? after)
+    {
+        if (string.IsNullOrWhiteSpace(before) || string.IsNullOrWhiteSpace(after)) return null;
+        var now = FileTitle.Match(after.Trim());
+        if (!now.Success || now.Groups["unsaved"].Length > 0) return null;
+        var name = now.Groups["name"].Value;
+
+        var previous = before.Trim();
+        var fromDialog = previous.StartsWith("Save", StringComparison.OrdinalIgnoreCase) && !previous.Contains(" - ", StringComparison.Ordinal);
+        var earlier = FileTitle.Match(previous);
+        var fromUnsaved = earlier.Success && earlier.Groups["unsaved"].Length > 0
+            && earlier.Groups["name"].Value.Equals(name, StringComparison.OrdinalIgnoreCase);
+        return fromDialog || fromUnsaved ? name : null;
     }
 }

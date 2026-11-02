@@ -902,8 +902,69 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
     var loopPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>());
     var loopRuleOk = loopPrompt.Contains("Save As", StringComparison.Ordinal) && loopPrompt.Contains("next matches", StringComparison.Ordinal);
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk}");
+    // Replays the five-country run: the first page's figures outlast 292 passages
+    // from other pages, stay visible, and an invented figure is still refused.
+    var longRead = new FactLedger();
+    longRead.RecordRead(new[] { "Area • Total 9,984,670 km2", "Population • 2026 Q2 estimate 41,798,407" }, "Canada - Wikipedia and 5 more pages - Personal - Microsoft​ Edge");
+    var countries = new[] { "Australia", "Egypt", "Argentina", "Japan" };
+    for (var i = 0; i < 292; i++)
+        longRead.RecordRead(new[] { $"Area passage {100000 + i}" }, $"{countries[i % 4]} - Wikipedia - Personal - Microsoft​ Edge");
+    var longPrompt = longRead.BuildPromptBlock();
+    var keptValues = longRead.BlockedValues(Act("{\"action\":\"type_text\",\"text\":\"Area: 9,984,670 km²\\nPopulation: 41,798,407\"}"), Array.Empty<string?>()).Count == 0;
+    var inventedHeld = longRead.BlockedValues(Act("{\"action\":\"type_text\",\"text\":\"Area: 7,692,024 km²\"}"), Array.Empty<string?>()).Count == 1;
+    var labelled = longPrompt.Contains("From \"Canada - Wikipedia\":", StringComparison.Ordinal)
+        && longPrompt.Contains("41,798,407", StringComparison.Ordinal)
+        && longPrompt.Contains("From \"Japan - Wikipedia\":", StringComparison.Ordinal);
+
+    // Only passages not read before count as new, however long ago the first read was.
+    var readAgain = new FactLedger();
+    var firstRead = readAgain.RecordRead(new[] { "Capital Ottawa" }, "Canada");
+    var secondRead = readAgain.RecordRead(new[] { "Capital Ottawa" }, "Canada");
+    var ledgerKeepsOk = keptValues && inventedHeld && labelled && firstRead == 1 && secondRead == 0
+        && FactLedger.PageLabel("Canada - Wikipedia - Microsoft Edge") == "Canada - Wikipedia"
+        && FactLedger.PageLabel("Canada.txt - Notepad") == "Canada.txt - Notepad";
+
+    // Paging that keeps finding new text does not add up to a refusal.
+    var paged = new RepeatGuard();
+    var pagedMost = 0;
+    for (var i = 0; i < 12; i++)
+    {
+        pagedMost = Math.Max(pagedMost, paged.Register(Act("{\"action\":\"read_text\",\"find\":\"Population\"}")));
+        paged.Clear();
+    }
+    var pagedOk = pagedMost == 1;
+
+    // A save is recognised from the titles the real run went through, and nothing else is.
+    var savedOk = SavedFileTitle.Detect("Save as", "Canada.txt - Notepad") == "Canada.txt"
+        && SavedFileTitle.Detect("*Canada.txt - Notepad", "Canada.txt - Notepad") == "Canada.txt"
+        && SavedFileTitle.Detect("Save as", "Untitled - Notepad") is null
+        && SavedFileTitle.Detect("Save as", "*Canada.txt - Notepad") is null
+        && SavedFileTitle.Detect("*Report.docx - Word", "Canada.txt - Notepad") is null
+        && SavedFileTitle.Detect("Canada - Wikipedia", "Canada.txt - Notepad") is null
+        && SavedFileTitle.Detect("Canada.txt - Notepad", "Canada.txt - Notepad") is null;
+
+    // Finished work stays in the prompt however many milestones follow it.
+    var contextRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
+    var finishedOk = false;
+    try
+    {
+        var finishedContext = new PersistentTaskContext("probe", contextRoot);
+        finishedContext.BeginTask("Save five files");
+        finishedContext.RecordFinishedWork("Saved Canada.txt (the window title confirms it)");
+        for (var i = 0; i < 40; i++) finishedContext.RecordMilestone($"step {i}");
+        var finishedPrompt = finishedContext.BuildPromptBlock();
+        var reloaded = new PersistentTaskContext("probe", contextRoot);
+        finishedOk = finishedPrompt.Contains("Saved Canada.txt", StringComparison.Ordinal)
+            && !finishedPrompt.Contains("step 0", StringComparison.Ordinal)
+            && reloaded.FinishedWork.Count == 1;
+    }
+    finally
+    {
+        try { Directory.Delete(contextRoot, true); } catch { }
+    }
+
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 }

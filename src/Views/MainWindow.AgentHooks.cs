@@ -160,6 +160,11 @@ public sealed partial class MainWindow
                 });
                 ScrollIntoViewIfVisible();
 
+                // The chat's own save can run before this, and would leave the
+                // run on disk looking unfinished.
+                _lastSave = DateTimeOffset.UtcNow;
+                _ = _self.PersistCoreAsync();
+
                 // Bring Vantage back to front so the user always knows
                 // where the run ended. Without this the user has to alt-tab
                 // back manually after every long-horizon task — and during

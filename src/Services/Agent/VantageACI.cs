@@ -91,6 +91,11 @@ public sealed class VantageACI
     }
 
     /// <summary>Resolves a `control` number, or explains why it cannot be used.</summary>
+    /// <summary>Switching tabs only changes what is in view, so it is not progress.</summary>
+    internal bool IsTabControl(int? number) =>
+        number is >= 0 && number < _controls.Count
+        && _controls[number.Value].Role.Equals("tab-item", StringComparison.OrdinalIgnoreCase);
+
     private ActionResult? TryResolveControlNumber(AgentAction action, out (int X, int Y) point)
     {
         point = default;
@@ -284,6 +289,9 @@ public sealed class VantageACI
     /// <summary>True when the window had no readable text at all.</summary>
     internal bool LastReadUnavailable { get; private set; }
 
+    /// <summary>The title of the window the last read_text read.</summary>
+    internal string LastReadTitle { get; private set; } = "";
+
     /// <summary>Output Vantage itself produced, as opposed to what the model wrote down.</summary>
     internal IReadOnlyList<string> ToolOutput => _toolOutput;
 
@@ -296,7 +304,8 @@ public sealed class VantageACI
         if (searches.Count == 0 && action.GetString("find") is { Length: > 0 } single) searches = new List<string> { single };
 
         var window = Vantage.Common.NativeInterop.GetForegroundWindow();
-        var page = $"{window}|{ForegroundWindowProbe.Read().Title}";
+        LastReadTitle = ForegroundWindowProbe.Read().Title;
+        var page = $"{window}|{LastReadTitle}";
         if (page != _readProgressPage)
         {
             _readProgressPage = page;
