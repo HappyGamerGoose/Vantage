@@ -17,9 +17,9 @@
     <Nullable>enable</Nullable>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>1.6.20</Version>
-    <AssemblyVersion>1.6.20.0</AssemblyVersion>
-    <FileVersion>1.6.20.0</FileVersion>
+    <Version>1.6.21</Version>
+    <AssemblyVersion>1.6.21.0</AssemblyVersion>
+    <FileVersion>1.6.21.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

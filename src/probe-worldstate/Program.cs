@@ -1093,6 +1093,54 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !RequiredToolUse.IsCalculatorWindow("Canada.txt - Notepad")
         && loopPrompt.Contains("Display", StringComparison.Ordinal) && loopPrompt.Contains("until an answer has been read from Calculator", StringComparison.Ordinal);
 
+    // When the task names Notepad, PowerShell may not write the files for it.
+    AgentAction Pwsh(string command) => CommonUtils.ParseAgentAction(
+        JsonSerializer.Serialize(new { action = "run_powershell", command }))!;
+    // Gemini 3.8 Flash's command, word for word up to where it was cut off.
+    const string geminiWrite = "$raw = 'C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\raw'\n$report = 'C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\report'\n\nSet-Content -Path \"$raw\\Canada.txt\" -Value @(\"Capital: Ottawa\", \"Area: 9,984,670 km²\", \"Population: 41,798,407\") -Encoding utf8";
+    var writes = new[]
+    {
+        geminiWrite,
+        "\"Capital: Ottawa\" | Out-File \"C:\\x\\raw\\Canada.txt\"",
+        "\"Capital: Ottawa\" > \"C:\\x\\raw\\Canada.txt\"",
+        "$lines >> $path",
+        "[IO.File]::WriteAllLines($p, $lines)",
+        "[System.IO.File]::AppendAllText($p, 'x')",
+        "New-Item -Path \"$raw\\Canada.txt\" -ItemType File -Value \"Capital: Ottawa\"",
+        "$w = New-Object System.IO.StreamWriter($p); $w.WriteLine('x')",
+        "add-content $p 'Population: 1'",
+    };
+    var allowed = new[]
+    {
+        "New-Item -ItemType Directory -Path \"$base\\raw\",\"$base\\report\" -Force | Out-Null",
+        "Compress-Archive -Path \"$base\\raw\" -DestinationPath \"$base\\report\\raw.zip\" -Force",
+        "Get-Content \"C:\\x\\raw\\Canada.txt\"",
+        "[math]::Round(41798407/9984670, 1)",
+        "Stop-Process -Name notepad 2>$null; Get-Process calc* 2>&1 > $null",
+        "Get-ChildItem | Where-Object { $_.Length -gt 0 }",
+        "Write-Output \"Canada -> 4.2 > 3\"",
+        "New-ItemProperty -Path HKCU:\\Software\\X -Name A -Value 1",
+    };
+    var batchWrite = CommonUtils.ParseAgentAction(JsonSerializer.Serialize(new
+    {
+        action = "batch",
+        steps = new object[]
+        {
+            new { action = "launch_app", target = "notepad" },
+            new { action = "run_powershell", command = "Set-Content C:\\x\\a.txt 'x'" },
+        },
+    }))!;
+    var notepadOk = RequiredToolUse.NotepadRequired("For each country, use Notepad to save a file in the raw folder")
+        && RequiredToolUse.NotepadRequired("In Notepad, type the list and save it as list.txt")
+        && RequiredToolUse.NotepadRequired("Open Notepad to write a note")
+        && !RequiredToolUse.NotepadRequired("Close Notepad, Calculator and Settings")
+        && !RequiredToolUse.NotepadRequired("Save the list as list.txt")
+        && writes.All(command => RequiredToolUse.WritesFileWithPowerShell(Pwsh(command)))
+        && allowed.All(command => !RequiredToolUse.WritesFileWithPowerShell(Pwsh(command)))
+        && RequiredToolUse.WritesFileWithPowerShell(batchWrite)
+        && !RequiredToolUse.WritesFileWithPowerShell(CommonUtils.ParseAgentAction("{\"action\":\"type_text\",\"text\":\"a > b.txt\"}")!)
+        && loopPrompt.Contains("29. When the task says to use Notepad", StringComparison.Ordinal);
+
     // Finished work stays in the prompt however many milestones follow it.
     var contextRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
     var finishedOk = false;
@@ -1210,8 +1258,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

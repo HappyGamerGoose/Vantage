@@ -620,6 +620,18 @@ public sealed class Worker
             return new ActionResult(ActionOutcome.Success, bareNameRefusal);
         }
 
+        // Refused every time: sending it again would only repeat the shortcut.
+        if (RequiredToolUse.NotepadRequired(_goal) && RequiredToolUse.WritesFileWithPowerShell(action))
+        {
+            const string notepadRefusal =
+                "NOT DONE: nothing was run. The task says to use Notepad, so every file is written in Notepad, not with run_powershell. " +
+                "Launch notepad, type the text with type_text, press ctrl+s and type the whole path in the File name box; for each further file press ctrl+n first. " +
+                "run_powershell may still create folders, compress, read files and work out values, as long as it writes no file.";
+            CommonUtils.LogDiagnostic("worker-powershell-write-held", $"turn={_turnCount + 1}");
+            HoldAction(notepadRefusal);
+            return new ActionResult(ActionOutcome.Success, notepadRefusal);
+        }
+
         var clipboard = ClipboardPolicy.Evaluate(action, _clipboardIsOurs);
         if (clipboard.PastesForeignContent && !ClipboardPolicy.GoalAllowsUserClipboard(_goal))
         {

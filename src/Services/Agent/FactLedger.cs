@@ -255,6 +255,43 @@ internal static class RequiredToolUse
 
     public static bool IsCalculatorWindow(string? title) =>
         title is not null && title.Contains("calculator", StringComparison.OrdinalIgnoreCase);
+
+    // "Use Notepad to save", "in Notepad, type": Notepad is the tool. "Close Notepad" alone is not.
+    private static readonly Regex NotepadAsTool = new(
+        @"\b(?:use|using|with|in|via|through)\s+(?:the\s+)?(?:windows\s+)?notepad\b|\bnotepad\s+to\s+(?:save|write|create|type|make)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    // Text inside quotes is a value, not a command: "a -> b" redirects nothing.
+    private static readonly Regex QuotedText = new(
+        @"'(?:[^']|'')*'|""(?:[^""`]|`.)*""",
+        RegexOptions.Singleline | RegexOptions.CultureInvariant);
+
+    private static readonly Regex FileWrite = new(
+        @"\b(?:Set-Content|Add-Content|Out-File|Tee-Object)\b" +
+        @"|\bNew-Item\b[^;|\r\n]*\s-Value\b" +
+        @"|\[(?:System\.)?IO\.File\]::(?:Write|Append)" +
+        @"|\bIO\.StreamWriter\b" +
+        @"|(?<![-=<>])>{1,2}\s*(?!\$null\b|&|nul\b)(?=[""'$\w.\\/~])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A task that names Notepad wants the files written there. Gemini 3.8 Flash
+    /// planned to write all five country files with Set-Content and to open and
+    /// close Notepad only "to satisfy the app requirement".
+    /// </summary>
+    public static bool NotepadRequired(string? goal) => goal is not null && NotepadAsTool.IsMatch(goal);
+
+    /// <summary>True when the action, or any step of a batch, runs PowerShell that writes a file.</summary>
+    public static bool WritesFileWithPowerShell(AgentAction action)
+    {
+        var name = action.Action.Trim().ToLowerInvariant();
+        if (name == "batch") return action.GetActionList("steps").Any(WritesFileWithPowerShell);
+        return name == "run_powershell" && PowerShellWritesFile(action.GetString("command"));
+    }
+
+    /// <summary>Folders, zips, reads and sums pass; Set-Content, Out-File, &gt; and the like do not.</summary>
+    public static bool PowerShellWritesFile(string? command) =>
+        !string.IsNullOrWhiteSpace(command) && FileWrite.IsMatch(QuotedText.Replace(command, "\"\""));
 }
 
 /// <summary>
