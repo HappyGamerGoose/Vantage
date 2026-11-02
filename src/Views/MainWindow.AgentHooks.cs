@@ -35,7 +35,14 @@ public sealed partial class MainWindow
             _self = self;
             _conversation = conversation;
             _assistantMessage = assistant;
-            _run = new AgentRunViewModel(a => self.DispatcherQueue.TryEnqueue(() => a()));
+            // Already on the UI thread, change the run now. Queueing it behind the
+            // caller left the save that follows with the run still open, and a
+            // finished run reached the disk as unfinished.
+            _run = new AgentRunViewModel(a =>
+            {
+                if (self.DispatcherQueue.HasThreadAccess) a();
+                else self.DispatcherQueue.TryEnqueue(() => a());
+            });
             // Tag the host message so the DataTemplate switches to the
             // structured view automatically.
             assistant.IsAgentRun = true;

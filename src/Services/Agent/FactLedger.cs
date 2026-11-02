@@ -228,6 +228,20 @@ internal sealed class FactLedger
 }
 
 /// <summary>
+/// A task can name the app that must do the work. Typing the sums into Calculator
+/// and then taking the answers from PowerShell passed every check yet ignored
+/// the instruction, so the result has to be read from Calculator itself.
+/// </summary>
+internal static class RequiredToolUse
+{
+    public static bool CalculatorRequired(string? goal) =>
+        goal is not null && goal.Contains("calculator", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsCalculatorWindow(string? title) =>
+        title is not null && title.Contains("calculator", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// The clipboard belongs to the user until this run puts something there. A
 /// blocked write once led to Ctrl+V pasting whatever the user had copied, which
 /// could as easily have been a password.

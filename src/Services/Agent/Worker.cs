@@ -98,6 +98,8 @@ public sealed class Worker
     private readonly FactLedger _facts = new();
     private string? _lastForegroundTitle;
     private readonly HashSet<string> _heldFinishedFileText = new(StringComparer.Ordinal);
+    private bool _calculatorRead;
+    private bool _doneHeldForCalculator;
 
     // Looking at something is not progress, and listing it as a milestone pushed
     // out the steps that were.
@@ -571,6 +573,18 @@ public sealed class Worker
         // video, must not be able to hold the run open forever.
         if (action.Action.Equals("done", StringComparison.OrdinalIgnoreCase))
         {
+            // Asked once, so a Calculator that cannot be read does not hold the run open.
+            if (RequiredToolUse.CalculatorRequired(_goal) && !_calculatorRead && !_doneHeldForCalculator)
+            {
+                _doneHeldForCalculator = true;
+                const string calculatorRefusal =
+                    "NOT DONE: the task says to use the Windows Calculator, but no answer has been read from it. " +
+                    "Open Calculator, type each sum, read the answer with {\"action\":\"read_text\",\"find\":\"Display\"}, " +
+                    "and use run_powershell only to round or format what Calculator showed. Then send `done` again.";
+                HoldAction(calculatorRefusal);
+                CommonUtils.LogDiagnostic("worker-done-held-calculator", $"turn={_turnCount + 1}");
+                return new ActionResult(ActionOutcome.Success, calculatorRefusal);
+            }
             if (!_doneRechecked && frameAtLook is not null
                 && await Task.Run(ScreenSampler.Capture, ct) is { } frameNow
                 && DonePolicy.ScreenMovedSinceLook(ScreenSampler.Compare(frameAtLook, frameNow, null, null, ForegroundWindowProbe.ReadRegion())))
@@ -687,6 +701,8 @@ public sealed class Worker
         if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
         {
             _valueBlocks = 0;
+            if (RequiredToolUse.IsCalculatorWindow(_aci.LastReadTitle) && !_aci.LastReadUnavailable && _aci.LastReadExcerpts.Count > 0)
+                _calculatorRead = true;
             var newPassages = _facts.RecordRead(_aci.LastReadExcerpts, _aci.LastReadTitle);
             if (newPassages > 0) _repeats.Clear();
             if (_aci.LastReadUnavailable) _facts.RecordReadingUnavailable();

@@ -956,6 +956,13 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
     var notepadRule = loopPrompt.Contains("ctrl+n", StringComparison.Ordinal) && loopPrompt.Contains("Ctrl+Shift+S", StringComparison.Ordinal);
     savedOk = savedOk && intoFinished && notepadRule;
 
+    // The Calculator has to be the one that gave the answer, when the task names it.
+    var calculatorOk = RequiredToolUse.CalculatorRequired("Use the Windows Calculator app to work out each density")
+        && !RequiredToolUse.CalculatorRequired("Work out each density and save it")
+        && RequiredToolUse.IsCalculatorWindow("Calculator")
+        && !RequiredToolUse.IsCalculatorWindow("Canada.txt - Notepad")
+        && loopPrompt.Contains("Display", StringComparison.Ordinal) && loopPrompt.Contains("until an answer has been read from Calculator", StringComparison.Ordinal);
+
     // Finished work stays in the prompt however many milestones follow it.
     var contextRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
     var finishedOk = false;
@@ -976,8 +983,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         try { Directory.Delete(contextRoot, true); } catch { }
     }
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 }
