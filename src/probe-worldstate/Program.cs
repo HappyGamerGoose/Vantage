@@ -711,7 +711,7 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
 
     // Every address bar use gets a new tab, including on a tab reached by Ctrl+Tab.
     var tracker = new BrowserTabTracker();
-    var edgeBacklogs = new ForegroundWindowInfo("Backlogs - Claude and 2 more pages - Microsoft Edge", "msedge");
+    var edgeBacklogs = new ForegroundWindowInfo("Backlogs - Tracker and 2 more pages - Microsoft Edge", "msedge");
     var everyUse = tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2") && tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2");
     tracker.OnNewTabOpened();
     var noDouble = !tracker.ShouldOpenNewTab(edgeBacklogs, "Look up K2");
