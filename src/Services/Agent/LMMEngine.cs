@@ -38,6 +38,8 @@ public sealed class LmmResponse
     public int OutputTokens { get; init; }
     /// <summary>True when the reply stopped at the token limit rather than finishing.</summary>
     public bool CutOff { get; init; }
+    /// <summary>Tokens the model spent thinking without returning the thinking, out of the same limit.</summary>
+    public int ThinkingTokens { get; init; }
 }
 
 public abstract class LMMEngine
@@ -279,7 +281,19 @@ public sealed class OpenAICompatEngine : LMMEngine
     private static readonly object CapabilitiesGate = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SuppressThinking = new(Capabilities.SuppressThinking);
 
+    /// <summary>
+    /// Models that think before they answer but return none of it, such as
+    /// Gemini and OpenAI's o-series. The thinking counts against max_tokens and
+    /// shows only in the usage numbers, so a hard step could think through most
+    /// of the agent's 2048 tokens and stop a few lines into its answer. These get
+    /// <see cref="HiddenThinkingAllowance"/> more tokens, and are asked to think
+    /// less unless the provider rejects `reasoning_effort` (stored as false).
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> HiddenThinking = new(Capabilities.HiddenThinking);
+
     private const int ReasoningRetryMaxTokensCeiling = 4096;
+    internal const int HiddenThinkingAllowance = 4096;
+    internal const string HiddenThinkingEffort = "low";
 
     private sealed record OpenAiReply(LmmResponse Response, bool HadReasoning, string? FinishReason);
 
@@ -295,6 +309,7 @@ public sealed class OpenAICompatEngine : LMMEngine
         lock (CapabilitiesGate)
         {
             Capabilities.SuppressThinking = new Dictionary<string, bool>(SuppressThinking);
+            Capabilities.HiddenThinking = new Dictionary<string, bool>(HiddenThinking);
             Capabilities.UseMaxCompletionTokens = UseMaxCompletionTokens.Keys.ToList();
             Capabilities.OmitTemperature = OmitTemperature.Keys.ToList();
             Capabilities.Save();
@@ -332,14 +347,16 @@ public sealed class OpenAICompatEngine : LMMEngine
     {
         var key = $"{BaseUrl}|{Model}";
 
-        // Sends with the thinking flag when it is known to work, and drops the
-        // flag for good if the provider rejects it as an unknown field.
-        async Task<OpenAiReply> SendAsync(int maxTokens, bool wantFlag)
+        // Sends with the thinking flag and the lower reasoning effort when they
+        // are known to work, and drops either for good if the provider rejects
+        // it as an unknown field.
+        async Task<OpenAiReply> SendAsync(int maxTokens, bool wantFlag, bool wantLowEffort)
         {
             var useFlag = wantFlag && !(SuppressThinking.TryGetValue(key, out var ok) && !ok);
+            var useEffort = wantLowEffort && !(HiddenThinking.TryGetValue(key, out var accepted) && !accepted);
             try
             {
-                return await SendOnceAsync(request, maxTokens, useFlag, ct);
+                return await SendOnceAsync(request, maxTokens, useFlag, useEffort, ct);
             }
             catch (LmmProviderException pex) when (useFlag
                 && (pex.HttpStatus == 400 || pex.HttpStatus == 422)
@@ -349,16 +366,48 @@ public sealed class OpenAICompatEngine : LMMEngine
                 SuppressThinking[key] = false;
                 RememberCapabilities();
                 CommonUtils.LogDiagnostic("llm-thinking-flag-rejected", $"model={Model} status={pex.HttpStatus}");
-                return await SendOnceAsync(request, maxTokens, false, ct);
+                return await SendAsync(maxTokens, wantFlag, wantLowEffort);
+            }
+            catch (LmmProviderException pex) when (useEffort
+                && (pex.HttpStatus == 400 || pex.HttpStatus == 422)
+                && $"{pex.Message} {pex.RawBody}".Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase))
+            {
+                HiddenThinking[key] = false;
+                RememberCapabilities();
+                CommonUtils.LogDiagnostic("llm-reasoning-effort-rejected", $"model={Model} status={pex.HttpStatus}");
+                return await SendAsync(maxTokens, wantFlag, wantLowEffort);
             }
             catch (LmmProviderException pex) when (LearnParameterRejection(key, pex))
             {
                 CommonUtils.LogDiagnostic("llm-parameter-adapted", $"model={Model} status={pex.HttpStatus} msg={pex.Message}");
-                return await SendAsync(maxTokens, wantFlag);
+                return await SendAsync(maxTokens, wantFlag, wantLowEffort);
             }
         }
 
-        var reply = await SendAsync(request.MaxTokens, SuppressThinking.TryGetValue(key, out var learned) && learned);
+        var hiddenThinker = HiddenThinking.ContainsKey(key);
+        var reply = await SendAsync(
+            hiddenThinker ? request.MaxTokens + HiddenThinkingAllowance : request.MaxTokens,
+            SuppressThinking.TryGetValue(key, out var learned) && learned,
+            wantLowEffort: hiddenThinker);
+
+        if (reply.Response.ThinkingTokens > 0 && !HiddenThinking.ContainsKey(key))
+        {
+            HiddenThinking[key] = true;
+            RememberCapabilities();
+            CommonUtils.LogDiagnostic("llm-hidden-thinking-detected",
+                $"model={Model} thinking_tokens={reply.Response.ThinkingTokens} finish={reply.FinishReason}; allowing {HiddenThinkingAllowance} more tokens and effort={HiddenThinkingEffort} for later calls");
+        }
+
+        if (reply.Response.CutOff && reply.Response.ThinkingTokens > 0 && !hiddenThinker)
+        {
+            // Gemini 3.8 Flash thought through most of the 2048 tokens on the
+            // hardest steps of a run and stopped a few words into its action,
+            // three times in a row. Ask again with room for the thinking.
+            CommonUtils.LogDiagnostic("llm-hidden-thinking-retry",
+                $"model={Model} thinking_tokens={reply.Response.ThinkingTokens} max_tokens={request.MaxTokens + HiddenThinkingAllowance}");
+            reply = await SendAsync(request.MaxTokens + HiddenThinkingAllowance,
+                SuppressThinking.TryGetValue(key, out var flagNow) && flagNow, wantLowEffort: true);
+        }
 
         if (reply.HadReasoning && !SuppressThinking.ContainsKey(key))
         {
@@ -378,13 +427,13 @@ public sealed class OpenAICompatEngine : LMMEngine
             var retryTokens = Math.Min(Math.Max(request.MaxTokens * 4, 1024), ReasoningRetryMaxTokensCeiling);
             CommonUtils.LogDiagnostic("llm-reasoning-empty-retry",
                 $"model={Model} finish={reply.FinishReason} thinking_off={retryFlag} max_tokens={retryTokens}");
-            reply = await SendAsync(retryTokens, retryFlag);
+            reply = await SendAsync(retryTokens, retryFlag, wantLowEffort: HiddenThinking.ContainsKey(key));
         }
 
         return reply.Response;
     }
 
-    private async Task<OpenAiReply> SendOnceAsync(LmmRequest request, int maxTokens, bool suppressThinking, CancellationToken ct)
+    private async Task<OpenAiReply> SendOnceAsync(LmmRequest request, int maxTokens, bool suppressThinking, bool lowEffort, CancellationToken ct)
     {
         var parameterKey = $"{BaseUrl}|{Model}";
         var body = new JsonObject
@@ -404,6 +453,7 @@ public sealed class OpenAICompatEngine : LMMEngine
                 ["thinking"]        = false
             };
         }
+        if (lowEffort) body["reasoning_effort"] = HiddenThinkingEffort;
 
         var bodyJson = body.ToJsonString();
         // Fail fast — see EnsureBodyUnderLimit. Compactor in LmmAgent.
@@ -457,11 +507,12 @@ public sealed class OpenAICompatEngine : LMMEngine
                     $"model={Model} status={(int)resp.StatusCode} finish_reason={finish} body={bodyText}");
             }
 
-            int inTok = 0, outTok = 0;
-            if (root.TryGetProperty("usage", out var u))
+            int inTok = 0, outTok = 0, thinkingTok = 0;
+            if (root.TryGetProperty("usage", out var u) && u.ValueKind == JsonValueKind.Object)
             {
-                if (u.TryGetProperty("prompt_tokens", out var pt)) inTok = pt.GetInt32();
-                if (u.TryGetProperty("completion_tokens", out var ct2)) outTok = ct2.GetInt32();
+                if (u.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number) inTok = pt.GetInt32();
+                if (u.TryGetProperty("completion_tokens", out var ct2) && ct2.ValueKind == JsonValueKind.Number) outTok = ct2.GetInt32();
+                thinkingTok = HiddenThinkingTokens(u);
             }
 
             var hadReasoning =
@@ -469,7 +520,7 @@ public sealed class OpenAICompatEngine : LMMEngine
                 || (msg.TryGetProperty("reasoning", out var rs) && rs.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rs.GetString()));
 
             return new OpenAiReply(
-                new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok, CutOff = finish == "length" },
+                new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok, CutOff = finish == "length", ThinkingTokens = hadReasoning ? 0 : thinkingTok },
                 hadReasoning,
                 finish);
         }
@@ -484,5 +535,22 @@ public sealed class OpenAICompatEngine : LMMEngine
                          "Check the provider endpoint or switch models, then try again.",
                 body: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Thinking tokens in a reply's usage. OpenAI lists them under
+    /// completion_tokens_details; Gemini leaves them out of completion_tokens
+    /// and counts them only in total_tokens, e.g. prompt 8 + completion 0 = total 13.
+    /// </summary>
+    internal static int HiddenThinkingTokens(JsonElement usage)
+    {
+        static int Read(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
+
+        var listed = usage.TryGetProperty("completion_tokens_details", out var details) && details.ValueKind == JsonValueKind.Object
+            ? Read(details, "reasoning_tokens") : 0;
+        var total = Read(usage, "total_tokens");
+        var unlisted = total > 0 ? total - Read(usage, "prompt_tokens") - Read(usage, "completion_tokens") : 0;
+        return Math.Max(listed, Math.Max(unlisted, 0));
     }
 }

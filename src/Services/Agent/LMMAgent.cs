@@ -227,6 +227,7 @@ public sealed class LmmAgent
             LastInputTokens = response.InputTokens;
             LastOutputTokens = response.OutputTokens;
             LastReplyCutOff = response.CutOff;
+            LastReplyThinkingTokens = response.ThinkingTokens;
             return response;
         }
         catch (LlmRateLimitException)
@@ -240,6 +241,8 @@ public sealed class LmmAgent
     public int LastOutputTokens { get; private set; }
     /// <summary>The last reply stopped at the token limit, so whatever it was building to never arrived.</summary>
     public bool LastReplyCutOff { get; private set; }
+    /// <summary>Tokens the last reply spent thinking out of sight, which count against its limit.</summary>
+    public int LastReplyThinkingTokens { get; private set; }
 
     /// <summary>
     /// Retains the system instruction, distilled persistent task state, and only

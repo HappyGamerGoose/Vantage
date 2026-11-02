@@ -499,6 +499,8 @@ internal static class LmmErrorClassifier
         {
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
+            // Gemini's OpenAI-compatible endpoint wraps the error in a list.
+            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0) root = root[0];
             if (root.ValueKind != JsonValueKind.Object) return null;
             // OpenAI and Anthropic: { "error": { "message": ... } }
             if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object &&

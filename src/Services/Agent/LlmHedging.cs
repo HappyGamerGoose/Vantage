@@ -66,6 +66,8 @@ internal static class LlmLatency
 internal sealed class LlmCapabilities
 {
     public Dictionary<string, bool> SuppressThinking { get; set; } = new();
+    /// <summary>Models that think out of sight. true = the provider accepts `reasoning_effort`.</summary>
+    public Dictionary<string, bool> HiddenThinking { get; set; } = new();
     public List<string> UseMaxCompletionTokens { get; set; } = new();
     public List<string> OmitTemperature { get; set; } = new();
 

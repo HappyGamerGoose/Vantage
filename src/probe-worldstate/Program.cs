@@ -330,6 +330,9 @@ if (args.Contains("--provider-models-self-test", StringComparer.OrdinalIgnoreCas
         && LmmErrorClassifier.Describe("""{"error":{"message":"Invalid API key"}}""", "m") == "Invalid API key"
         && !LmmErrorClassifier.RejectsImages("""{"error":{"message":"Image too large: size exceeds 5 MB"}}""")
         && !LmmErrorClassifier.RejectsImages("""{"error":{"message":"Unsupported parameter: temperature"}}""")
+        // Gemini's OpenAI-compatible endpoint sends its error inside a list.
+        && LmmErrorClassifier.ExtractMessage("""[{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]""") == "API key not valid. Please pass a valid API key."
+        && LmmErrorClassifier.ExtractMessage("[]") is null
         && LmmErrorClassifier.ExtractMessage("not json") is null;
 
     var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk && anthropicOk && errorsOk;
@@ -1412,7 +1415,10 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
     using var listener = new System.Net.HttpListener();
     listener.Prefixes.Add(prefix);
     listener.Start();
-    var seen = new List<(string Model, bool Flag, int MaxTokens)>();
+    var seen = new List<(string Model, bool Flag, int MaxTokens, bool Effort)>();
+    // Gemini's usage for an answer that thought first: thinking is only in total_tokens.
+    const string hiddenAnswer = "{\"choices\":[{\"message\":{\"content\":\"<answer>```json\\n{\\\"action\\\":\\\"wait\\\"}\\n```</answer>\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":30,\"total_tokens\":330}}";
+    const string hiddenCutOff = "{\"choices\":[{\"message\":{\"content\":\"<answer>\\n```json\\n{\\n  \\\"action\\\": \\\"run_powershell\\\",\\n  \\\"command\\\": \\\"$areas\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":40,\"total_tokens\":2148}}";
     var serverTask = Task.Run(async () =>
     {
         while (listener.IsListening)
@@ -1425,11 +1431,21 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
             var model = req["model"]!.GetValue<string>();
             var flag = req["chat_template_kwargs"] is JsonObject k && k["enable_thinking"]?.GetValue<bool>() == false;
             var max = req["max_tokens"]!.GetValue<int>();
-            lock (seen) seen.Add((model, flag, max));
+            var effort = req["reasoning_effort"]?.GetValue<string>() == "low";
+            lock (seen) seen.Add((model, flag, max, effort));
 
             string reply;
             var status = 200;
-            if (model == "plain")
+            if (model == "hidden")
+                reply = effort ? hiddenAnswer : hiddenCutOff;
+            else if (model == "hidden-strict" && req["reasoning_effort"] is not null)
+            {
+                status = 400;
+                reply = "[{\"error\":{\"code\":400,\"message\":\"Invalid JSON payload received. Unknown name \\\"reasoning_effort\\\": Cannot find field.\",\"status\":\"INVALID_ARGUMENT\"}}]";
+            }
+            else if (model == "hidden-strict")
+                reply = max >= 4096 ? hiddenAnswer : hiddenCutOff;
+            else if (model == "plain")
                 reply = "{\"choices\":[{\"message\":{\"content\":\"1 2\"},\"finish_reason\":\"stop\"}]}";
             else if (model == "strict" && flag)
             {
@@ -1449,7 +1465,7 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
         }
     });
 
-    async Task<(string Text, List<(string Model, bool Flag, int MaxTokens)> Requests)> Call(string model)
+    async Task<(string Text, List<(string Model, bool Flag, int MaxTokens, bool Effort)> Requests, LmmResponse Response)> Call(string model, int maxTokens = 256)
     {
         lock (seen) seen.Clear();
         var engine = LMMEngine.Create(new Vantage.Models.Provider
@@ -1458,11 +1474,11 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
         });
         var msg = new JsonObject { ["role"] = "user", ["content"] = "where is the button" };
         var response = await engine.GenerateAsync(
-            new LmmRequest { Model = model, MaxTokens = 256, Messages = new List<JsonObject> { msg } },
+            new LmmRequest { Model = model, MaxTokens = maxTokens, Messages = new List<JsonObject> { msg } },
             CancellationToken.None);
-        List<(string, bool, int)> snapshot;
+        List<(string, bool, int, bool)> snapshot;
         lock (seen) snapshot = seen.ToList();
-        return (response.Text, snapshot);
+        return (response.Text, snapshot, response);
     }
 
     var r1 = await Call("reasoner");   // empty+reasoning -> learns flag, retries
@@ -1470,16 +1486,42 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
     var s1 = await Call("strict");     // flag rejected -> falls back to a larger budget
     var s2 = await Call("strict");     // remembers the rejection
     var p1 = await Call("plain");      // non-reasoning model is untouched
+    // Gemini-style: thinking shows only in total_tokens and cut the action off.
+    var h1 = await Call("hidden", 2048);        // cut off -> learns, retries with room and low effort
+    var h2 = await Call("hidden", 2048);        // sends room and low effort up front
+    var hs1 = await Call("hidden-strict", 2048); // effort rejected -> room alone
+    var hs2 = await Call("hidden-strict", 2048); // remembers the rejection
     listener.Stop();
 
+    var room = 2048 + OpenAICompatEngine.HiddenThinkingAllowance;
     var ok =
         r1.Text == "412 233" && r1.Requests.Count == 2 && !r1.Requests[0].Flag && r1.Requests[1].Flag
         && r2.Text == "412 233" && r2.Requests.Count == 1 && r2.Requests[0].Flag
         && s1.Text == "412 233" && s1.Requests.Count == 3 && s1.Requests[^1].MaxTokens >= 1024 && !s1.Requests[^1].Flag
         && s2.Text == "412 233" && s2.Requests.Count == 2 && s2.Requests.All(x => !x.Flag)
-        && p1.Text == "1 2" && p1.Requests.Count == 1 && !p1.Requests[0].Flag;
+        && p1.Text == "1 2" && p1.Requests.Count == 1 && !p1.Requests[0].Flag && !p1.Requests[0].Effort
+        && r1.Requests.Concat(s1.Requests).All(x => !x.Effort);
+    var hiddenOk =
+        h1.Text.Contains("\"wait\"") && !h1.Response.CutOff && h1.Requests.Count == 2
+        && h1.Requests[0] is { MaxTokens: 2048, Effort: false } && h1.Requests[1].MaxTokens == room && h1.Requests[1].Effort
+        && h2.Text.Contains("\"wait\"") && h2.Requests.Count == 1 && h2.Requests[0].MaxTokens == room && h2.Requests[0].Effort
+        && hs1.Text.Contains("\"wait\"") && hs1.Requests.Count == 3 && hs1.Requests[1].Effort
+        && hs1.Requests[2] is { Effort: false } && hs1.Requests[2].MaxTokens == room
+        && hs2.Text.Contains("\"wait\"") && hs2.Requests.Count == 1 && hs2.Requests[0] is { Effort: false } && hs2.Requests[0].MaxTokens == room;
+
+    // Usage numbers: Gemini's from the 1.6.19 log, OpenAI's o-series, and a model that does not think.
+    int Thinking(string usage) => OpenAICompatEngine.HiddenThinkingTokens(JsonDocument.Parse(usage).RootElement);
+    var usageOk =
+        Thinking("{\"completion_tokens\":0,\"prompt_tokens\":8,\"total_tokens\":13}") == 5
+        && Thinking("{\"prompt_tokens\":10,\"completion_tokens\":500,\"total_tokens\":510,\"completion_tokens_details\":{\"reasoning_tokens\":448}}") == 448
+        && Thinking("{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}") == 0
+        && Thinking("{\"prompt_tokens\":10,\"completion_tokens\":5}") == 0
+        && Thinking("{\"prompt_tokens\":null,\"completion_tokens\":5,\"total_tokens\":null}") == 0;
+
     Console.WriteLine($"ReasoningModelHandlingValid={ok} learn={r1.Requests.Count} warm={r2.Requests.Count} strict={s1.Requests.Count}/{s2.Requests.Count} plain={p1.Requests.Count}");
-    Environment.ExitCode = ok ? 0 : 1;
+    Console.WriteLine($"HiddenThinkingHandlingValid={hiddenOk} learn={h1.Requests.Count} warm={h2.Requests.Count} strict={hs1.Requests.Count}/{hs2.Requests.Count}");
+    Console.WriteLine($"HiddenThinkingUsageValid={usageOk}");
+    Environment.ExitCode = ok && hiddenOk && usageOk ? 0 : 1;
     return;
 }
 

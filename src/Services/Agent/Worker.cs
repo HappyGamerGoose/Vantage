@@ -111,6 +111,7 @@ public sealed class Worker
     private bool _doneHeldForCalculator;
     private string _lastActionProblem = "";
     private bool _lastReplyCutOff;
+    private int _lastReplyThinkingTokens;
 
     // Looking at something is not progress, and listing it as a milestone pushed
     // out the steps that were.
@@ -376,7 +377,8 @@ public sealed class Worker
             sbGen.AppendLine(
                 $"FORMAT_FEEDBACK: No desktop action ran, because your last reply could not be used: {_lastActionProblem}. " +
                 (_lastReplyCutOff
-                    ? "Do not plan the whole task. Write at most two sentences in <thoughts> about the next step only, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>."
+                    ? (_lastReplyThinkingTokens > 0 ? "Think only about the next step, not the whole task. " : "Do not plan the whole task. ") +
+                      "Write at most two sentences in <thoughts> about the next step only, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>."
                     : "Reply with <thoughts>…</thoughts>, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>. " +
                       $"Your last reply ended with: {Tail(_lastRawPlan, ParseFeedbackTailLength)}"));
         }
@@ -516,9 +518,12 @@ public sealed class Worker
             // example in it was called "invalid JSON", which told neither the
             // model nor the user what had gone wrong.
             _lastReplyCutOff = _generator.LastReplyCutOff;
-            _lastActionProblem = _lastReplyCutOff
-                ? $"it ran past the {GeneratorMaxNewTokens}-token limit and was cut off before it gave an action"
-                : CommonUtils.DescribeActionProblem(plan!);
+            _lastReplyThinkingTokens = _generator.LastReplyThinkingTokens;
+            _lastActionProblem = !_lastReplyCutOff
+                ? CommonUtils.DescribeActionProblem(plan!)
+                : _lastReplyThinkingTokens > 0
+                    ? $"it was cut off at the token limit before it gave an action, after {_lastReplyThinkingTokens} tokens of thinking it does not show"
+                    : $"it ran past the {GeneratorMaxNewTokens}-token limit and was cut off before it gave an action";
             _taskContext.RecordSystemEvent($"No desktop action ran, because the last reply could not be used: {_lastActionProblem}");
             FlushHistory();
 
@@ -528,7 +533,9 @@ public sealed class Worker
             if (_parseFailStreak >= MaxParseFailStreak)
                 return new ActionResult(ActionOutcome.FailedFatal, _lastReplyCutOff
                     ? $"stopped after {_parseFailStreak} replies in a row that gave no action: the last one {_lastActionProblem}. " +
-                      "This model writes long plans instead of one short action per turn, so a different model may work better."
+                      (_lastReplyThinkingTokens > 0
+                          ? "This model's hidden thinking used up the room for its answer even with extra tokens, so a different model may work better."
+                          : "This model writes long plans instead of one short action per turn, so a different model may work better.")
                     : $"aborted after {_parseFailStreak} consecutive unusable responses, because {_lastActionProblem}. Last reply ended with: {Tail(plan!, ParseFeedbackTailLength)}");
 
             return new ActionResult(ActionOutcome.Failed,
