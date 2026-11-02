@@ -301,8 +301,24 @@ if (args.Contains("--provider-models-self-test", StringComparer.OrdinalIgnoreCas
         && back.ForModel(back.Models[0]).VisionOverride == Vantage.Models.VisionOverride.ForceYes
         && new Vantage.Models.ProviderModel { Id = "gpt-4o" }.Label == "gpt-4o";
 
-    var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk;
-    Console.WriteLine($"ProviderModelsValid={valid} OneModel={oneModel} Idempotent={idempotent} RoundTrip={roundTrip} Pinned={pinnedOk}");
+    // Anthropic accepts the address with or without /v1, never sends an empty
+    // text block, and counts the cached part of the prompt as input.
+    var emptyReply = new JsonArray
+    {
+        new JsonObject { ["role"] = "assistant", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "" } } },
+        new JsonObject { ["role"] = "user", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "next" } } },
+    };
+    AnthropicEngine.FillEmptyText(emptyReply);
+    using var usage = JsonDocument.Parse("""{"input_tokens":120,"cache_creation_input_tokens":0,"cache_read_input_tokens":9000,"output_tokens":80}""");
+    var anthropicOk = AnthropicEngine.ApiRoot("https://api.anthropic.com/v1/") == "https://api.anthropic.com"
+        && AnthropicEngine.ApiRoot("https://api.anthropic.com") == "https://api.anthropic.com"
+        && emptyReply[0]!["content"]![0]!["text"]!.GetValue<string>() == "(empty)"
+        && emptyReply[1]!["content"]![0]!["text"]!.GetValue<string>() == "next"
+        && AnthropicEngine.InputTokensUsed(usage.RootElement) == 9120
+        && AnthropicEngine.InputTokensUsed(default) == 0;
+
+    var valid = oneModel && upgraded && idempotent && roundTrip && pinnedOk && anthropicOk;
+    Console.WriteLine($"ProviderModelsValid={valid} OneModel={oneModel} Idempotent={idempotent} RoundTrip={roundTrip} Pinned={pinnedOk} Anthropic={anthropicOk}");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }

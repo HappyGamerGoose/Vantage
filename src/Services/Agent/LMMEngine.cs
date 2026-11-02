@@ -91,9 +91,36 @@ public sealed class AnthropicEngine : LMMEngine
     public AnthropicEngine(Vantage.Models.Provider provider)
     {
         Model = string.IsNullOrWhiteSpace(provider.DefaultModel) ? "claude-sonnet-4-5" : provider.DefaultModel.Trim();
-        BaseUrl = provider.BaseUrl.TrimEnd('/');
+        BaseUrl = ApiRoot(provider.BaseUrl);
         ApiKey = provider.ApiKey.Trim();
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+    }
+
+    /// <summary>
+    /// The address the request path is added to. Other providers are entered
+    /// ending in /v1, and that form here would have sent /v1/v1/messages.
+    /// </summary>
+    internal static string ApiRoot(string baseUrl)
+    {
+        var root = baseUrl.Trim().TrimEnd('/');
+        return root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? root[..^3] : root;
+    }
+
+    /// <summary>
+    /// Anthropic rejects an empty text block, which an empty model reply kept in
+    /// the history would otherwise send on every later turn.
+    /// </summary>
+    internal static void FillEmptyText(IEnumerable<JsonNode?> messages)
+    {
+        foreach (var message in messages.OfType<JsonObject>())
+        {
+            if (message["content"] is not JsonArray content) continue;
+            foreach (var block in content.OfType<JsonObject>())
+            {
+                if (block["type"]?.GetValue<string>() == "text" && string.IsNullOrWhiteSpace(block["text"]?.GetValue<string>()))
+                    block["text"] = "(empty)";
+            }
+        }
     }
 
     public override async Task<LmmResponse> GenerateAsync(LmmRequest request, CancellationToken ct)
@@ -108,6 +135,7 @@ public sealed class AnthropicEngine : LMMEngine
             ["max_tokens"]  = request.MaxTokens,
             ["temperature"] = request.Temperature
         };
+        FillEmptyText(body["messages"]!.AsArray());
         if (sysMsg is not null)
         {
             var sysContent = sysMsg["content"];
@@ -135,8 +163,9 @@ public sealed class AnthropicEngine : LMMEngine
 
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/v1/messages");
         req.Headers.Add("x-api-key", ApiKey);
+        // No beta header: Vantage sends its own actions as text, not Anthropic's
+        // computer-use tool, and a dated beta name can be refused by newer models.
         req.Headers.Add("anthropic-version", "2023-06-01");
-        req.Headers.Add("anthropic-beta", "computer-use-2025-01-24");
         req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
 
         try
@@ -188,7 +217,7 @@ public sealed class AnthropicEngine : LMMEngine
             {
                 Text        = text,
                 Thinking    = thinking,
-                InputTokens = usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("input_tokens").GetInt32() : 0,
+                InputTokens = InputTokensUsed(usage),
                 OutputTokens= usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("output_tokens").GetInt32() : 0
             };
         }
@@ -203,6 +232,21 @@ public sealed class AnthropicEngine : LMMEngine
                          "Check the provider endpoint or switch models, then try again.",
                 body: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Every input token the request carried. input_tokens leaves out the prompt
+    /// read from or written to the cache, so on its own it hid most of each turn.
+    /// </summary>
+    internal static int InputTokensUsed(JsonElement usage)
+    {
+        if (usage.ValueKind != JsonValueKind.Object) return 0;
+        var total = 0;
+        foreach (var field in new[] { "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens" })
+        {
+            if (usage.TryGetProperty(field, out var count) && count.ValueKind == JsonValueKind.Number) total += count.GetInt32();
+        }
+        return total;
     }
 }
 
