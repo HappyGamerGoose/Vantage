@@ -348,7 +348,7 @@ public sealed class VantageACI
     }
 
     private string _readProgressPage = "";
-    private readonly Dictionary<string, int> _readProgress = new();
+    private readonly Dictionary<string, HashSet<string>> _readProgress = new();
 
     private ActionResult HandleSaveToKnowledge(AgentAction action)
     {

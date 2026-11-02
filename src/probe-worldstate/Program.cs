@@ -13,6 +13,8 @@ using Vantage.Services.Agent;
 
 // Tests talk to mock servers, whose learned settings must not reach the real file.
 LlmCapabilities.StorePath = null;
+// Nor may what they log reach the user's _diag.log.
+CommonUtils.LogDirectory = Path.Combine(Path.GetTempPath(), "vantage-probe-logs");
 
 if (args.Contains("--input-self-test", StringComparer.OrdinalIgnoreCase))
 {
@@ -1018,7 +1020,7 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
 
     // Asking again returns the next matches, then says when they run out.
     var matches = string.Join(' ', Enumerable.Range(1, 9).Select(i => $"Area {i} " + new string('x', 400)));
-    var progress = new Dictionary<string, int>();
+    var progress = new Dictionary<string, HashSet<string>>();
     var pages = new List<(int Count, bool More)>();
     for (var i = 0; i < 4; i++)
     {
@@ -1026,8 +1028,17 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         pages.Add((excerpts.Count, more));
     }
     var restarted = PageTextReader.ExtractExcerpts(matches, new[] { "Area" }, progress, out _);
+    // Calculator keeps its title while its display changes. Gemini's second read
+    // of "Display" came back empty, so four of five results were never read.
+    var calcProgress = new Dictionary<string, HashSet<string>>();
+    var firstSum = PageTextReader.ExtractExcerpts("Calculator Expression is 41798407 ÷ 9984670= Display is 4.186258233872527 Standard Calculator mode", new[] { "Display" }, calcProgress, out _);
+    var secondSum = PageTextReader.ExtractExcerpts("Calculator Expression is 27801023 ÷ 7688287= Display is 3.616022002849797 Standard Calculator mode", new[] { "Display" }, calcProgress, out _);
+    var sameAgain = PageTextReader.ExtractExcerpts("Calculator Expression is 27801023 ÷ 7688287= Display is 3.616022002849797 Standard Calculator mode", new[] { "Display" }, calcProgress, out _);
     var pagingOk = pages.SequenceEqual(new[] { (4, true), (4, true), (1, false), (0, false) })
-        && restarted.Count == 4 && restarted[0].Contains("Area 1 ", StringComparison.Ordinal);
+        && restarted.Count == 4 && restarted[0].Contains("Area 1 ", StringComparison.Ordinal)
+        && firstSum.Count == 1 && firstSum[0].Contains("4.186258233872527", StringComparison.Ordinal)
+        && secondSum.Count == 1 && secondSum[0].Contains("3.616022002849797", StringComparison.Ordinal)
+        && sameAgain.Count == 0;
 
     var loopPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory("windows", 1536, 960, Array.Empty<string>());
     var loopRuleOk = loopPrompt.Contains("Save As", StringComparison.Ordinal) && loopPrompt.Contains("next matches", StringComparison.Ordinal);
@@ -1140,6 +1151,35 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && RequiredToolUse.WritesFileWithPowerShell(batchWrite)
         && !RequiredToolUse.WritesFileWithPowerShell(CommonUtils.ParseAgentAction("{\"action\":\"type_text\",\"text\":\"a > b.txt\"}")!)
         && loopPrompt.Contains("29. When the task says to use Notepad", StringComparison.Ordinal);
+
+    // Paths with spaces: whole, or not at all. New-Item's output once gave the
+    // model C:\Users\Akshith\Desktop\Vantage as a fact on every turn.
+    var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    ContextWindowCompactor.ExtractEntities(
+        "Current Text Buffer = [pwsh_exit=0\nout:\n\n    Directory: C:\\Users\\Akshith\\Desktop\\Vantage Final Test\n\nMode                 LastWriteTime         Length Name\n----                 -------------         ------ ----\nd----          02-11-2026    14:39                raw\n]\n" +
+        "Saved C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\raw\\Canada.txt and C:\\Temp\\notes.txt. Opened C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\report\n" +
+        "Look in C:\\Program Files\\App\\app.exe, then C:\\Windows.",
+        found);
+    var entitiesOk = found.Contains("C:\\Users\\Akshith\\Desktop\\Vantage Final Test")
+        && found.Contains("C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\raw\\Canada.txt")
+        && found.Contains("C:\\Users\\Akshith\\Desktop\\Vantage Final Test\\report")
+        && found.Contains("C:\\Temp\\notes.txt")
+        && found.Contains("C:\\Program Files\\App\\app.exe")
+        && found.Contains("C:\\Windows")
+        && !found.Contains("C:\\Users\\Akshith\\Desktop\\Vantage");
+
+    // The chat box ends lines with a bare \r. Its paragraphs are the steps.
+    const string finalTest = "On my Desktop, create a folder called Vantage Final Test containing two folders named raw and report.\r\rIn Microsoft Edge, open the Wikipedia articles for Canada, Australia, Egypt, Argentina and Japan.\r\rFor each country, use Notepad to save a file in the raw folder, with exactly these three lines:\rCapital: <capital>\rArea: <area> km²\rPopulation: <population>\r\rUse the Windows Calculator app to work out each country's population density.\r\rOpen Settings, go to System, then About, and find the Windows version. Do not change any settings.\r\rIn the report folder, create summary.txt. After those lines, add a blank line, then these two lines:\rTotal area: <sum> km²\r\rCompress the raw folder into a file called raw.zip inside the report folder. Close Notepad, Calculator and Settings, then open the report folder in File Explorer and leave it open.";
+    var steps = PersistentTaskContext.BuildInitialTodos(finalTest);
+    var manySteps = PersistentTaskContext.BuildInitialTodos(string.Join("\n\n", Enumerable.Range(1, 10).Select(i => $"Do step number {i} now")));
+    var todosOk = steps.Count == 7
+        && steps[0].StartsWith("On my Desktop", StringComparison.Ordinal)
+        && steps[2].Contains("Capital: <capital> Area: <area> km² Population: <population>", StringComparison.Ordinal)
+        && steps[4] == "Open Settings, go to System, then About, and find the Windows version. Do not change any settings"
+        && steps[6].EndsWith("open the report folder in File Explorer and leave it open", StringComparison.Ordinal)
+        && manySteps.Count == 8 && manySteps[7] == "Do step number 8 now Do step number 9 now Do step number 10 now"
+        && PersistentTaskContext.BuildInitialTodos("Open Edge, then navigate to the repository, then send the result").Count == 3
+        && PersistentTaskContext.BuildInitialTodos("Line one of a task\r- first item here\r- second item here").Count == 3;
 
     // Finished work stays in the prompt however many milestones follow it.
     var contextRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
@@ -1258,8 +1298,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

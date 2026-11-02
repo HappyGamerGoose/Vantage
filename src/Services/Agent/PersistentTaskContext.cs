@@ -20,6 +20,8 @@ public sealed class PersistentTaskContext
     private static readonly Regex ExplicitStepBoundary = new(
         @"(?:\s*,?\s+\bthen\b\s+)|(?:\r?\n\s*(?:[-*]|\d+[.)])\s+)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ParagraphBreak = new(@"\n[ \t]*\n", RegexOptions.Compiled);
+    private const int MaxInitialTodos = 8;
 
     private const int MaxFinishedWork = 30;
 
@@ -418,16 +420,24 @@ public sealed class PersistentTaskContext
         return $"Ran {actionName}";
     }
 
-    private static List<string> BuildInitialTodos(string? goal)
+    /// <summary>
+    /// The paragraphs a user wrote are the steps, when there are several. The
+    /// chat box ends lines with a bare \r, which went unseen, so a seven-paragraph
+    /// task was cut only at each "then", including the one in "go to System,
+    /// then About", and the last paragraph fell past the six-step limit.
+    /// </summary>
+    internal static List<string> BuildInitialTodos(string? goal)
     {
         if (string.IsNullOrWhiteSpace(goal)) return new List<string>();
-        var parts = ExplicitStepBoundary
-            .Split(goal)
-            .Select(part => Normalize(part.Trim(' ', ',', ';', '.', ':'), MaxTodoLength))
-            .Where(part => part.Length >= 8)
-            .Take(6)
+        var text = goal.Replace("\r\n", "\n").Replace('\r', '\n');
+        var paragraphs = ParagraphBreak.Split(text).Where(part => !string.IsNullOrWhiteSpace(part)).ToList();
+        var parts = (paragraphs.Count >= 2 ? paragraphs : ExplicitStepBoundary.Split(text).ToList())
+            .Select(part => part.Trim(' ', ',', ';', '.', ':', '\n', '\t'))
+            .Where(part => Normalize(part, int.MaxValue).Length >= 8)
             .ToList();
-        return parts.Count >= 2 ? parts : new List<string>();
+        if (parts.Count > MaxInitialTodos)
+            parts = parts.Take(MaxInitialTodos - 1).Append(string.Join(" ", parts.Skip(MaxInitialTodos - 1))).ToList();
+        return parts.Count >= 2 ? parts.Select(part => Normalize(part, MaxTodoLength)).ToList() : new List<string>();
     }
 
     private static string Normalize(string? value, int maxLength)

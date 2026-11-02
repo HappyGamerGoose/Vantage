@@ -16,9 +16,19 @@ namespace Vantage.Services.Agent;
 
 public static class ContextWindowCompactor
 {
+    // A folder may have spaces in its name when a backslash follows it, as in
+    // C:\Users\Name\Desktop\Vantage Final Test\raw\Canada.txt. The last part
+    // may not: there, a space could as well start the next words of a sentence.
     private static readonly Regex FilePathRegex = new(
-        @"(?:[a-zA-Z]:\\(?:[^\\/:*?""<>|\r\n\t ]+\\)*[^\\/:*?""<>|\r\n\t ]+\.[a-zA-Z0-9]{1,8})|(?:\b[a-zA-Z]:\\[A-Za-z0-9_\-\.\\]+\b)",
+        @"(?:[a-zA-Z]:\\(?:[^\\/:*?""<>|\r\n\t,;]{1,80}\\)*[^\\/:*?""<>|\r\n\t ,;]+\.[a-zA-Z0-9]{1,8})|(?:\b[a-zA-Z]:\\(?:[^\\/:*?""<>|\r\n\t,;]{1,80}\\)*[A-Za-z0-9_\-\.]*)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // PowerShell names the folder it lists on a line of its own, spaces and all.
+    private static readonly Regex DirectoryLineRegex = new(
+        @"^[ \t]*Directory:[ \t]+([a-zA-Z]:\\[^\r\n]*?)[ \t]*\r?$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex EndsInExtension = new(@"\.[a-zA-Z0-9]{1,8}$", RegexOptions.Compiled);
 
     private static readonly Regex UrlRegex = new(
         @"https?://[A-Za-z0-9_\-\.~:/?#\[\]@!$&'()*+,;%=]+",
@@ -288,14 +298,27 @@ public static class ContextWindowCompactor
         return new Result(removedMessages, removedImages, summary, tokensBefore, tokensAfter);
     }
 
-    private static void ExtractEntities(string text, HashSet<string> entities)
+    internal static void ExtractEntities(string text, HashSet<string> entities)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
+
+        foreach (Match match in DirectoryLineRegex.Matches(text))
+        {
+            var folder = match.Groups[1].Value.TrimEnd('\\', ' ');
+            if (folder.Length > 3) entities.Add(folder);
+        }
 
         // File paths
         foreach (Match match in FilePathRegex.Matches(text))
         {
-            var path = match.Value.Trim(' ', ',', ';', '"', '\'');
+            var path = match.Value.Trim(' ', ',', ';', '"', '\'').TrimEnd('.');
+            // A folder whose name goes on past a space cannot be told from the
+            // words after it. Cut at the space, "Vantage Final Test" became a
+            // C:\Users\...\Desktop\Vantage that does not exist, and the model was
+            // shown it as a discovered fact on every turn.
+            var end = match.Index + match.Length;
+            if (!EndsInExtension.IsMatch(path) && end + 1 < text.Length && text[end] == ' ' && char.IsLetterOrDigit(text[end + 1]))
+                continue;
             if (path.Length > 3 && !path.Contains(".git", StringComparison.OrdinalIgnoreCase))
             {
                 entities.Add(path);

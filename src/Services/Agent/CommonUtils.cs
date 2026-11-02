@@ -112,13 +112,14 @@ public static class CommonUtils
         }
     }
 
+    /// <summary>Where the logs go. Tests point it elsewhere, so their mock servers stay out of the real log.</summary>
+    internal static string LogDirectory { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Vantage");
+
     private static string PathFor(string name)
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Vantage");
-        Directory.CreateDirectory(dir);
-        return Path.Combine(dir, name);
+        Directory.CreateDirectory(LogDirectory);
+        return Path.Combine(LogDirectory, name);
     }
 
     internal static string Truncate(string s, int n) =>

@@ -154,11 +154,13 @@ internal static class PageTextReader
         ExtractExcerpts(text, searches, null, out _);
 
     /// <summary>
-    /// With <paramref name="progress"/>, each search carries on after the matches
-    /// it already returned. Asking again used to return the same first matches,
-    /// and a model looking for one further down asked 20 times.
+    /// With <paramref name="progress"/>, each search skips the passages it already
+    /// returned. Asking again used to return the same first matches, and a model
+    /// looking for one further down asked 20 times. Progress is kept by text, not
+    /// by position: Calculator's display changed between two reads, and a search
+    /// resuming past the end of the old text found nothing in the new one.
     /// </summary>
-    internal static List<string> ExtractExcerpts(string text, IReadOnlyList<string> searches, IDictionary<string, int>? progress, out bool moreMatches)
+    internal static List<string> ExtractExcerpts(string text, IReadOnlyList<string> searches, IDictionary<string, HashSet<string>>? progress, out bool moreMatches)
     {
         moreMatches = false;
         var clean = Whitespace.Replace(text.Replace('￼', ' '), " ").Trim();
@@ -174,26 +176,34 @@ internal static class PageTextReader
         {
             var term = search.Trim();
             var key = term.ToLowerInvariant();
+            var returned = progress is null ? null
+                : progress.TryGetValue(key, out var seen) ? seen : new HashSet<string>(StringComparer.Ordinal);
             var position = 0;
-            if (progress is not null && progress.TryGetValue(key, out var reached)) position = Math.Min(reached, clean.Length);
             var found = 0;
-            for (var hits = 0; hits < MaxExcerptsPerSearch; hits++)
+            while (true)
             {
                 var index = clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase);
                 if (index < 0) break;
                 var start = WordStart(clean, Math.Max(0, index - (ExcerptContext / 3)));
                 var end = WordEnd(clean, Math.Min(clean.Length, index + term.Length + ExcerptContext));
-                excerpts.Add(clean[start..end]);
                 position = end;
+                var excerpt = clean[start..end];
+                if (returned?.Contains(excerpt) == true) continue;
+                if (found == MaxExcerptsPerSearch)
+                {
+                    moreMatches = true;
+                    break;
+                }
+                excerpts.Add(excerpt);
+                returned?.Add(excerpt);
                 found++;
             }
-            if (progress is null) continue;
+            if (progress is null || returned is null) continue;
 
             // Once a search runs out it starts over, in case the earliest matches
             // have since dropped out of TEXT_READ.
             if (found == 0) progress.Remove(key);
-            else progress[key] = position;
-            if (clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase) >= 0) moreMatches = true;
+            else progress[key] = returned;
         }
         return excerpts;
     }
