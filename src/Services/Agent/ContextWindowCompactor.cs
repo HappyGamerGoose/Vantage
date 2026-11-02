@@ -46,6 +46,73 @@ public static class ContextWindowCompactor
         int TokensBefore = 0,
         int TokensAfter = 0);
 
+    /// <summary>The start of an earlier observation once its screen details are dropped.</summary>
+    public const string FoldedObservationMarker = "[Earlier turn: its screen details are out of date and were dropped.]";
+
+    // Lines of an observation that say what happened, rather than what the screen showed.
+    private static readonly string[] OutcomeLinePrefixes =
+    {
+        "The initial screen is provided", "Last action:", "REFLECTION:", "REPEATED_ACTION:", "STUCK_RECOVERY:",
+        "EMPTY_RESPONSE_RECOVERY:", "FORMAT_FEEDBACK:", "GROUNDING_FAILED_RECOVERY:", "VERIFICATION_FEEDBACK",
+    };
+
+    private const string ControlsHeader = "FOREGROUND_CONTROLS (window \"";
+
+    /// <summary>
+    /// Shrinks every observation but the newest to the window it showed and what
+    /// happened. Each one repeats the whole screen (control list, task state and
+    /// every passage read), about 8k tokens that the next turn sends again fresh.
+    /// Kept whole, two of them filled a 32k window, so every turn compaction
+    /// removed the model's previous step and it never saw that it had clicked
+    /// Save and OK 30 times; on a large window they made each request several
+    /// times larger instead. Returns how many observations were folded.
+    /// </summary>
+    public static int FoldEarlierObservations(List<JsonObject> messages, PersistentTaskContext? taskContext = null)
+    {
+        var newest = messages.FindLastIndex(message => IsUser(message));
+        var folded = 0;
+        var entities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < newest; index++)
+        {
+            if (!IsUser(messages[index]) || messages[index]["content"] is not JsonArray content) continue;
+            foreach (var block in content.OfType<JsonObject>())
+            {
+                if (block["type"]?.GetValue<string>() != "text") continue;
+                var text = block["text"]?.GetValue<string>() ?? string.Empty;
+                if (!text.Contains("WORLD_STATE =", StringComparison.Ordinal)
+                    && !text.Contains("# PERSISTENT TASK STATE", StringComparison.Ordinal))
+                    continue;
+
+                // Compaction would have collected these when it removed the turn.
+                ExtractEntities(WithoutPerTurnState(text), entities);
+                block["text"] = FoldObservation(text);
+                folded++;
+            }
+        }
+        if (taskContext != null && entities.Count > 0) taskContext.RecordDiscoveredEntities(entities);
+        return folded;
+    }
+
+    private static string FoldObservation(string text)
+    {
+        var folded = new StringBuilder(FoldedObservationMarker);
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith(ControlsHeader, StringComparison.Ordinal))
+            {
+                var title = line[ControlsHeader.Length..];
+                var end = title.IndexOf('"');
+                if (end > 0) folded.Append("\nWindow: ").Append(title[..end]);
+            }
+            else if (OutcomeLinePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                folded.Append('\n').Append(line);
+            }
+        }
+        return folded.ToString();
+    }
+
     /// <summary>
     /// Compacts the message history to fit within context window bounds without losing
     /// vital task intelligence: extracts entities, milestones, pitfalls, and constraints.
@@ -305,7 +372,8 @@ public static class ContextWindowCompactor
         // Skip standard system-injected blocks
         if (text.StartsWith("# OS CONTEXT", StringComparison.OrdinalIgnoreCase) ||
             text.StartsWith("# PERSISTENT TASK STATE", StringComparison.OrdinalIgnoreCase) ||
-            text.StartsWith("The initial screen is provided", StringComparison.OrdinalIgnoreCase))
+            text.StartsWith("The initial screen is provided", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith(FoldedObservationMarker, StringComparison.Ordinal))
         {
             return;
         }
@@ -444,6 +512,9 @@ public static class ContextWindowCompactor
 
     private static bool IsSystem(JsonObject message) =>
         string.Equals(message["role"]?.GetValue<string>(), "system", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUser(JsonObject message) =>
+        string.Equals(message["role"]?.GetValue<string>(), "user", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsAssistant(JsonObject message) =>
         string.Equals(message["role"]?.GetValue<string>(), "assistant", StringComparison.OrdinalIgnoreCase);

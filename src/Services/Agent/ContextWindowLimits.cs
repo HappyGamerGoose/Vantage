@@ -112,12 +112,15 @@ public static class ContextWindowLimits
 
     /// <summary>
     /// Accurately estimates token usage across text and multimodal image blocks.
+    /// <paramref name="maxContextTokens"/> compacts sooner than the model's window
+    /// would, for callers that pay for every token of every request.
     /// </summary>
     public static TokenEstimate EstimateTokens(
         IEnumerable<JsonObject> messages,
         int maxOutputTokens = 4096,
         string? model = null,
-        string? baseUrl = null)
+        string? baseUrl = null,
+        int maxContextTokens = int.MaxValue)
     {
         int textTokens = 0;
         int imageTokens = 0;
@@ -154,7 +157,7 @@ public static class ContextWindowLimits
 
         int total = textTokens + imageTokens + Math.Max(0, maxOutputTokens);
         int contextLimit = GetModelContextWindow(model, baseUrl);
-        int threshold = GetCompactionThreshold(model, baseUrl, maxOutputTokens);
+        int threshold = Math.Min(GetCompactionThreshold(model, baseUrl, maxOutputTokens), maxContextTokens);
 
         return new TokenEstimate(
             TextTokens: textTokens,

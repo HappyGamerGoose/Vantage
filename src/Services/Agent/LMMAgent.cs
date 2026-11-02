@@ -18,6 +18,8 @@ public sealed class LmmAgent
     private readonly LMMEngine _engine;
     private readonly int _activeTextHistoryMessages;
     private readonly int _activeVisualHistoryTurns;
+    private readonly int _keepRecentMessages;
+    private readonly int _maxContextTokens;
     private string _contextSummary = string.Empty;
     public string SystemPrompt { get; private set; } = "You are a helpful assistant.";
     public List<JsonObject> Messages { get; private set; } = new();
@@ -32,11 +34,15 @@ public sealed class LmmAgent
         int activeTextHistoryMessages = int.MaxValue,
         int activeVisualHistoryTurns = 6,
         PersistentTaskContext? taskContext = null,
-        string? activeTaskGoal = null)
+        string? activeTaskGoal = null,
+        int keepRecentMessages = 2,
+        int maxContextTokens = int.MaxValue)
     {
         _engine = engine;
         _activeTextHistoryMessages = Math.Max(1, activeTextHistoryMessages);
         _activeVisualHistoryTurns = Math.Max(1, activeVisualHistoryTurns);
+        _keepRecentMessages = Math.Max(1, keepRecentMessages);
+        _maxContextTokens = maxContextTokens;
         TaskContext = taskContext;
         ActiveTaskGoal = activeTaskGoal;
         AddSystemPrompt(systemPrompt);
@@ -159,7 +165,8 @@ public sealed class LmmAgent
             Messages,
             maxTokens,
             model: _engine.Model,
-            baseUrl: _engine.BaseUrl);
+            baseUrl: _engine.BaseUrl,
+            maxContextTokens: _maxContextTokens);
 
         if (estimate.NeedsCompaction || Messages.Count > _activeTextHistoryMessages)
         {
@@ -240,7 +247,7 @@ public sealed class LmmAgent
         int? keepRecentImages = null,
         bool isEmergency = false) =>
         CompactAndRemember(
-            keepRecentNonSystemMessages ?? (isEmergency ? 1 : 2),
+            keepRecentNonSystemMessages ?? (isEmergency ? 1 : _keepRecentMessages),
             keepRecentImages ?? (isEmergency ? 1 : _activeVisualHistoryTurns),
             isEmergency);
 

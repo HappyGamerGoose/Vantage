@@ -84,6 +84,12 @@ public sealed class Worker
     // wasted the turn, and a long command or text could never have fitted at all.
     private const int GeneratorMaxNewTokens = 2048;
     private const int ReflectionMaxNewTokens = 512;
+    // Earlier turns are folded to their outcome, so a request is the prompt, the
+    // current screen and about 400 tokens per earlier step. The cap stops a model
+    // with a large window from letting it grow to 96k tokens a turn, and
+    // compaction keeps the last five steps instead of none.
+    private const int GeneratorContextBudget = 40_000;
+    private const int GeneratorMessagesKeptOnCompaction = 12;
 
     // Counts how many consecutive actions did not visibly land. Three in a
     // row triggers a recovery nudge — different from the stuck-detector on
@@ -154,7 +160,9 @@ public sealed class Worker
             workerPrompt,
             activeTextHistoryMessages: 30,
             activeVisualHistoryTurns: 1,
-            taskContext: _taskContext);
+            taskContext: _taskContext,
+            keepRecentMessages: GeneratorMessagesKeptOnCompaction,
+            maxContextTokens: GeneratorContextBudget);
         _reflector = new LmmAgent(
             engine,
             PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY,
@@ -397,6 +405,7 @@ public sealed class Worker
             sbGen.AppendLine($"VERIFICATION_FEEDBACK = [{string.Join(" | ", _verificationFeedback)}]");
 
         _generator.AddImageMessage(sbGen.ToString(), new[] { b64 }, role: "user");
+        ContextWindowCompactor.FoldEarlierObservations(_generator.Messages, _taskContext);
 
         // Diagnostic: dump the full prompt (image base64 redacted) BEFORE
         // the LLM call. This is what the model actually sees — when the
@@ -513,7 +522,7 @@ public sealed class Worker
         }
         _parseFailStreak = 0;
 
-        var repeats = _repeats.Register(action);
+        var repeats = _repeats.Register(action, controls);
         if (repeats >= RepeatGuard.RefuseAt)
         {
             var repeated = TryDescribeAction(action);

@@ -170,8 +170,52 @@ if (args.Contains("--context-self-test", StringComparer.OrdinalIgnoreCase))
         try { Directory.Delete(honestDir, recursive: true); } catch { }
     }
 
-    var valid = windowValid && persistentValid && factsClean && historyHonest;
-    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} FactsWithoutNoise={factsClean} HistoryHonest={historyHonest} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
+    // Earlier observations shrink to their window and outcome; the newest stays whole.
+    JsonObject Observation(string window, string lastAction) => new()
+    {
+        ["role"] = "user",
+        ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] =
+            "\nWORLD_STATE = { os=\"Windows 11\", fg=\"Notepad/pid=8320/hwnd=0x1502\" }\n" +
+            $"FOREGROUND_CONTROLS (window \"{window}\"; click one exactly with {{\"action\":\"click\",\"control\":N}}, valid this turn only):\n" +
+            "  [0] \"OK\" button @middle-center\n" + string.Concat(Enumerable.Range(1, 40).Select(i => $"  [{i}] \"Item {i}\" list-item @top-left\n")) +
+            "# PERSISTENT TASK STATE\nGoal: Save the files\n" + $"Last action: {lastAction}\n" +
+            "To-do list:\n- [ ] (goal) Complete the requested goal.\nFor a task with several steps you may include task_update.\n" +
+            "TEXT_READ (exact text from read_text, by page):\n  From \"Canada - Wikipedia\":\n    - " + new string('x', 6000) + "\n" +
+            "VERIFICATION_FEEDBACK = [the click changed nothing]" } },
+    };
+    JsonObject Reply(string text) => new() { ["role"] = "assistant", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = text } } };
+    var turns = new List<JsonObject>
+    {
+        new() { ["role"] = "system", ["content"] = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "system" } } },
+        Observation("Save as", "Save button in the Save As dialog succeeded"),
+        Reply("{\"action\":\"click\",\"control\":0}"),
+        Observation("Save as", "OK button in the path error dialog succeeded"),
+    };
+    var wholeTokens = ContextWindowLimits.EstimateTokens(new[] { turns[1] }, 0).TotalTokens;
+    var foldedCount = ContextWindowCompactor.FoldEarlierObservations(turns);
+    var earlier = turns[1]["content"]![0]!["text"]!.GetValue<string>();
+    var newest = turns[3]["content"]![0]!["text"]!.GetValue<string>();
+    var foldedTokens = ContextWindowLimits.EstimateTokens(new[] { turns[1] }, 0).TotalTokens;
+    var foldOk = foldedCount == 1
+        && ContextWindowCompactor.FoldEarlierObservations(turns) == 0
+        && earlier.StartsWith(ContextWindowCompactor.FoldedObservationMarker, StringComparison.Ordinal)
+        && earlier.Contains("Window: Save as", StringComparison.Ordinal)
+        && earlier.Contains("Last action: Save button in the Save As dialog succeeded", StringComparison.Ordinal)
+        && earlier.Contains("VERIFICATION_FEEDBACK = [the click changed nothing]", StringComparison.Ordinal)
+        && !earlier.Contains("WORLD_STATE", StringComparison.Ordinal)
+        && !earlier.Contains("Item 7", StringComparison.Ordinal)
+        && !earlier.Contains("TEXT_READ", StringComparison.Ordinal)
+        && newest.Contains("WORLD_STATE", StringComparison.Ordinal) && newest.Contains("TEXT_READ", StringComparison.Ordinal)
+        && foldedTokens < 100 && wholeTokens > 1500;
+
+    // An agent run compacts at its own budget even when the model's window is far larger.
+    var budgetOk = ContextWindowLimits.EstimateTokens(turns, 2048, "claude-sonnet-5-5", null, 40_000).CompactionThreshold == 40_000
+        && ContextWindowLimits.EstimateTokens(turns, 2048, "claude-sonnet-5-5").CompactionThreshold == 96_000
+        && ContextWindowLimits.EstimateTokens(turns, 2048, "nvidia/nemotron-3.5-super-vl-120b-a12b", null, 40_000).CompactionThreshold == 22_528;
+
+    var valid = windowValid && persistentValid && factsClean && historyHonest && foldOk && budgetOk;
+    Console.WriteLine($"ContextWindowValid={windowValid} PersistentTaskContextValid={persistentValid} FactsWithoutNoise={factsClean} HistoryHonest={historyHonest} EarlierTurnsFolded={foldOk} RunBudget={budgetOk} RetainedMessages={messages.Count} RetainedImages={retainedImages}");
+    Console.WriteLine($"Measured: one observation {wholeTokens} tokens whole, {foldedTokens} folded");
     Environment.ExitCode = valid ? 0 : 1;
     return;
 }
@@ -884,7 +928,38 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
 
     var exempt = new RepeatGuard();
     var exemptMost = Enumerable.Range(0, 20).Select(_ => exempt.Register(Act("{\"action\":\"scroll\",\"clicks\":-5}"))).Max();
-    var repeatOk = sameOk && alternated == 5 && variedMost == 1 && expectationsCount == 2 && exemptMost == 0;
+
+    // Replays the Save As loop: Save, then OK on the error, worded differently
+    // each round. It is refused by the tenth click and stopped by the twentieth.
+    var saveAs = Enumerable.Range(0, 32).Select(i => i == 31 ? Named("Save", "button") : Named($"Item {i}", "list-item")).ToList();
+    var errorBox = new List<UiControl> { Named("OK", "button") };
+    var okWordings = new[]
+    {
+        "{\"action\":\"click\",\"control\":0,\"description\":\"OK button in the path error dialog\",\"intent\":\"dismiss the path does not exist error so I can create the folders first\"}",
+        "{\"action\":\"click\",\"control\":0}",
+        "{\"action\":\"click\",\"control\":0,\"description\":\"OK button in the error dialog\",\"intent\":\"dismiss the path error dialog so I can create the folder structure first\"}",
+    };
+    var saveLoop = new RepeatGuard();
+    var loopCounts = new List<int>();
+    for (var round = 0; round < 10; round++)
+    {
+        var into = round % 2 == 0 ? "to" : "into";
+        loopCounts.Add(saveLoop.Register(Act($"{{\"action\":\"click\",\"control\":31,\"description\":\"Save button in the Save As dialog\",\"intent\":\"save Canada.txt {into} the raw folder\"}}"), saveAs));
+        loopCounts.Add(saveLoop.Register(Act(okWordings[round % 3]), errorBox));
+    }
+    var saveLoopOk = loopCounts[9] >= RepeatGuard.RefuseAt && loopCounts[19] >= RepeatGuard.StopAt;
+
+    // The same number on another screen is another control.
+    var renumbered = new RepeatGuard();
+    renumbered.Register(Act("{\"action\":\"click\",\"control\":0}"), errorBox);
+    var otherControl = renumbered.Register(Act("{\"action\":\"click\",\"control\":0}"), new List<UiControl> { Named("Cancel", "button") });
+
+    // Steps of a batch are compared by what they do, not how they are worded.
+    var batches = new RepeatGuard();
+    batches.Register(Act("{\"action\":\"batch\",\"actions\":[{\"action\":\"click\",\"control\":31,\"description\":\"Save\"},{\"action\":\"key\",\"combo\":\"enter\",\"intent\":\"confirm\"}]}"), saveAs);
+    var batchCount = batches.Register(Act("{\"action\":\"batch\",\"actions\":[{\"action\":\"click\",\"control\":31,\"description\":\"the Save button\"},{\"action\":\"key\",\"combo\":\"enter\",\"intent\":\"confirm it\"}]}"), saveAs);
+    var repeatOk = sameOk && alternated == 5 && variedMost == 1 && expectationsCount == 2 && exemptMost == 0
+        && saveLoopOk && otherControl == 1 && batchCount == 2;
 
     // Asking again returns the next matches, then says when they run out.
     var matches = string.Join(' ', Enumerable.Range(1, 9).Select(i => $"Area {i} " + new string('x', 400)));
