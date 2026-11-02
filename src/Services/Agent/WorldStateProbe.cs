@@ -347,13 +347,22 @@ public sealed record WorldStateProbe(
         try { return WindowsAppManager.GetKeyboardState(); } catch { return (null, false, false, false); }
     }
 
+    /// <summary>
+    /// Windows 11 still calls itself Windows 10 in the registry's ProductName, and
+    /// only the build number tells them apart.
+    /// </summary>
+    internal static string OsName(string productName, string? build) =>
+        int.TryParse(build, out var number) && number >= 22000
+            ? productName.Replace("Windows 10", "Windows 11", StringComparison.OrdinalIgnoreCase)
+            : productName;
+
     [SupportedOSPlatform("windows")]
     private static string ProbeOsVersion()
     {
         // Read ProductName + DisplayVersion via registry (cheap, 1 ms).
         using var name = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
             @"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
-        var pn   = name?.GetValue("ProductName") as string ?? "Windows";
+        var pn   = OsName(name?.GetValue("ProductName") as string ?? "Windows", name?.GetValue("CurrentBuild") as string);
         var ver  = name?.GetValue("DisplayVersion") as string ?? name?.GetValue("ReleaseId") as string ?? "?";
         var ed   = name?.GetValue("EditionID") as string;
         return string.IsNullOrEmpty(ed) ? $"{pn} {ver}" : $"{pn} {ver} {ed}";

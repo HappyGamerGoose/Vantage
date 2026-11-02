@@ -983,9 +983,71 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         try { Directory.Delete(contextRoot, true); } catch { }
     }
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk}");
+    // No excerpt starts or ends inside a number, wherever the number falls.
+    var wholeNumbers = true;
+    for (var pad = 0; pad < 80 && wholeNumbers; pad++)
+    {
+        var before = $"Area 2,780,085[7] {new string('y', pad)} Population 5";
+        var leading = PageTextReader.ExtractExcerpts(before, new[] { "Population" })[0];
+        var after = $"Population 5 {new string('y', 170 + pad)} 46,735,004 km2 and more text here";
+        var trailing = PageTextReader.ExtractExcerpts(after, new[] { "Population" })[0];
+        wholeNumbers = (!leading.Contains("80,085", StringComparison.Ordinal) || leading.Contains("2,780,085", StringComparison.Ordinal))
+            && (!FactLedger.ExtractValues(trailing).Keys.Any(key => key != "46735004" && "46735004".Contains(key, StringComparison.Ordinal)));
+    }
+
+    // A second attempt at the same goal does not trust the first attempt's files.
+    var resumeRoot = Path.Combine(Path.GetTempPath(), "vantage-probe-" + Guid.NewGuid().ToString("N"));
+    var resumeOk = false;
+    try
+    {
+        var resumeContext = new PersistentTaskContext("probe", resumeRoot);
+        resumeContext.BeginTask("Save five files");
+        resumeContext.RecordFinishedWork("Saved Canada.txt (the window title confirms it)");
+        resumeContext.BeginTask("Save five files");
+        resumeOk = resumeContext.FinishedWork.Count == 0;
+    }
+    finally
+    {
+        try { Directory.Delete(resumeRoot, true); } catch { }
+    }
+
+    var osOk = WorldStateProbe.OsName("Windows 10 Pro", "26300") == "Windows 11 Pro"
+        && WorldStateProbe.OsName("Windows 10 Pro", "19045") == "Windows 10 Pro"
+        && WorldStateProbe.OsName("Windows 10 Pro", null) == "Windows 10 Pro";
+
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && wholeNumbers && resumeOk && osOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--agent-turn-handles", StringComparer.OrdinalIgnoreCase))
+{
+    // The reads an agent turn makes, against a real window. Read-only. Usage:
+    // --agent-turn-handles <process name> [rounds]. Handles should level off.
+    var turnArgs = args.SkipWhile(a => !a.Equals("--agent-turn-handles", StringComparison.OrdinalIgnoreCase)).Skip(1).ToArray();
+    var owner = System.Diagnostics.Process.GetProcessesByName(turnArgs.ElementAtOrDefault(0) ?? "msedge").FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+    if (owner is null)
+    {
+        Console.WriteLine("no window found");
+        Environment.ExitCode = 1;
+        return;
+    }
+    var turnRounds = int.TryParse(turnArgs.ElementAtOrDefault(1), out var parsedRounds) ? parsedRounds : 200;
+    var self = System.Diagnostics.Process.GetCurrentProcess();
+    for (var round = 1; round <= turnRounds; round++)
+    {
+        WorldStateProbe.Capture();
+        await UiControlGrounding.SnapshotAsync(owner.MainWindowHandle, TimeSpan.FromSeconds(2));
+        await PageTextReader.ReadAsync(owner.MainWindowHandle, TimeSpan.FromSeconds(3));
+        ScreenSampler.Capture();
+        ForegroundWindowProbe.Read();
+        if (round % 25 != 0) continue;
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        self.Refresh();
+        Console.WriteLine($"round={round} handles={self.HandleCount} privateMB={self.PrivateMemorySize64 / (1024 * 1024)}");
+    }
     return;
 }
 

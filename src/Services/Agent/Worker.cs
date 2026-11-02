@@ -80,7 +80,9 @@ public sealed class Worker
     private const int ControlsMissesBeforeSkip = 2;
     private string _controlsMissKey = "";
     private int _controlsMisses;
-    private const int GeneratorMaxNewTokens = 768;
+    // Long reasoning hit a limit of 768 and was cut off before its action, which
+    // wasted the turn, and a long command or text could never have fitted at all.
+    private const int GeneratorMaxNewTokens = 2048;
     private const int ReflectionMaxNewTokens = 512;
 
     // Counts how many consecutive actions did not visibly land. Three in a

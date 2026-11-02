@@ -305,6 +305,21 @@ public sealed class VantageACI
 
         var window = Vantage.Common.NativeInterop.GetForegroundWindow();
         LastReadTitle = ForegroundWindowProbe.Read().Title;
+        var readName = FactLedger.PageLabel(LastReadTitle);
+
+        // Only the front window can be read. Naming another used to be ignored, so
+        // the text came from whatever was in front while the model took it for the
+        // window it had named.
+        var wanted = action.GetString("window_title") ?? action.GetString("target_title");
+        if (!string.IsNullOrWhiteSpace(wanted) && !readName.Contains(wanted.Trim(), StringComparison.OrdinalIgnoreCase)
+            && !LastReadTitle.Contains(wanted.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            LastReadExcerpts = Array.Empty<string>();
+            LastReadUnavailable = false;
+            return new ActionResult(ActionOutcome.Failed,
+                $"read_text reads only the window in front, which is \"{readName}\", not \"{wanted}\". Bring that window or tab forward first.");
+        }
+
         var page = $"{window}|{LastReadTitle}";
         if (page != _readProgressPage)
         {
@@ -324,12 +339,12 @@ public sealed class VantageACI
         if (LastReadExcerpts.Count > 0)
         {
             return new ActionResult(ActionOutcome.Success,
-                $"read_text found {LastReadExcerpts.Count} passage(s); they are in TEXT_READ" +
+                $"read_text found {LastReadExcerpts.Count} passage(s) in \"{readName}\"; they are in TEXT_READ" +
                 (moreMatches ? ". There are more matches: send the same read_text again for the next ones, or search a more specific word." : ""));
         }
         return new ActionResult(ActionOutcome.Success, resumed
-            ? "there are no further matches: every match has been returned and is in TEXT_READ. Search a different word."
-            : "the text was read but contains no match. Try a shorter or different search word.");
+            ? $"there are no further matches in \"{readName}\": every match has been returned and is in TEXT_READ. Search a different word."
+            : $"the text of \"{readName}\" was read but contains no match. If that is the wrong window, bring the right one forward. Otherwise try a shorter or different search word.");
     }
 
     private string _readProgressPage = "";

@@ -26,6 +26,7 @@ public sealed partial class MainWindow
         private readonly AgentRunViewModel _run;
         private static readonly TimeSpan RunSaveInterval = TimeSpan.FromSeconds(15);
         private DateTimeOffset _lastSave = DateTimeOffset.UtcNow;
+        private DateTimeOffset _stepStartedAt = DateTimeOffset.UtcNow;
 
         public MainWindowAgentHooks(
             MainWindow self,
@@ -100,27 +101,19 @@ public sealed partial class MainWindow
         {
             _self.DispatcherQueue.TryEnqueue(() =>
             {
-                // Mark the previous running phase as resolved (most of
-                // the time one OnStepCompleted = one prior action
-                // finished + one new action enqueued; we surface only
-                // the ones whose outcome is the agent's "executed
-                // action" outcome).
-                if (result.Outcome == ActionOutcome.Success
-                    || result.Outcome == ActionOutcome.Done
-                    || result.Outcome == ActionOutcome.Failed
-                    || result.Outcome == ActionOutcome.FailedFatal)
-                {
-                    _run.FinishLastRunning(MapToPhaseStatus(result.Outcome));
-                    if (result.Outcome == ActionOutcome.Done ||
-                        result.Outcome == ActionOutcome.Success ||
-                        result.Outcome == ActionOutcome.Failed ||
-                        result.Outcome == ActionOutcome.FailedFatal)
-                    {
-                        var phase = PhaseParser.Parse(step, result);
-                        _run.AddPhase(phase);
-                        ScrollIntoViewIfVisible();
-                    }
-                }
+                // This step has finished, so it carries its own outcome and time.
+                // Closing the previous step with this result instead put every
+                // failure and duration one step too early.
+                var finishedAt = DateTimeOffset.UtcNow;
+                var phase = PhaseParser.Parse(step, result);
+                phase.StartedAt = _stepStartedAt;
+                phase.FinishedAt = finishedAt;
+                phase.Status = result.Description?.StartsWith("NOT DONE", StringComparison.Ordinal) == true
+                    ? PhaseStatus.Failed
+                    : MapToPhaseStatus(result.Outcome);
+                _stepStartedAt = finishedAt;
+                _run.AddPhase(phase);
+                ScrollIntoViewIfVisible();
 
                 // A run can last many minutes, and its record used to reach the
                 // disk only when it ended, so a crash lost all of it.

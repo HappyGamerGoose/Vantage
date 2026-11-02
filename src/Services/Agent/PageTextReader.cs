@@ -26,6 +26,7 @@ internal static class PageTextReader
     private const int TextPatternId = 10014;
     private const int MaxExcerptsPerSearch = 4;
     private const int ExcerptContext = 180;
+    private const int MaxWordStretch = 60;
     private const int UnfilteredLength = 1500;
     private const int MaxFallbackLength = 200_000;
 
@@ -180,8 +181,8 @@ internal static class PageTextReader
             {
                 var index = clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase);
                 if (index < 0) break;
-                var start = Math.Max(0, index - (ExcerptContext / 3));
-                var end = Math.Min(clean.Length, index + term.Length + ExcerptContext);
+                var start = WordStart(clean, Math.Max(0, index - (ExcerptContext / 3)));
+                var end = WordEnd(clean, Math.Min(clean.Length, index + term.Length + ExcerptContext));
                 excerpts.Add(clean[start..end]);
                 position = end;
                 found++;
@@ -195,6 +196,27 @@ internal static class PageTextReader
             if (clean.IndexOf(term, position, StringComparison.OrdinalIgnoreCase) >= 0) moreMatches = true;
         }
         return excerpts;
+    }
+
+    // An excerpt must not begin or end inside a word. Cutting through 2,780,085
+    // left the model with 80,085, which it rightly distrusted and then replaced
+    // with a guess, and the fragment would have counted as a value that was read.
+    private static int WordStart(string text, int start)
+    {
+        for (var i = start; i > 0 && start - i < MaxWordStretch; i--)
+        {
+            if (text[i - 1] == ' ') return i;
+        }
+        return start;
+    }
+
+    private static int WordEnd(string text, int end)
+    {
+        for (var i = end; i < text.Length && i - end < MaxWordStretch; i++)
+        {
+            if (text[i] == ' ') return i;
+        }
+        return end == text.Length || text.Length - end < MaxWordStretch ? text.Length : end;
     }
 
     private static void Release(object? value)

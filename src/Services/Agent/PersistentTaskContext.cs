@@ -68,6 +68,13 @@ public sealed class PersistentTaskContext
                 Todos = todos
             };
         }
+        else
+        {
+            // Files may have been changed or deleted since the last attempt, and a
+            // stale "finished" entry would make the agent skip them. Redoing a save
+            // costs far less than a run that reports files that are not there.
+            _snapshot.FinishedWork.Clear();
+        }
 
         _snapshot.UpdatedAt = DateTimeOffset.UtcNow;
         Save();

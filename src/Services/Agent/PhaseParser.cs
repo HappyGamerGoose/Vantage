@@ -105,7 +105,12 @@ public static class PhaseParser
             return (PhaseKind.MoveMouse, "Move", TailAfterSpace(d));
 
         if (StartsWithAnyWord(d, "Launched"))
-            return (PhaseKind.LaunchApp, "Launch", TailAfterSpace(d));
+        {
+            var launched = TailAfterSpace(d);
+            return (PhaseKind.LaunchApp, "Launch", launched.StartsWith("and focused ", StringComparison.OrdinalIgnoreCase)
+                ? launched["and focused ".Length..]
+                : launched);
+        }
 
         if (StartsWithAnyWord(d, "Focused", "Activated"))
             return (PhaseKind.FocusApp, "Focus", TailAfterSpace(d));
@@ -128,6 +133,30 @@ public static class PhaseParser
                 : rest.StartsWith("script", StringComparison.OrdinalIgnoreCase) ? "Script" : "Shell";
             return (PhaseKind.RunPowerShell, title, rest);
         }
+
+        if (d.StartsWith("NOT DONE", StringComparison.Ordinal))
+            return (PhaseKind.Other, "Refused", d.StartsWith("NOT DONE: ", StringComparison.Ordinal) ? d["NOT DONE: ".Length..] : d);
+
+        if (d.StartsWith("read_text", StringComparison.OrdinalIgnoreCase)
+            || d.StartsWith("the text of ", StringComparison.OrdinalIgnoreCase)
+            || d.StartsWith("there are no further matches", StringComparison.OrdinalIgnoreCase)
+            || d.StartsWith("this window exposes no readable text", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.Other, "Read", d);
+
+        if (d.StartsWith("pwsh ", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.RunPowerShell, "Shell", d);
+
+        if (d.StartsWith("screen settled", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.Wait, "Wait", d);
+
+        if (d.Equals("agent signaled done", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.Done, "Done", null);
+
+        if (d.StartsWith("the model reply could not be used", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.Other, "Unusable reply", d);
+
+        if (d.StartsWith("stopped", StringComparison.OrdinalIgnoreCase) || d.StartsWith("aborted", StringComparison.OrdinalIgnoreCase))
+            return (PhaseKind.Fail, "Stopped", d);
 
             // Fallback: an action without a recognized prefix. Try to
             // surface *something* useful so the UI never shows the unhelpful
