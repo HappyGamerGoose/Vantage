@@ -36,6 +36,8 @@ public sealed class LmmResponse
     public string? Thinking { get; init; }
     public int InputTokens { get; init; }
     public int OutputTokens { get; init; }
+    /// <summary>True when the reply stopped at the token limit rather than finishing.</summary>
+    public bool CutOff { get; init; }
 }
 
 public abstract class LMMEngine
@@ -218,7 +220,8 @@ public sealed class AnthropicEngine : LMMEngine
                 Text        = text,
                 Thinking    = thinking,
                 InputTokens = InputTokensUsed(usage),
-                OutputTokens= usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("output_tokens").GetInt32() : 0
+                OutputTokens= usage.ValueKind != JsonValueKind.Undefined ? usage.GetProperty("output_tokens").GetInt32() : 0,
+                CutOff      = root.TryGetProperty("stop_reason", out var stop) && stop.ValueKind == JsonValueKind.String && stop.GetString() == "max_tokens",
             };
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
@@ -466,7 +469,7 @@ public sealed class OpenAICompatEngine : LMMEngine
                 || (msg.TryGetProperty("reasoning", out var rs) && rs.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rs.GetString()));
 
             return new OpenAiReply(
-                new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok },
+                new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok, CutOff = finish == "length" },
                 hadReasoning,
                 finish);
         }

@@ -226,6 +226,7 @@ public sealed class LmmAgent
             LlmLatency.Record(latencyKey, watch.ElapsedMilliseconds);
             LastInputTokens = response.InputTokens;
             LastOutputTokens = response.OutputTokens;
+            LastReplyCutOff = response.CutOff;
             return response;
         }
         catch (LlmRateLimitException)
@@ -237,6 +238,8 @@ public sealed class LmmAgent
 
     public int LastInputTokens { get; private set; }
     public int LastOutputTokens { get; private set; }
+    /// <summary>The last reply stopped at the token limit, so whatever it was building to never arrived.</summary>
+    public bool LastReplyCutOff { get; private set; }
 
     /// <summary>
     /// Retains the system instruction, distilled persistent task state, and only

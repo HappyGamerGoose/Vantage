@@ -109,6 +109,8 @@ public sealed class Worker
     private readonly HashSet<string> _heldFinishedFileText = new(StringComparer.Ordinal);
     private bool _calculatorRead;
     private bool _doneHeldForCalculator;
+    private string _lastActionProblem = "";
+    private bool _lastReplyCutOff;
 
     // Looking at something is not progress, and listing it as a milestone pushed
     // out the steps that were.
@@ -372,9 +374,11 @@ public sealed class Worker
         else if (_parseFailStreak > 0 && !string.IsNullOrEmpty(_lastRawPlan))
         {
             sbGen.AppendLine(
-                $"FORMAT_FEEDBACK: No desktop action ran, because your last reply could not be used: {CommonUtils.DescribeActionProblem(_lastRawPlan)}. " +
-                "Reply with <thoughts>…</thoughts>, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>. " +
-                $"Your last reply ended with: {Tail(_lastRawPlan, ParseFeedbackTailLength)}");
+                $"FORMAT_FEEDBACK: No desktop action ran, because your last reply could not be used: {_lastActionProblem}. " +
+                (_lastReplyCutOff
+                    ? "Do not plan the whole task. Write at most two sentences in <thoughts> about the next step only, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>."
+                    : "Reply with <thoughts>…</thoughts>, then <answer>, a ```json fence holding only the action object, the closing ```, then </answer>. " +
+                      $"Your last reply ended with: {Tail(_lastRawPlan, ParseFeedbackTailLength)}"));
         }
         else if (_lastActionOutcome.StartsWith("failed", StringComparison.OrdinalIgnoreCase)
                  && _turnCount > 0)
@@ -507,18 +511,28 @@ public sealed class Worker
         {
             _parseFailStreak++;
             _turnCount++;
-            _taskContext.RecordSystemEvent($"No desktop action ran, because the last reply could not be used: {CommonUtils.DescribeActionProblem(plan!)}");
+            // A reply that ran into the token limit never reached its action.
+            // Judged on what it had written so far, a long plan with a PowerShell
+            // example in it was called "invalid JSON", which told neither the
+            // model nor the user what had gone wrong.
+            _lastReplyCutOff = _generator.LastReplyCutOff;
+            _lastActionProblem = _lastReplyCutOff
+                ? $"it ran past the {GeneratorMaxNewTokens}-token limit and was cut off before it gave an action"
+                : CommonUtils.DescribeActionProblem(plan!);
+            _taskContext.RecordSystemEvent($"No desktop action ran, because the last reply could not be used: {_lastActionProblem}");
             FlushHistory();
 
             // Give up after consecutive parse failures — prevents an
             // infinite loop where the worker spits back text-only
             // responses forever.
             if (_parseFailStreak >= MaxParseFailStreak)
-                return new ActionResult(ActionOutcome.FailedFatal,
-                    $"aborted after {_parseFailStreak} consecutive unusable responses, because {CommonUtils.DescribeActionProblem(plan!)}. Last reply ended with: {Tail(plan!, ParseFeedbackTailLength)}");
+                return new ActionResult(ActionOutcome.FailedFatal, _lastReplyCutOff
+                    ? $"stopped after {_parseFailStreak} replies in a row that gave no action: the last one {_lastActionProblem}. " +
+                      "This model writes long plans instead of one short action per turn, so a different model may work better."
+                    : $"aborted after {_parseFailStreak} consecutive unusable responses, because {_lastActionProblem}. Last reply ended with: {Tail(plan!, ParseFeedbackTailLength)}");
 
             return new ActionResult(ActionOutcome.Failed,
-                $"the model reply could not be used, because {CommonUtils.DescribeActionProblem(plan!)}");
+                $"the model reply could not be used, because {_lastActionProblem}");
         }
         _parseFailStreak = 0;
 

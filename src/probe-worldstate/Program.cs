@@ -646,9 +646,15 @@ if (args.Contains("--agent-accuracy-self-test", StringComparer.OrdinalIgnoreCase
         && nestedBatch?.Action == "batch" && nestedBatch.GetActionList("steps").Count == 2
         && braceInText?.GetString("text") == "a } \" { b"
         && trailingComma?.Action == "done" && noAction is null && notAnAction is null;
+    // A Cohere reply was a long plan with a PowerShell example and no action,
+    // and it was reported as invalid JSON because of the '$' in the example.
+    const string planWithScript = "We'll do:\n\n```\n$uri = \"https://en.wikipedia.org/wiki/Canada\"\nif ($text -match 'Capital') {\n    $capital = $matches[1]\n}\n```\n\nBut the HTML structure may be different.";
     var problemOk = CommonUtils.DescribeActionProblem("I would click it.").Contains("no JSON", StringComparison.Ordinal)
         && CommonUtils.DescribeActionProblem("```json\n{\"thing\":1}\n```").Contains("no `action`", StringComparison.Ordinal)
-        && CommonUtils.DescribeActionProblem("```json\n{\"action\": \n```").Contains("invalid", StringComparison.Ordinal);
+        && CommonUtils.DescribeActionProblem("```json\n{\"action\": \n```").Contains("invalid", StringComparison.Ordinal)
+        && CommonUtils.DescribeActionProblem(planWithScript) == "it has no `action` field"
+        && CommonUtils.DescribeActionProblem("```powershell\nif ($a) { $b }\n```\n```json\n{\"action\": \n```").Contains("invalid", StringComparison.Ordinal)
+        && FromReply(planWithScript) is null;
     // Floating-point noise from a real run counts as the short number; real differences do not.
     var sums = new FactLedger();
     var noisyOutput = new string?[] { "pwsh_exit=0 out: 237.860000000001" };

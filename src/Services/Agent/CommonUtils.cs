@@ -203,8 +203,14 @@ public static class CommonUtils
     public static string DescribeActionProblem(string reply)
     {
         if (!reply.Contains('{')) return "it has no JSON object";
-        var fenced = Regex.Match(reply, "```(?:json)?\\s*\\n?(.*?)```", RegexOptions.Singleline);
-        var json = fenced.Success ? fenced.Groups[1].Value.Trim() : reply[reply.IndexOf('{')..].Trim();
+        // Only text that looks like JSON is judged as JSON: a plan with a
+        // PowerShell example in a code block and no action anywhere was
+        // reported as "invalid JSON ('$' is an invalid start of a value)".
+        if (!reply.Contains("\"action\"", StringComparison.Ordinal)) return "it has no `action` field";
+        var fenced = Regex.Matches(reply, "```(?:json)?\\s*\\n?(.*?)```", RegexOptions.Singleline)
+            .Select(match => match.Groups[1].Value.Trim())
+            .LastOrDefault(block => block.StartsWith('{'));
+        var json = fenced ?? reply[reply.IndexOf('{')..].Trim();
         try
         {
             using var doc = JsonDocument.Parse(json, ActionJsonOptions);
