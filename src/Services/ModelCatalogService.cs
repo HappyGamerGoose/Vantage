@@ -29,7 +29,7 @@ public static class ModelCatalogService
         if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("Enter the API key first.");
 
         var isAnthropic = baseUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase);
-        var url = isAnthropic ? $"{baseUrl}/v1/models?limit=200" : $"{baseUrl}/models";
+        var url = isAnthropic ? $"{Agent.AnthropicEngine.ApiRoot(baseUrl)}/v1/models?limit=200" : $"{baseUrl}/models";
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         using var req = new HttpRequestMessage(HttpMethod.Get, url);

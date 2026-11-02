@@ -463,9 +463,19 @@ public static class ProviderCardRenderer
         var browseBtn = ModelActionButton("", "Browse provider models");
         browseBtn.Click += async (_, _) =>
         {
-            var picked = await ModelPickerDialog.ShowAsync(
-                ctx.Host.XamlRoot, provider.BaseUrl, provider.ApiKey,
-                provider.Models.Select(m => m.Id));
+            // A click handler that throws takes the whole app down.
+            IReadOnlyList<string>? picked;
+            try
+            {
+                picked = await ModelPickerDialog.ShowAsync(
+                    ctx.Host.XamlRoot, provider.BaseUrl, provider.ApiKey,
+                    provider.Models.Select(m => m.Id));
+            }
+            catch (Exception ex)
+            {
+                Vantage.Services.Agent.CommonUtils.LogDiagnostic("model-picker-failed", ex.Message);
+                return;
+            }
             if (picked is null || picked.Count == 0) return;
 
             foreach (var id in picked)

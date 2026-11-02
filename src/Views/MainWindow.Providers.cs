@@ -388,9 +388,20 @@ public sealed partial class MainWindow
         var browseBtn = new Button { Content = "Browse provider models" };
         browseBtn.Click += async (_, _) =>
         {
-            var picked = await ModelPickerDialog.ShowAsync(
-                RootGrid.XamlRoot, urlBox.Text, keyBox.Password,
-                modelRows.Select(r => r.Id.Text.Trim()));
+            // This runs inside the Add provider dialog, and a second dialog
+            // cannot open over it, so the list opens as a flyout instead.
+            IReadOnlyList<string>? picked;
+            try
+            {
+                picked = await ModelPickerDialog.ShowFlyoutAsync(
+                    browseBtn, urlBox.Text.Trim(), keyBox.Password,
+                    modelRows.Select(r => r.Id.Text.Trim()));
+            }
+            catch (Exception ex)
+            {
+                CommonUtils.LogDiagnostic("model-picker-failed", ex.Message);
+                return;
+            }
             if (picked is null) return;
             foreach (var id in picked)
             {
