@@ -355,6 +355,42 @@ internal static class DonePolicy
     /// about a screen that no longer exists.
     /// </summary>
     public static bool ScreenMovedSinceLook(FrameDelta sinceScreenshot) => sinceScreenshot.Global >= 0.01;
+
+    /// <summary>The parts of the task a `done` says were not done, given as a list or one string.</summary>
+    public static List<string> NotDoneParts(AgentAction done)
+    {
+        var parts = done.GetStringList("not_done");
+        if (parts.Count == 0 && done.GetString("not_done") is { } single && !string.IsNullOrWhiteSpace(single))
+            parts.Add(single.Trim());
+        return parts;
+    }
+
+    /// <summary>
+    /// Asked once, before a task with several steps may finish. Gemini 3.8 Flash
+    /// found no raw.zip to extract and skipped that step, then wrote "Everything
+    /// requested has been completed accurately", and the run was shown as done.
+    /// Returns null when fewer than two steps are still open.
+    /// </summary>
+    public static string? StepCheck(IEnumerable<PersistentTaskContext.TaskTodoItem> todos)
+    {
+        var open = todos.Where(item => item.Id != "goal" && !item.IsCompleted).Select(item => item.Text).ToList();
+        if (open.Count < 2) return null;
+        return "NOT DONE: before finishing, check each step of the task against what you actually did:\n  - " +
+               string.Join("\n  - ", open) +
+               "\nIf every step was done, send `done` again. If a step was skipped or only partly done, send `done` with " +
+               "\"not_done\": [\"<step>: <why>\"] for each one, and the user will be told. Never say a step was done when it was not.";
+    }
+
+    /// <summary>The run's result line. The hook reads the outcome from how it starts.</summary>
+    public static string FinishedLine(int steps, IReadOnlyList<string> notDone, IReadOnlyList<string> unconfirmed)
+    {
+        var problems = new List<string>();
+        if (notDone.Count > 0) problems.Add($"these parts were not done: {string.Join("; ", notDone)}");
+        if (unconfirmed.Count > 0) problems.Add($"these values could not be confirmed and may be wrong: {string.Join(", ", unconfirmed)}");
+        return problems.Count == 0
+            ? $"done in {steps} steps"
+            : $"needs review: finished in {steps} steps, but {string.Join(", and ", problems)}";
+    }
 }
 
 /// <summary>

@@ -1201,6 +1201,33 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && FactLedger.WithoutEchoedValues("out: 4.2", null) == "out: 4.2"
         && FactLedger.WithoutEchoedValues("out: 21841425", "$areas = @(9984670, 7688287); ($areas | Measure-Object -Sum).Sum") == "out: 21841425";
 
+    // A run that skipped a step says so instead of reporting done.
+    PersistentTaskContext.TaskTodoItem Todo(string id, string text, bool completed = false) =>
+        new() { Id = id, Text = text, IsCompleted = completed };
+    var summitTodos = new[]
+    {
+        Todo("goal", "Complete the requested goal."),
+        Todo("todo-1", "On my Desktop, create a folder called Vantage Summit Test"),
+        Todo("todo-6", "Use File Explorer, not PowerShell, to extract raw.zip from the report folder inside Vantage Final Test"),
+        Todo("todo-7", "In the report folder, create summary.txt"),
+    };
+    var stepCheck = DonePolicy.StepCheck(summitTodos) ?? "";
+    var skipped = "Extract raw.zip: there is no Vantage Final Test folder on the Desktop";
+    var notDoneOk = DonePolicy.NotDoneParts(ActOf(new { action = "done", not_done = new[] { skipped } })) is [var listed] && listed == skipped
+        && DonePolicy.NotDoneParts(ActOf(new { action = "done", not_done = skipped })).Count == 1
+        && DonePolicy.NotDoneParts(ActOf(new { action = "done", answer = "26H2" })).Count == 0
+        && stepCheck.StartsWith("NOT DONE: before finishing", StringComparison.Ordinal)
+        && stepCheck.Contains("extract raw.zip", StringComparison.Ordinal) && stepCheck.Contains("\"not_done\"", StringComparison.Ordinal)
+        && !stepCheck.Contains("Complete the requested goal", StringComparison.Ordinal)
+        && DonePolicy.StepCheck(new[] { summitTodos[0], summitTodos[1] }) is null
+        && DonePolicy.StepCheck(summitTodos.Select(item => Todo(item.Id, item.Text, completed: true))) is null
+        && DonePolicy.FinishedLine(80, Array.Empty<string>(), Array.Empty<string>()) == "done in 80 steps"
+        && DonePolicy.FinishedLine(80, new[] { skipped }, Array.Empty<string>()) == $"needs review: finished in 80 steps, but these parts were not done: {skipped}"
+        && DonePolicy.FinishedLine(80, new[] { skipped }, new[] { "1200" }).EndsWith(", and these values could not be confirmed and may be wrong: 1200", StringComparison.Ordinal)
+        && DonePolicy.FinishedLine(80, Array.Empty<string>(), new[] { "1200" }) == "needs review: finished in 80 steps, but these values could not be confirmed and may be wrong: 1200"
+        && loopPrompt.Contains("30. If part of the task cannot be done", StringComparison.Ordinal)
+        && loopPrompt.Contains("not_done (optional", StringComparison.Ordinal);
+
     // Keys pressed back to back get a person's pause; other steps do not.
     var ctrlW = ActOf(new { action = "key", keys = new[] { "ctrl", "w" } });
     var keyGapOk = BatchPolicy.PauseBetween(ctrlW, ctrlW) == BatchPolicy.KeyGap
@@ -1354,8 +1381,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && notDoneOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

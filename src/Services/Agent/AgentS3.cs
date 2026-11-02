@@ -79,11 +79,8 @@ public sealed class AgentS3
 
                 if (result.Outcome == ActionOutcome.Done)
                 {
-                    // A claim of success must not hide values nothing could confirm.
-                    var unconfirmed = _worker.UnconfirmedValues;
-                    var finished = unconfirmed.Count == 0
-                        ? $"done in {step} steps"
-                        : $"needs review: finished in {step} steps, but these values could not be confirmed and may be wrong: {string.Join(", ", unconfirmed)}";
+                    // A claim of success must not hide skipped steps or values nothing could confirm.
+                    var finished = DonePolicy.FinishedLine(step, _worker.NotDone, _worker.UnconfirmedValues);
                     // The hook reads the outcome from how the text starts, so the answer goes last.
                     _hooks.OnRunFinished(string.IsNullOrWhiteSpace(_worker.FinalAnswer)
                         ? finished

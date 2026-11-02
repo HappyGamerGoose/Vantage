@@ -132,6 +132,11 @@ public sealed class Worker
     /// <summary>What the model told the user when it finished, if anything.</summary>
     internal string? FinalAnswer { get; private set; }
 
+    /// <summary>Parts of the task the model said it could not do, to report at the end.</summary>
+    internal IReadOnlyList<string> NotDone { get; private set; } = Array.Empty<string>();
+
+    private bool _doneStepsChecked;
+
     public List<string> WorkerHistory { get; } = new();
     public List<string> Reflections { get; } = new();
 
@@ -678,6 +683,15 @@ public sealed class Worker
                 CommonUtils.LogDiagnostic("worker-done-held-calculator", $"turn={_turnCount + 1}");
                 return new ActionResult(ActionOutcome.Success, calculatorRefusal);
             }
+            // Asked once: a model that has already listed what it skipped has checked.
+            if (!_doneStepsChecked && DonePolicy.NotDoneParts(action).Count == 0
+                && DonePolicy.StepCheck(_taskContext.Todos) is { } stepCheck)
+            {
+                _doneStepsChecked = true;
+                CommonUtils.LogDiagnostic("worker-done-steps-checked", $"turn={_turnCount + 1}");
+                HoldAction(stepCheck);
+                return new ActionResult(ActionOutcome.Success, stepCheck);
+            }
             if (!_doneRechecked && frameAtLook is not null
                 && await Task.Run(ScreenSampler.Capture, ct) is { } frameNow
                 && DonePolicy.ScreenMovedSinceLook(ScreenSampler.Compare(frameAtLook, frameNow, null, null, ForegroundWindowProbe.ReadRegion())))
@@ -791,7 +805,11 @@ public sealed class Worker
         // its accumulated latency so per-step logs can show how much of the
         // budget the grounding LLM chewed.
         groundingMs = _aci.LastGroundingMs;
-        if (result.Outcome == ActionOutcome.Done) FinalAnswer = action.GetString("answer");
+        if (result.Outcome == ActionOutcome.Done)
+        {
+            FinalAnswer = action.GetString("answer");
+            NotDone = DonePolicy.NotDoneParts(action);
+        }
         var foundNewText = false;
         if (calculatorSums.Count > 0 && result.Outcome == ActionOutcome.Success) _calculatorSumUnread = calculatorSums[^1];
         if (action.Action.Equals("read_text", StringComparison.OrdinalIgnoreCase))
