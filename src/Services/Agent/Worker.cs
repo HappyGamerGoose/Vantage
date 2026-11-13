@@ -83,6 +83,10 @@ public sealed class Worker
     // Long reasoning hit a limit of 768 and was cut off before its action, which
     // wasted the turn, and a long command or text could never have fitted at all.
     private const int GeneratorMaxNewTokens = 2048;
+    // With no screenshot, the control list and the window's text are all the
+    // model has to see by, so it gets more of the list.
+    private const int TextOnlyMaxControls = 120;
+    private const int WindowTextBudgetMs = 1500;
     private const int ReflectionMaxNewTokens = 512;
     // Earlier turns are folded to their outcome, so a request is the prompt, the
     // current screen and about 400 tokens per earlier step. The cap stops a model
@@ -147,9 +151,12 @@ public sealed class Worker
         string platform,
         string taskContextKey,
         bool enableReflection = true,
-        double temperature = 0.0)
+        double temperature = 0.0,
+        bool textOnly = false)
     {
         _aci = aci;
+        _textOnly = textOnly;
+        _aci.TextOnly = textOnly;
         _monitor = monitor;
         _taskContext = new PersistentTaskContext(taskContextKey);
 
@@ -163,6 +170,7 @@ public sealed class Worker
 
         var workerPrompt = PROCEDURAL_MEMORY.ConstructSimpleWorkerProceduralMemory(
             platform, monitor.LogicalWidth, monitor.LogicalHeight, skippedActions: Array.Empty<string>());
+        if (textOnly) workerPrompt += PROCEDURAL_MEMORY.TEXT_ONLY_RULES;
 
         _generator = new LmmAgent(
             engine,
@@ -177,6 +185,23 @@ public sealed class Worker
             PROCEDURAL_MEMORY.REFLECTION_ON_TRAJECTORY,
             activeTextHistoryMessages: 4,
             activeVisualHistoryTurns: 1);
+    }
+
+    /// <summary>The model takes no images, so it works from what UI Automation reads instead.</summary>
+    internal bool TextOnly => _textOnly;
+    private bool _textOnly;
+
+    /// <summary>
+    /// Goes on without screenshots after the provider refused one. A model the
+    /// vision check could not classify used to stop the run at its first turn.
+    /// </summary>
+    private void SwitchToTextOnly()
+    {
+        _textOnly = true;
+        _aci.TextOnly = true;
+        _generator.AddSystemPrompt(_generator.SystemPrompt + PROCEDURAL_MEMORY.TEXT_ONLY_RULES);
+        _generator.DropImages();
+        _reflector.DropImages();
     }
 
     public void BeginTask(string instruction, string? earlierConversation = null)
@@ -220,9 +245,15 @@ public sealed class Worker
 
         var captureSw = Stopwatch.StartNew();
         var frameAtLook = await Task.Run(ScreenSampler.Capture, ct);
-        var screenshotBytes = WindowsAutomationService.CaptureScreenFastLogical(maxLongestSide: VisionMaxLongestSide, quality: 88);
-        _aci.AssignScreenshot(screenshotBytes);
-        var b64 = Convert.ToBase64String(screenshotBytes);
+        // The local frame above still drives the settle and change checks; only
+        // the picture sent to the model is left out for a model that takes none.
+        var b64 = "";
+        if (!_textOnly)
+        {
+            var screenshotBytes = WindowsAutomationService.CaptureScreenFastLogical(maxLongestSide: VisionMaxLongestSide, quality: 88);
+            _aci.AssignScreenshot(screenshotBytes);
+            b64 = Convert.ToBase64String(screenshotBytes);
+        }
         captureSw.Stop();
         captureMs = captureSw.ElapsedMilliseconds;
 
@@ -248,10 +279,11 @@ public sealed class Worker
         {
             var reflectSw = Stopwatch.StartNew();
             var lastPlan = WorkerHistory.Count > 0 ? WorkerHistory[^1] : "(no prior action)";
-            _reflector.AddImageMessage(
-                text: $"Last action: {lastPlan}\nReflect on whether the trajectory is on-track.",
-                base64Jpegs: new[] { b64 },
-                role: "user");
+            var reflectText = $"Last action: {lastPlan}\nReflect on whether the trajectory is on-track.";
+            if (_textOnly)
+                _reflector.AddTextMessage(reflectText + $"\nThere is no screenshot. The last action's outcome: {_lastActionOutcome}", role: "user");
+            else
+                _reflector.AddImageMessage(text: reflectText, base64Jpegs: new[] { b64 }, role: "user");
             try
             {
                 var reflectionText = await CommonUtils.CallLlmSafeAsync(
@@ -289,9 +321,9 @@ public sealed class Worker
 
         // Build the generator message with screenshot + reflection + notes
         var sbGen = new StringBuilder();
-        sbGen.AppendLine(_turnCount == 0
-            ? "The initial screen is provided. No action has been taken yet."
-            : "");
+        sbGen.AppendLine(_turnCount != 0 ? ""
+            : _textOnly ? "No action has been taken yet. There is no screenshot: the state of the desktop follows as text."
+            : "The initial screen is provided. No action has been taken yet.");
         if (!string.IsNullOrEmpty(reflection))
             sbGen.AppendLine($"REFLECTION: {reflection}");
 
@@ -333,8 +365,16 @@ public sealed class Worker
         {
             var scale = WindowsAutomationService.GetPrimaryMonitor().LogicalToPhysicalScale;
             var block = UiControlGrounding.BuildPromptBlock(
-                controls, worldState.ForegroundTitle, _monitor.LogicalWidth, _monitor.LogicalHeight, scale);
+                controls, worldState.ForegroundTitle, _monitor.LogicalWidth, _monitor.LogicalHeight, scale,
+                maxEntries: _textOnly ? TextOnlyMaxControls : 60);
             if (block.Length > 0) sbGen.AppendLine(block);
+        }
+        if (_textOnly)
+        {
+            // What the window says, in place of what a screenshot would show.
+            var windowText = await PageTextReader.ReadAsync(controlsWindow, TimeSpan.FromMilliseconds(WindowTextBudgetMs));
+            var textBlock = TextOnlyPolicy.WindowTextBlock(windowText, worldState.ForegroundTitle);
+            if (textBlock.Length > 0) sbGen.AppendLine(textBlock);
         }
         controlsSw.Stop();
         CommonUtils.LogDiagnostic("controls-snapshot",
@@ -416,7 +456,8 @@ public sealed class Worker
         if (_verificationFeedback.Count > 0)
             sbGen.AppendLine($"VERIFICATION_FEEDBACK = [{string.Join(" | ", _verificationFeedback)}]");
 
-        _generator.AddImageMessage(sbGen.ToString(), new[] { b64 }, role: "user");
+        if (_textOnly) _generator.AddTextMessage(sbGen.ToString(), role: "user");
+        else _generator.AddImageMessage(sbGen.ToString(), new[] { b64 }, role: "user");
         ContextWindowCompactor.FoldEarlierObservations(_generator.Messages, _taskContext);
 
         // Diagnostic: dump the full prompt (image base64 redacted) BEFORE
@@ -459,6 +500,19 @@ public sealed class Worker
             var pauseMs = (int)Math.Clamp(Math.Max(rlex.RetryAfterSeconds, 2) * 1000.0, 2_000, 15_000);
             await Task.Delay(pauseMs, ct);
             return new ActionResult(ActionOutcome.Failed, rlex.Message);
+        }
+        catch (LmmProviderException pex) when (!_textOnly && LmmErrorClassifier.RejectsImages(pex.RawBody))
+        {
+            // The turn with the picture goes, so the next one is not a second
+            // user message in a row.
+            if (_generator.Messages.Count > 1 && _generator.Messages[^1]["role"]?.GetValue<string>() == "user")
+                _generator.Messages.RemoveAt(_generator.Messages.Count - 1);
+            SwitchToTextOnly();
+            _turnCount++;
+            _taskContext.RecordSystemEvent("The model does not accept images; the run goes on without screenshots");
+            CommonUtils.LogDiagnostic("worker-switched-to-text-only", $"turn={_turnCount} status={pex.HttpStatus}");
+            return new ActionResult(ActionOutcome.Failed,
+                "the model does not accept images, so Vantage goes on without screenshots, from the window's text and controls");
         }
         catch (LmmProviderException pex)
         {
@@ -624,6 +678,15 @@ public sealed class Worker
             HoldAction(bareNameRefusal);
             CommonUtils.LogDiagnostic("worker-bare-name-held", $"turn={_turnCount + 1} name={bareName}");
             return new ActionResult(ActionOutcome.Success, bareNameRefusal);
+        }
+
+        // Without a screenshot a position is a guess, and a click that lands
+        // somewhere else is worse than one that is refused.
+        if (_textOnly && TextOnlyPolicy.UsesCoordinates(action))
+        {
+            CommonUtils.LogDiagnostic("worker-coordinates-held", $"turn={_turnCount + 1} action={action.Action}");
+            HoldAction(TextOnlyPolicy.CoordinateRefusal);
+            return new ActionResult(ActionOutcome.Success, TextOnlyPolicy.CoordinateRefusal);
         }
 
         // Refused every time: sending it again would only repeat the shortcut.

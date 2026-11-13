@@ -249,11 +249,12 @@ public sealed partial class MainWindow
             await agent.GetResponseAsync(temperature: 0, maxTokens: 8, timeout.Token);
 
             var vision = await _visionCapability.SupportsAsync(target);
-            provider.Status = vision == VisionVerdict.No ? ProviderStatus.Failed : ProviderStatus.Ok;
+            // A text-only model works now, without screenshots, so it is not a failed test.
+            provider.Status = ProviderStatus.Ok;
             provider.LastTestMessage = vision switch
             {
                 VisionVerdict.Yes => $"{testModel.Label}: authenticated · vision ready.",
-                VisionVerdict.No => $"{testModel.Label}: authenticated, but this model has no vision support.",
+                VisionVerdict.No => $"{testModel.Label}: authenticated · text only, runs without screenshots.",
                 _ => $"{testModel.Label}: authenticated · vision support could not be confirmed.",
             };
         }

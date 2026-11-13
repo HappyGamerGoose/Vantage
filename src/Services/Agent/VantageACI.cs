@@ -81,6 +81,9 @@ public sealed class VantageACI
 
     // The list describes one window as the model saw it. If the user or the
     // action moved focus elsewhere, its rectangles belong to something hidden.
+    /// <summary>The model takes no images: a description can only be matched to a named control.</summary>
+    public bool TextOnly { get; set; }
+
     private bool ControlsUsable =>
         _controlsFresh && Vantage.Common.NativeInterop.GetForegroundWindow() == _controlsWindow;
 
@@ -164,7 +167,8 @@ public sealed class VantageACI
     {
         var actionName = action.Action?.Trim().ToLowerInvariant() ?? string.Empty;
 
-        if (_screenshotJpeg is null || _screenshotJpeg.Length == 0)
+        // A text-only run has no screenshot by design; grounding then never asks for one.
+        if (!TextOnly && (_screenshotJpeg is null || _screenshotJpeg.Length == 0))
             return new ActionResult(ActionOutcome.Failed, "no screenshot assigned; cannot ground description to coordinates");
 
         // Window observations are point-in-time capabilities. Any legacy
@@ -451,7 +455,10 @@ public sealed class VantageACI
         // coord. Subject to model mistakes and the (now-fixed) coord-space
         // scale — only used when no visible window title matches.
         var coords = await GroundAsync(description, ct);
-        if (coords is null) return new ActionResult(ActionOutcome.Failed, $"could not locate '{description}' on screen");
+        if (coords is null)
+            return new ActionResult(ActionOutcome.Failed, TextOnly
+                ? $"no control in FOREGROUND_CONTROLS is named like '{description}', and without a screenshot nothing else can be clicked by description. Click a control by its number, or use the keyboard."
+                : $"could not locate '{description}' on screen");
         return await DoClickDispatch(action, coords.Value.x, coords.Value.y,
             ct,
             description: $"\"{description}\"");
@@ -850,6 +857,13 @@ public sealed class VantageACI
                 CommonUtils.LogDiagnostic("grounding-accessibility-hit",
                     $"target=\"{description}\" control=\"{control.Name}\" role={control.Role} at=({cx},{cy})");
                 return (cx, cy);
+            }
+
+            // There is no screenshot to look for it in.
+            if (TextOnly)
+            {
+                BumpGroundFailure(description);
+                return null;
             }
 
             var convention = await GetCoordinateConventionAsync(ct);

@@ -27,7 +27,8 @@ public sealed class AgentS3
         string taskContextKey,
         bool enableReflection = true,
         double temperature = 0.0,
-        string platform = "windows")
+        string platform = "windows",
+        bool textOnly = false)
     {
         _provider = provider;
         _monitor = monitor;
@@ -41,7 +42,8 @@ public sealed class AgentS3
             _engine, _aci, monitor, platform,
             taskContextKey,
             enableReflection: enableReflection,
-            temperature: temperature);
+            temperature: temperature,
+            textOnly: textOnly);
     }
 
     /// <summary>

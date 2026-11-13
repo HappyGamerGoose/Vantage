@@ -145,7 +145,7 @@ public sealed partial class MainWindow
         // Chat is the default. Screen capture and input are entered only
         // when the user explicitly enabled Act for this message.
 
-        var (activeProvider, blockedReason) = await PickActiveProviderAsync(
+        var (activeProvider, blockedReason, textOnly) = await PickActiveProviderAsync(
             requiresVision: allowDesktopControl);
         if (requestVersion != _responseRequestVersion) return;
 
@@ -188,7 +188,8 @@ public sealed partial class MainWindow
                 new MainWindowAgentHooks(this, conversation, assistantMessage),
                 taskContextKey: conversation.Id,
                 enableReflection: true,
-                temperature: 0.0);
+                temperature: 0.0,
+                textOnly: textOnly);
 
             var request = conversation.Messages.LastOrDefault(m => m.Role.Equals("user", StringComparison.OrdinalIgnoreCase));
             var result = await agentS3.RunAsync(
@@ -452,7 +453,7 @@ public sealed partial class MainWindow
     /// provider is suitable (no active+keyed providers, or the active
     /// choice has a hard vision-cap rejection).
     /// </summary>
-    private async Task<(Provider? Provider, string? BlockedReason)> PickActiveProviderAsync(bool requiresVision)
+    private async Task<(Provider? Provider, string? BlockedReason, bool TextOnly)> PickActiveProviderAsync(bool requiresVision)
     {
         // One candidate per (provider, model): the engines and the vision
         // classifier read DefaultModel, so each candidate is a copy of its
@@ -464,7 +465,7 @@ public sealed partial class MainWindow
         if (candidates.Count == 0)
         {
             return (null, "No active AI provider with an API key and a model configured yet; please enable " +
-                         "and configure a provider in the AI Providers screen.");
+                         "and configure a provider in the AI Providers screen.", false);
         }
 
         // Honour the user's explicit composer selection when it's still enabled.
@@ -495,23 +496,12 @@ public sealed partial class MainWindow
             activeProvider ??= candidates[0];
         }
 
-        if (!requiresVision) return (activeProvider, null);
+        if (!requiresVision) return (activeProvider, null, false);
 
-        // Hard-reject if the active provider is known text-only. Force
-        // override (Auto-detection on text-only providers is allowed but
-        // explicit user override applies here).
+        // A model known to take no images works from the text UI Automation
+        // reads instead of screenshots. It used to be refused outright, with
+        // advice to turn off an Act switch the app does not have.
         var verdict0 = await _visionCapability.SupportsAsync(activeProvider);
-        if (verdict0 == VisionVerdict.No)
-        {
-            // Telling people to force Vision on sent a text-only model a
-            // screenshot, which its provider refused with a bare HTTP 400.
-            return (null,
-                $"{activeProvider.DefaultModel} on {activeProvider.Name} does not accept images. Act sends a screenshot " +
-                "every turn so the model can see your screen, so it needs a model that accepts images: pick one in the " +
-                "model menu, or turn Act off to chat with this one. Set Vision to Force Yes on the provider card only " +
-                "if the provider says this model takes images.");
-        }
-
-        return (activeProvider, null);
+        return (activeProvider, null, verdict0 == VisionVerdict.No);
     }
 }

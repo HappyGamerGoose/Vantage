@@ -22,7 +22,8 @@ internal sealed record UiControl(
     int Left,
     int Top,
     int Width,
-    int Height)
+    int Height,
+    string? Value = null)
 {
     public int CenterX => Left + Width / 2;
     public int CenterY => Top + Height / 2;
@@ -40,6 +41,9 @@ internal static class UiControlGrounding
     private const int NamePropertyId = 30005;
     private const int IsEnabledPropertyId = 30010;
     private const int IsOffscreenPropertyId = 30022;
+    private const int IsPasswordPropertyId = 30019;
+    private const int ValuePropertyId = 30045;
+    private const int MaxValueLength = 80;
 
     private static readonly int[] TargetControlTypes =
     {
@@ -111,6 +115,8 @@ internal static class UiControlGrounding
             cache.AddProperty(IsEnabledPropertyId);
             cache.AddProperty(IsOffscreenPropertyId);
             cache.AddProperty(BoundingRectanglePropertyId);
+            cache.AddProperty(IsPasswordPropertyId);
+            cache.AddProperty(ValuePropertyId);
 
             IUIAutomationCondition? anyRole = null;
             foreach (var type in TargetControlTypes)
@@ -153,7 +159,8 @@ internal static class UiControlGrounding
                         rect.left,
                         rect.top,
                         width,
-                        height));
+                        height,
+                        FieldValue(element, role)));
                 }
                 catch
                 {
@@ -176,6 +183,25 @@ internal static class UiControlGrounding
         }
         return controls;
     }
+    // What a field holds. A model with no screenshot has no other way to see
+    // what it typed. Password fields are never read.
+    private static string? FieldValue(IUIAutomationElement element, string role)
+    {
+        if (role is not ("edit" or "combobox")) return null;
+        try
+        {
+            if (element.GetCachedPropertyValue(IsPasswordPropertyId) is true) return null;
+            if (element.GetCachedPropertyValue(ValuePropertyId) is not string value) return null;
+            value = value.Trim();
+            if (value.Length == 0) return null;
+            return value.Length <= MaxValueLength ? value : value[..MaxValueLength] + "…";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// Returns the single control that best fits the description, or null when
     /// nothing fits or the best candidates cannot be told apart.
@@ -442,7 +468,10 @@ internal static class UiControlGrounding
             var cx = control.CenterX / Math.Max(scale, 0.01);
             var cy = control.CenterY / Math.Max(scale, 0.01);
             sb.Append("  [").Append(index).Append("] \"").Append(OneLine(control.Name, 60)).Append("\" ")
-              .Append(control.Role).Append(" @")
+              .Append(control.Role);
+            if (!string.IsNullOrEmpty(control.Value) && control.Value != control.Name)
+                sb.Append(" = \"").Append(OneLine(control.Value, 60)).Append('"');
+            sb.Append(" @")
               .Append(Region(cy, monitorHeight, "top", "middle", "bottom")).Append('-')
               .AppendLine(Region(cx, monitorWidth, "left", "center", "right"));
         }
@@ -546,6 +575,47 @@ internal static class CoordinateCalibration
 
     private static double Distance(double ax, double ay, double bx, double by) =>
         Math.Sqrt(((ax - bx) * (ax - bx)) + ((ay - by) * (ay - by)));
+}
+
+/// <summary>
+/// A model that takes no images works from text Vantage reads through UI
+/// Automation: the numbered controls, the front window's text and what
+/// read_text finds. It has no way to know where anything is on screen.
+/// </summary>
+internal static class TextOnlyPolicy
+{
+    public const int WindowTextChars = 2500;
+
+    public const string CoordinateRefusal =
+        "NOT DONE: nothing was clicked. This model gets no screenshot, so a screen position or a description of a place " +
+        "on screen is a guess. Click a control by its number from FOREGROUND_CONTROLS, such as {\"action\":\"click\",\"control\":12}, " +
+        "type into one with {\"action\":\"type\",\"control\":12,\"text\":\"…\"}, or use a keyboard shortcut.";
+
+    /// <summary>True when the action, or any step of a batch, aims at a screen position rather than a control.</summary>
+    public static bool UsesCoordinates(AgentAction action)
+    {
+        var name = action.Action.Trim().ToLowerInvariant();
+        if (name == "batch") return action.GetActionList("steps").Any(UsesCoordinates);
+        if (action.GetInt("control") is not null) return false;
+        return name.EndsWith("_xy", StringComparison.Ordinal)
+            || (action.GetInt("x") is not null && action.GetInt("y") is not null)
+            || (name is "drag" && (action.GetInt("start_x") is not null || action.GetString("start_description") is not null));
+    }
+
+    /// <summary>The start of the front window's text, white space collapsed.</summary>
+    public static string WindowTextBlock(string text, string windowTitle)
+    {
+        var clean = System.Text.RegularExpressions.Regex.Replace(text.Replace('￼', ' '), @"\s+", " ").Trim();
+        if (clean.Length < PageTextReader.MinUsableLength) return string.Empty;
+        var shown = clean.Length <= WindowTextChars ? clean : clean[..WindowTextChars] + " …";
+        var more = clean.Length > WindowTextChars
+            ? $" (the first {WindowTextChars} of {clean.Length} characters; use read_text to find anything further on)"
+            : "";
+        return $"WINDOW_TEXT of \"{OneLineTitle(windowTitle)}\"{more}:\n{shown}";
+    }
+
+    private static string OneLineTitle(string title) =>
+        title.Length <= 60 ? title : title[..60] + "…";
 }
 
 internal static class BatchPolicy

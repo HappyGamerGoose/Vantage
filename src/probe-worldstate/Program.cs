@@ -325,8 +325,8 @@ if (args.Contains("--provider-models-self-test", StringComparer.OrdinalIgnoreCas
     var described = LmmErrorClassifier.Describe(noImages, "mercury-3") ?? "";
     var errorsOk = LmmErrorClassifier.ExtractMessage(noImages) == "Image inputs are not supported for this model"
         && LmmErrorClassifier.RejectsImages(noImages)
-        && described.StartsWith("mercury-3 does not accept images.", StringComparison.Ordinal)
-        && described.Contains("turn Act off", StringComparison.Ordinal)
+        && described.StartsWith("mercury-3 does not accept images, so Vantage runs it without screenshots", StringComparison.Ordinal)
+        && !described.Contains("Act", StringComparison.Ordinal)
         && LmmErrorClassifier.ExtractMessage("""{"detail":[{"msg":"field required"},{"msg":"bad model"}]}""") == "field required; bad model"
         && LmmErrorClassifier.ExtractMessage("""{"error":{"message":"Invalid API key"}}""") == "Invalid API key"
         && LmmErrorClassifier.Describe("""{"error":{"message":"Invalid API key"}}""", "m") == "Invalid API key"
@@ -1228,6 +1228,41 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && loopPrompt.Contains("30. If part of the task cannot be done", StringComparison.Ordinal)
         && loopPrompt.Contains("not_done (optional", StringComparison.Ordinal);
 
+    // A model with no screenshot works from controls and window text, never positions.
+    var coordinatesOk = TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "click_xy", x = 400, y = 300 }))
+        && TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "click", x = 400, y = 300 }))
+        && TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "drag", start_x = 1, start_y = 2, end_x = 3, end_y = 4 }))
+        && TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "batch", steps = new object[] { new { action = "key", keys = new[] { "ctrl", "s" } }, new { action = "double_click_xy", x = 5, y = 6 } } }))
+        && !TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "click", control = 12 }))
+        && !TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "type", control = 12, text = "C:\\x.txt" }))
+        && !TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "click", description = "the Save button" }))
+        && !TextOnlyPolicy.UsesCoordinates(ActOf(new { action = "press_key", combo = "ctrl+s" }));
+    var longPage = string.Join("\n\n", Enumerable.Range(1, 400).Select(i => $"Paragraph   {i} of the page"));
+    var pageBlock = TextOnlyPolicy.WindowTextBlock(longPage, "Mount Everest - Wikipedia");
+    var windowTextOk = pageBlock.StartsWith("WINDOW_TEXT of \"Mount Everest - Wikipedia\" (the first 2500 of", StringComparison.Ordinal)
+        && pageBlock.Contains("Paragraph 1 of the page Paragraph 2", StringComparison.Ordinal)
+        && !pageBlock.Contains("Paragraph 400", StringComparison.Ordinal)
+        && TextOnlyPolicy.WindowTextBlock("Calculator Display is 4.2", "Calculator") == "WINDOW_TEXT of \"Calculator\":\nCalculator Display is 4.2"
+        && TextOnlyPolicy.WindowTextBlock("  ", "Empty") == "";
+    var fieldBlock = UiControlGrounding.BuildPromptBlock(new[]
+    {
+        new UiControl("File name:", "edit", true, false, 100, 600, 400, 30, "C:\\Users\\Name\\Desktop\\Canada.txt"),
+        new UiControl("Search", "edit", true, false, 100, 100, 200, 30, "Search"),
+        new UiControl("Save", "button", true, false, 600, 650, 80, 30),
+    }, "Save as", 1920, 1080, 1.0);
+    var fieldsOk = fieldBlock.Contains("\"File name:\" edit = \"C:\\Users\\Name\\Desktop\\Canada.txt\" @", StringComparison.Ordinal)
+        && fieldBlock.Contains("\"Search\" edit @", StringComparison.Ordinal)
+        && fieldBlock.Contains("\"Save\" button @", StringComparison.Ordinal);
+    var imageAgent = new LmmAgent(LMMEngine.Create(new Vantage.Models.Provider
+        { Name = "mock", BaseUrl = "http://127.0.0.1:1/v1", ApiKey = "test", DefaultModel = "m" }), "system");
+    imageAgent.AddImageMessage("WORLD_STATE = {}", new[] { "iVBORw0KGgo=" }, role: "user");
+    imageAgent.DropImages();
+    var droppedOk = imageAgent.Messages[^1]["content"] is JsonArray parts && parts.Count == 1
+        && parts[0]!["type"]!.GetValue<string>() == "text";
+    var textOnlyOk = coordinatesOk && windowTextOk && fieldsOk && droppedOk
+        && PROCEDURAL_MEMORY.TEXT_ONLY_RULES.Contains("# NO SCREENSHOTS IN THIS RUN", StringComparison.Ordinal)
+        && TextOnlyPolicy.CoordinateRefusal.StartsWith("NOT DONE: nothing was clicked", StringComparison.Ordinal);
+
     // Keys pressed back to back get a person's pause; other steps do not.
     var ctrlW = ActOf(new { action = "key", keys = new[] { "ctrl", "w" } });
     var keyGapOk = BatchPolicy.PauseBetween(ctrlW, ctrlW) == BatchPolicy.KeyGap
@@ -1381,8 +1416,8 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !earlierText.Contains(new string('z', 500), StringComparison.Ordinal)
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
-    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && notDoneOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && notDoneOk && textOnlyOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} textOnly={textOnlyOk} (coordinates={coordinatesOk} windowText={windowTextOk} fields={fieldsOk} dropped={droppedOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 
@@ -1570,7 +1605,9 @@ if (args.Contains("--controls-live", StringComparer.OrdinalIgnoreCase))
         var hit = sample is null ? null : UiControlGrounding.Match($"the {sample.Name}", found);
         var resolved = sample is not null && hit is not null && hit.Name == sample.Name;
         anyResolved |= resolved;
-        Console.WriteLine($"{sw.ElapsedMilliseconds,5}ms controls={found.Count,3} sample=\"{sample?.Name}\" role={sample?.Role} resolved={resolved} :: {window.Title}");
+        var withValue = found.Where(c => c.Value is not null).ToList();
+        Console.WriteLine($"{sw.ElapsedMilliseconds,5}ms controls={found.Count,3} sample=\"{sample?.Name}\" role={sample?.Role} resolved={resolved} fieldsWithValue={withValue.Count} :: {window.Title}");
+        foreach (var field in withValue.Take(2)) Console.WriteLine($"        {field.Role} \"{field.Name}\" = \"{field.Value}\"");
     }
     Environment.ExitCode = anyResolved ? 0 : 1;
     return;

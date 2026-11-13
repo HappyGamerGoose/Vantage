@@ -543,6 +543,21 @@ public static class PROCEDURAL_MEMORY
     }
 
     /// <summary>
+    /// Added to the worker prompt when the model takes no images. The rest of
+    /// the prompt speaks of screenshots, so this says what stands in for them.
+    /// </summary>
+    public const string TEXT_ONLY_RULES = """
+
+# NO SCREENSHOTS IN THIS RUN
+This model cannot take images, so you get no screenshot. Wherever these instructions mention the screenshot or what the screen shows, use what you are given instead: WORLD_STATE (the front window and every open window), FOREGROUND_CONTROLS (the front window's named controls by number, with the text in each field after "="), WINDOW_TEXT (the start of the front window's text) and TEXT_READ.
+- Click a control by its number: {"action":"click","control":12}. Type into a field by its number: {"action":"type","control":12,"text":"…"}.
+- Never send coordinates or describe a place on the screen. You cannot know where anything is, and such actions are refused.
+- Prefer keyboard shortcuts, launch_app with a program, path or URL, and run_powershell to check results, such as Get-Content on a file you saved.
+- After each action, check the new WORLD_STATE, FOREGROUND_CONTROLS, WINDOW_TEXT and VERIFICATION_FEEDBACK to see what changed. Use read_text to find specific text.
+- If what you need is in none of them, try another route: Tab and the arrow keys, Alt for a menu, a settings link such as ms-settings:display, or a command. If nothing works, list it in not_done.
+""";
+
+    /// <summary>
     /// Reflection agent prompt. Runs in parallel with the worker to detect
     /// cycles ("clicked the same button 3 times in a row"), misfires
     /// ("action succeeded but the screen didn't change as expected"), and

@@ -560,9 +560,9 @@ internal static class LmmErrorClassifier
     /// </summary>
     public static string? Describe(string body, string model) =>
         RejectsImages(body)
-            ? $"{model} does not accept images. Act sends a screenshot every turn so the model can see your screen, " +
-              "so it needs a model that accepts images: pick one in the model menu, or turn Act off to chat with this one. " +
-              "If this model's Vision setting on its provider card is Force Yes, set it back to Auto."
+            ? $"{model} does not accept images, so Vantage runs it without screenshots, from the text and controls it reads " +
+              "in each window. If its Vision setting on the provider card is Accepts images, set it to Auto-detect or Text only. " +
+              "A model that accepts images does better on tasks that depend on how things look."
             : ExtractMessage(body);
 }
 

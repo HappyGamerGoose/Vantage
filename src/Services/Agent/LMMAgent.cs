@@ -82,6 +82,20 @@ public sealed class LmmAgent
         });
     }
 
+    /// <summary>Removes every image from the history, for a model that turned out to take none.</summary>
+    public void DropImages()
+    {
+        foreach (var message in Messages)
+        {
+            if (message["content"] is not JsonArray content) continue;
+            for (var i = content.Count - 1; i >= 0; i--)
+            {
+                var type = (content[i] as JsonObject)?["type"]?.GetValue<string>();
+                if (type is "image" or "image_url") content.RemoveAt(i);
+            }
+        }
+    }
+
     /// <summary>
     /// Add a multimodal message — text + one or more base64-encoded JPEG/PNG
     /// images. The engine picks the right content shape (Anthropic image
