@@ -1187,7 +1187,20 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
     var batchCheckOk = unbatchable.StartsWith("nothing in the batch ran: step 2/2 is `read_text`", StringComparison.Ordinal)
         && VantageACI.UnbatchableStep(new[] { sumIntoCalculator, ActOf(new { action = "key", keys = new[] { "enter" } }) }) is null
         && loopPrompt.Contains("Vantage refuses a new sum until the last one is read", StringComparison.Ordinal);
-    var calculatorStepsOk = sumsOk && roundingOk && batchCheckOk;
+    // Sending the same unread sum again is a retry; a different one waits for the read.
+    var resendOk = !RequiredToolUse.HoldCalculatorSum(new[] { "828*3.28084=" }, "828*3.28084=")
+        && RequiredToolUse.HoldCalculatorSum(new[] { "3^15=" }, "828*3.28084=")
+        && RequiredToolUse.HoldCalculatorSum(new[] { "1/2=", "3/4=" }, null)
+        && !RequiredToolUse.HoldCalculatorSum(new[] { "1/2=" }, null)
+        && !RequiredToolUse.HoldCalculatorSum(Array.Empty<string>(), "1/2=")
+        && loopPrompt.Contains("alt+4 (Programmer)", StringComparison.Ordinal);
+    // The real folder paths, not ones built from the name File Explorer shows.
+    var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    var foldersOk = WorldStateProbe.UserFolders.Contains($"Desktop=\"{desktopPath.Replace("\\", "\\\\")}\"", StringComparison.Ordinal)
+        && WorldStateProbe.UserFolders.Contains("Downloads=", StringComparison.Ordinal)
+        && loopPrompt.Contains("\"append\": true", StringComparison.Ordinal)
+        && PROCEDURAL_MEMORY.TEXT_ONLY_RULES.Contains("WORLD_STATE folders", StringComparison.Ordinal);
+    var calculatorStepsOk = sumsOk && roundingOk && batchCheckOk && resendOk && foldersOk;
 
     // Echoing a number through PowerShell does not make it read; working it out does.
     var echoed = FactLedger.WithoutEchoedValues("pwsh_exit=0\nout:\n1920 x 1200\nerr:", "Write-Output '1920 x 1200'");
@@ -1432,7 +1445,7 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
     var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && notDoneOk && textOnlyOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} textOnly={textOnlyOk} (coordinates={coordinatesOk} windowText={windowTextOk} fields={fieldsOk} dropped={droppedOk} secrets={secretsOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk} resend={resendOk} folders={foldersOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} textOnly={textOnlyOk} (coordinates={coordinatesOk} windowText={windowTextOk} fields={fieldsOk} dropped={droppedOk} secrets={secretsOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

@@ -584,8 +584,10 @@ public sealed class VantageACI
             // in the wrong box. Keystrokes are the fallback for fields that do
             // not take a value that way.
             var field = _controls[action.GetInt("control")!.Value];
+            // Replacing is the default: a rename box holding "New folder" became
+            // "New folderarchive" when the text was added after it instead.
             if (text.Length > 0
-                && UiControlGrounding.SetFieldValue(_controlsWindow, field, text, replace: overwrite) is { } nowHolds)
+                && UiControlGrounding.SetFieldValue(_controlsWindow, field, text, replace: !action.GetBool("append", false)) is { } nowHolds)
             {
                 if (enter)
                 {

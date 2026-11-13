@@ -326,6 +326,14 @@ internal static class RequiredToolUse
         return sums;
     }
 
+    /// <summary>
+    /// Whether to hold a sum until the last answer is read. Typing the same
+    /// sum again is a retry, not a new sum: in Programmer mode 828*3.28084=
+    /// gave no answer, and refusing the retry held the run for 15 turns.
+    /// </summary>
+    public static bool HoldCalculatorSum(IReadOnlyList<string> sums, string? unread) =>
+        sums.Count > 1 || (sums.Count == 1 && unread is not null && sums[0] != unread);
+
     // "Use Notepad to save", "in Notepad, type": Notepad is the tool. "Close Notepad" alone is not.
     private static readonly Regex NotepadAsTool = new(
         @"\b(?:use|using|with|in|via|through)\s+(?:the\s+)?(?:windows\s+)?notepad\b|\bnotepad\s+to\s+(?:save|write|create|type|make)\b",

@@ -707,7 +707,7 @@ public sealed class Worker
         var calculatorSums = RequiredToolUse.CalculatorRequired(_goal)
             ? RequiredToolUse.CalculatorSumsTyped(action, worldState.ForegroundTitle)
             : new List<string>();
-        if (calculatorSums.Count > 0 && (_calculatorSumUnread is not null || calculatorSums.Count > 1))
+        if (RequiredToolUse.HoldCalculatorSum(calculatorSums, _calculatorSumUnread))
         {
             var sumRefusal = _calculatorSumUnread is not null
                 ? $"NOT DONE: nothing was typed. The answer to {_calculatorSumUnread} has not been read, and Calculator shows only its latest answer, so it would be lost. " +

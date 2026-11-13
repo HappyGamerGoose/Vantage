@@ -222,6 +222,19 @@ public sealed record WorldStateProbe(
     /// formatted so the model can quickly scan the names AND copy a
     /// concrete exe path into a `launch_app` action.
     /// </summary>
+    /// <summary>The real paths of the user's main folders, which can be redirected (OneDrive) or named unlike the account.</summary>
+    internal static string UserFolders { get; } = BuildUserFolders();
+
+    private static string BuildUserFolders()
+    {
+        static string Folder(string name, string path) => $"{name}=\"{path.Replace("\\", "\\\\")}\"";
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.Join(", ",
+            Folder("Desktop", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)),
+            Folder("Documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
+            Folder("Downloads", Path.Combine(profile, "Downloads")));
+    }
+
     public string ToPromptBlock(bool includeInventory = true)
     {
         var sb = new StringBuilder(1536);
@@ -229,6 +242,9 @@ public sealed record WorldStateProbe(
         sb.Append("os=\"").Append(Escape(OsVersion ?? "Windows")).Append("\"");
         sb.Append(", tz=\"").Append(Escape(TimeZoneId)).Append("\"");
         sb.Append(", time=\"").Append(LocalTimeIso).Append("\"");
+        // File Explorer shows the account's display name, not the profile
+        // folder's, and a model built C:\Users\<full name>\Desktop from it.
+        sb.Append(", folders={").Append(UserFolders).Append('}');
         sb.Append(", monitors=").Append(DisplayCount).Append("(").Append(DisplaySummary).Append(")");
         if (!string.IsNullOrEmpty(ForegroundProcess))
         {
