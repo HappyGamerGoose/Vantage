@@ -656,6 +656,13 @@ internal static class TextOnlyPolicy
 {
     public const int WindowTextChars = 2500;
 
+    /// <summary>Below this much UI Automation text, the window is read by OCR instead.</summary>
+    public const int OcrBelowChars = 200;
+
+    /// <summary>True when a window says too little through UI Automation to be worked from.</summary>
+    public static bool NeedsOcr(string uiaText) =>
+        System.Text.RegularExpressions.Regex.Replace(uiaText ?? string.Empty, @"\s+", " ").Trim().Length < OcrBelowChars;
+
     public const string CoordinateRefusal =
         "NOT DONE: nothing was clicked. This model gets no screenshot, so a screen position or a description of a place " +
         "on screen is a guess. Click a control by its number from FOREGROUND_CONTROLS, such as {\"action\":\"click\",\"control\":12}, " +
@@ -673,7 +680,7 @@ internal static class TextOnlyPolicy
     }
 
     /// <summary>The start of the front window's text, white space collapsed.</summary>
-    public static string WindowTextBlock(string text, string windowTitle)
+    public static string WindowTextBlock(string text, string windowTitle, bool fromOcr = false)
     {
         var clean = SecretText.Redact(System.Text.RegularExpressions.Regex.Replace(text.Replace('￼', ' '), @"\s+", " ").Trim());
         if (clean.Length < PageTextReader.MinUsableLength) return string.Empty;
@@ -681,7 +688,8 @@ internal static class TextOnlyPolicy
         var more = clean.Length > WindowTextChars
             ? $" (the first {WindowTextChars} of {clean.Length} characters; use read_text to find anything further on)"
             : "";
-        return $"WINDOW_TEXT of \"{OneLineTitle(windowTitle)}\"{more}:\n{shown}";
+        var source = fromOcr ? ", read by OCR from the window's pixels, so a character may be misread" : "";
+        return $"WINDOW_TEXT of \"{OneLineTitle(windowTitle)}\"{source}{more}:\n{shown}";
     }
 
     private static string OneLineTitle(string title) =>

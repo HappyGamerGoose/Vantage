@@ -301,6 +301,7 @@ public sealed class VantageACI
 
     private readonly List<string> _toolOutput = new();
     private static readonly TimeSpan ReadTextBudget = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan OcrReadBudget = TimeSpan.FromSeconds(3);
 
     private async Task<ActionResult> DoReadTextAsync(AgentAction action)
     {
@@ -336,15 +337,31 @@ public sealed class VantageACI
         var text = SecretText.Redact(await PageTextReader.ReadAsync(window, ReadTextBudget));
         LastReadUnavailable = text.Trim().Length < PageTextReader.MinUsableLength;
         LastReadExcerpts = PageTextReader.ExtractExcerpts(text, searches, _readProgress, out var moreMatches);
+
+        // A window that exposes no text, or too little to hold the match, may
+        // still show it: read its pixels with the OCR built into Windows.
+        var byOcr = false;
+        if (LastReadExcerpts.Count == 0 && (LastReadUnavailable || TextOnlyPolicy.NeedsOcr(text)))
+        {
+            var ocrText = SecretText.Redact(await ScreenOcr.ReadWindowAsync(window, OcrReadBudget));
+            if (ocrText.Trim().Length >= PageTextReader.MinUsableLength)
+            {
+                LastReadUnavailable = false;
+                LastReadExcerpts = PageTextReader.ExtractExcerpts(ocrText, searches, _readProgress, out moreMatches);
+                byOcr = LastReadExcerpts.Count > 0;
+            }
+        }
         if (LastReadUnavailable)
         {
             return new ActionResult(ActionOutcome.Success,
-                "this window exposes no readable text. A value here can only come from the screenshot: pass `unconfirmed: true` when typing it, and the run will be reported as needing review.");
+                "this window exposes no readable text, and OCR found none in it either. A value here can only come from the screenshot: pass `unconfirmed: true` when typing it, and the run will be reported as needing review.");
         }
         if (LastReadExcerpts.Count > 0)
         {
             return new ActionResult(ActionOutcome.Success,
-                $"read_text found {LastReadExcerpts.Count} passage(s) in \"{readName}\"; they are in TEXT_READ" +
+                $"read_text found {LastReadExcerpts.Count} passage(s) in \"{readName}\"" +
+                (byOcr ? " by OCR from the window's pixels, so check that each character makes sense" : "") +
+                "; they are in TEXT_READ" +
                 (moreMatches ? ". There are more matches: send the same read_text again for the next ones, or search a more specific word." : ""));
         }
         return new ActionResult(ActionOutcome.Success, resumed

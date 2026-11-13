@@ -1287,7 +1287,13 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && !TextOnlyPolicy.WindowTextBlock(secretPage, "API Keys | Notion").Contains("cfut_", StringComparison.Ordinal)
         && !UiControlGrounding.BuildPromptBlock(new[] { new UiControl("Key", "edit", true, false, 1, 1, 9, 9, "sk-proj-abcDEF1234567890ghiJKL") },
             "Keys", 1920, 1080, 1.0).Contains("sk-proj", StringComparison.Ordinal);
-    var textOnlyOk = coordinatesOk && windowTextOk && fieldsOk && droppedOk && secretsOk
+    // A window that says too little through UI Automation is read by OCR, and the text says so.
+    var ocrRuleOk = TextOnlyPolicy.NeedsOcr("Chats Status") && TextOnlyPolicy.NeedsOcr("")
+        && !TextOnlyPolicy.NeedsOcr(new string('x', 250))
+        && TextOnlyPolicy.WindowTextBlock("Hello from a picture with enough words", "Viewer", fromOcr: true)
+            .StartsWith("WINDOW_TEXT of \"Viewer\", read by OCR from the window's pixels", StringComparison.Ordinal)
+        && PROCEDURAL_MEMORY.TEXT_ONLY_RULES.Contains("OCR", StringComparison.Ordinal);
+    var textOnlyOk = coordinatesOk && windowTextOk && fieldsOk && droppedOk && secretsOk && ocrRuleOk
         && PROCEDURAL_MEMORY.TEXT_ONLY_RULES.Contains("# NO SCREENSHOTS IN THIS RUN", StringComparison.Ordinal)
         && TextOnlyPolicy.CoordinateRefusal.StartsWith("NOT DONE: nothing was clicked", StringComparison.Ordinal);
 
@@ -1638,6 +1644,28 @@ if (args.Contains("--controls-live", StringComparer.OrdinalIgnoreCase))
         foreach (var field in withValue.Take(2)) Console.WriteLine($"        {field.Role} \"{field.Name}\" = \"{field.Value}\"");
     }
     Environment.ExitCode = anyResolved ? 0 : 1;
+    return;
+}
+
+if (args.Contains("--ocr-live", StringComparer.OrdinalIgnoreCase))
+{
+    // Usage: --ocr-live <part of a window title>. Brings the window forward,
+    // reads it with UI Automation and with OCR, and compares. Changes nothing.
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    SetProcessDPIAware();
+    var titlePart = args.Length > 1 ? args[1] : "";
+    var target = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase));
+    if (target is null) { Console.WriteLine($"no window containing \"{titlePart}\""); Environment.ExitCode = 1; return; }
+    WindowsAppManager.FocusWindow(target);
+    await Task.Delay(600);
+    var uia = await PageTextReader.ReadAsync(target.Handle, TimeSpan.FromSeconds(3));
+    var timer = Stopwatch.StartNew();
+    var ocr = await ScreenOcr.ReadWindowAsync(target.Handle, TimeSpan.FromSeconds(5));
+    timer.Stop();
+    var lines = ocr.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    Console.WriteLine($"uiaChars={uia.Length} needsOcr={TextOnlyPolicy.NeedsOcr(uia)} ocrChars={ocr.Length} ocrLines={lines.Length} ocrMs={timer.ElapsedMilliseconds} :: {target.Title}");
+    foreach (var line in lines.Take(6)) Console.WriteLine("  " + SecretText.Redact(line));
+    Environment.ExitCode = ocr.Length > 0 ? 0 : 1;
     return;
 }
 

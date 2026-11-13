@@ -43,6 +43,7 @@
     <Compile Include="..\Services\Agent\ActionSanitizer.cs" Link="ActionSanitizer.cs" />
     <Compile Include="..\Services\Agent\UiControlGrounding.cs" Link="UiControlGrounding.cs" />
     <Compile Include="..\Services\Agent\ScreenSampler.cs" Link="ScreenSampler.cs" />
+    <Compile Include="..\Services\Agent\ScreenOcr.cs" Link="ScreenOcr.cs" />
     <Compile Include="..\Services\Agent\ScreenshotDiffer.cs" Link="ScreenshotDiffer.cs" />
     <Compile Include="..\Services\Agent\LlmHedging.cs" Link="LlmHedging.cs" />
     <Compile Include="..\Services\Agent\FactLedger.cs" Link="FactLedger.cs" />

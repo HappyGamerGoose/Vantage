@@ -88,6 +88,7 @@ public sealed class Worker
     // model has to see by, so it gets more of the list.
     private const int TextOnlyMaxControls = 120;
     private const int WindowTextBudgetMs = 1500;
+    private const int OcrBudgetMs = 2500;
     private const int ReflectionMaxNewTokens = 512;
     // Earlier turns are folded to their outcome, so a request is the prompt, the
     // current screen and about 400 tokens per earlier step. The cap stops a model
@@ -374,7 +375,19 @@ public sealed class Worker
         {
             // What the window says, in place of what a screenshot would show.
             var windowText = await PageTextReader.ReadAsync(controlsWindow, TimeSpan.FromMilliseconds(WindowTextBudgetMs));
-            var textBlock = TextOnlyPolicy.WindowTextBlock(windowText, worldState.ForegroundTitle);
+            var fromOcr = false;
+            if (TextOnlyPolicy.NeedsOcr(windowText))
+            {
+                // Pictures, canvases and some apps show text they do not expose.
+                var ocrText = await ScreenOcr.ReadWindowAsync(controlsWindow, TimeSpan.FromMilliseconds(OcrBudgetMs));
+                if (ocrText.Trim().Length > windowText.Trim().Length)
+                {
+                    windowText = ocrText;
+                    fromOcr = true;
+                }
+                CommonUtils.LogDiagnostic("worker-window-ocr", $"turn={_turnCount + 1} chars={ocrText.Length} used={fromOcr}");
+            }
+            var textBlock = TextOnlyPolicy.WindowTextBlock(windowText, worldState.ForegroundTitle, fromOcr);
             if (textBlock.Length > 0) sbGen.AppendLine(textBlock);
         }
         controlsSw.Stop();

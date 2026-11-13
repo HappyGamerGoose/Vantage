@@ -555,6 +555,7 @@ This model cannot take images, so you get no screenshot. Wherever these instruct
 - Never send coordinates or describe a place on the screen. You cannot know where anything is, and such actions are refused.
 - Prefer keyboard shortcuts, launch_app with a program, path or URL, and run_powershell to check results, such as Get-Content on a file you saved.
 - After each action, check the new WORLD_STATE, FOREGROUND_CONTROLS, WINDOW_TEXT and VERIFICATION_FEEDBACK to see what changed. Use read_text to find specific text.
+- When a window exposes little text, WINDOW_TEXT and read_text read it with OCR from its pixels instead, and say so. OCR text is real but can misread a character, such as 0 for O, so check values make sense.
 - If what you need is in none of them, try another route: Tab and the arrow keys, Alt for a menu, a settings link such as ms-settings:display, or a command. If nothing works, list it in not_done.
 """;
 
