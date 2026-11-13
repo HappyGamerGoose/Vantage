@@ -223,10 +223,10 @@ public static class PROCEDURAL_MEMORY
             "```json\n" +
             "{ \"action\": \"type\", \"description\": \"the address bar at the top of the browser\", \"text\": \"https://example.com\", \"overwrite\": false, \"enter\": true, \"target_title\": \"Edge\" }\n" +
             "```\n" +
-            "- control (optional, int): number of the input field in FOREGROUND_CONTROLS. `type` clicks the field itself, so never click a field first.\n" +
+            "- control (optional, int): number of the input field in FOREGROUND_CONTROLS. Vantage sets the field's text directly and reports what it then holds, so never click a field first and never type into it with type_text or keys.\n" +
             "- description (optional, string): the target input field, when it is not listed. Omit both to type into the currently focused element.\n" +
             "- text (required, string): the text to type.\n" +
-            "- overwrite (optional, bool, default false): true to select-all + delete before typing.\n" +
+            "- overwrite (optional, bool, default false): true to replace what the field holds; otherwise the text is added after it.\n" +
             "- enter (optional, bool, default false): true to press Enter after typing.\n" +
             "- target_title (recommended when known): expected foreground window title or process fragment. Typing is blocked if focus moved elsewhere.\n" +
             "For strings longer than ~30 characters, prefer the clipboard protocol (use `vantage_set_clipboard` via the dedicated action, then `key` with `keys: [\"ctrl\", \"v\"]`)."
@@ -550,7 +550,7 @@ public static class PROCEDURAL_MEMORY
 
 # NO SCREENSHOTS IN THIS RUN
 This model cannot take images, so you get no screenshot. Wherever these instructions mention the screenshot or what the screen shows, use what you are given instead: WORLD_STATE (the front window and every open window), FOREGROUND_CONTROLS (the front window's named controls by number, with the text in each field after "="), WINDOW_TEXT (the start of the front window's text) and TEXT_READ.
-- Click a control by its number: {"action":"click","control":12}. Type into a field by its number: {"action":"type","control":12,"text":"…"}.
+- Click a control by its number: {"action":"click","control":12}. Fill a field by its number: {"action":"type","control":12,"text":"…","overwrite":true}. Vantage sets the field directly and tells you what it now holds; do not click the field first or type into it with type_text.
 - Never send coordinates or describe a place on the screen. You cannot know where anything is, and such actions are refused.
 - Prefer keyboard shortcuts, launch_app with a program, path or URL, and run_powershell to check results, such as Get-Content on a file you saved.
 - After each action, check the new WORLD_STATE, FOREGROUND_CONTROLS, WINDOW_TEXT and VERIFICATION_FEEDBACK to see what changed. Use read_text to find specific text.

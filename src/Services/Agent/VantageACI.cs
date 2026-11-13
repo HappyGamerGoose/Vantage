@@ -579,6 +579,24 @@ public sealed class VantageACI
         if (!inOwnTab && TryResolveControlNumber(action, out var controlPoint) is { } resolved)
         {
             if (resolved.Outcome != ActionOutcome.Success) return resolved;
+
+            // A listed field is filled through UI Automation, which cannot land
+            // in the wrong box. Keystrokes are the fallback for fields that do
+            // not take a value that way.
+            var field = _controls[action.GetInt("control")!.Value];
+            if (text.Length > 0
+                && UiControlGrounding.SetFieldValue(_controlsWindow, field, text, replace: overwrite) is { } nowHolds)
+            {
+                if (enter)
+                {
+                    await Task.Delay(FieldEnterDelayMs, ct);
+                    WindowsAutomationService.SendKey(Windows.System.VirtualKey.Enter);
+                }
+                return new ActionResult(ActionOutcome.Success,
+                    $"set {field.Role} \"{Truncate(field.Name, 40)}\" so it now holds \"{Truncate(SecretText.Redact(nowHolds), 80)}\"" +
+                    (enter ? ", then pressed Enter" : ""));
+            }
+
             WindowsAutomationService.LeftClick(controlPoint.X, controlPoint.Y);
             await Task.Yield();
         }
@@ -638,6 +656,7 @@ public sealed class VantageACI
     }
 
     private const int NewTabFocusDelayMs = 200;
+    private const int FieldEnterDelayMs = 80;
 
     /// <summary>
     /// Keeps track of tab use from keyboard shortcuts. Returns true when the

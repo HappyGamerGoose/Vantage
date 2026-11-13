@@ -1628,6 +1628,37 @@ if (args.Contains("--controls-live", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--set-field-live", StringComparer.OrdinalIgnoreCase))
+{
+    // Opens the Run dialog, fills its box through UI Automation, reads it back
+    // and closes the dialog with WM_CLOSE. Enter is never pressed.
+    Process.Start(new ProcessStartInfo("rundll32.exe", "shell32.dll,#61") { UseShellExecute = false });
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    var run = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title == "Run");
+    for (var i = 0; i < 40 && run is null; i++)
+    {
+        await Task.Delay(100);
+        run = WindowsAppManager.ListVisibleWindows().FirstOrDefault(w => w.Title == "Run");
+    }
+    if (run is null) { Console.WriteLine("Run dialog did not open"); Environment.ExitCode = 1; return; }
+    var fields = (await UiControlGrounding.SnapshotAsync(run.Handle, TimeSpan.FromSeconds(2)))
+        .Where(c => c.Role is "edit" or "combobox").ToList();
+    var box = fields.FirstOrDefault();
+    string? replaced = null, appended = null;
+    if (box is not null)
+    {
+        replaced = UiControlGrounding.SetFieldValue(run.Handle, box, "notepad", replace: true);
+        appended = UiControlGrounding.SetFieldValue(run.Handle, box, " test.txt", replace: false);
+    }
+    var after = (await UiControlGrounding.SnapshotAsync(run.Handle, TimeSpan.FromSeconds(2)))
+        .FirstOrDefault(c => c.Role is "edit" or "combobox")?.Value;
+    PostMessage(run.Handle, 0x0010, IntPtr.Zero, IntPtr.Zero);
+    var ok = replaced == "notepad" && appended == "notepad test.txt" && after == "notepad test.txt";
+    Console.WriteLine($"SetFieldLive={ok} field=\"{box?.Name}\" {box?.Role} replaced=\"{replaced}\" appended=\"{appended}\" readBack=\"{after}\"");
+    Environment.ExitCode = ok ? 0 : 1;
+    return;
+}
+
 if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
 {
     // Mock OpenAI-compatible server that behaves like the hidden-reasoning

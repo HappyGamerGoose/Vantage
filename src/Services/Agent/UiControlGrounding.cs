@@ -183,6 +183,76 @@ internal static class UiControlGrounding
         }
         return controls;
     }
+    private const int ValuePatternId = 10002;
+    private const int EditControlType = 50004;
+    private const int ComboBoxControlType = 50003;
+
+    /// <summary>
+    /// Sets a listed field's text through UI Automation and returns what the
+    /// field holds afterwards, or null when it cannot be set that way. Typed
+    /// keystrokes after a click lost their way in Notepad's Find and Replace:
+    /// "299" landed in Find, "792458" was added to Replace, and select-all did
+    /// not clear either, for 90 turns.
+    /// </summary>
+    public static string? SetFieldValue(IntPtr windowHandle, UiControl control, string text, bool replace)
+    {
+        if (windowHandle == IntPtr.Zero || control.Role is not ("edit" or "combobox")) return null;
+        IUIAutomation? automation = null;
+        IUIAutomationElement? root = null, target = null;
+        IUIAutomationCacheRequest? cache = null;
+        IUIAutomationCondition? isEdit = null, isCombo = null, either = null;
+        IUIAutomationElementArray? found = null;
+        object? patternObject = null;
+        try
+        {
+            automation = new CUIAutomation();
+            root = automation.ElementFromHandle(windowHandle);
+            cache = automation.CreateCacheRequest();
+            cache.AddProperty(NamePropertyId);
+            cache.AddProperty(BoundingRectanglePropertyId);
+            isEdit = automation.CreatePropertyCondition(ControlTypePropertyId, EditControlType);
+            isCombo = automation.CreatePropertyCondition(ControlTypePropertyId, ComboBoxControlType);
+            either = automation.CreateOrCondition(isEdit, isCombo);
+            found = root.FindAllBuildCache(TreeScope.TreeScope_Descendants, either, cache);
+            for (var i = 0; i < found.Length && target is null; i++)
+            {
+                var element = found.GetElement(i);
+                var rect = element.CachedBoundingRectangle;
+                if (Math.Abs(rect.left - control.Left) <= 3 && Math.Abs(rect.top - control.Top) <= 3
+                    && string.Equals((element.CachedName ?? string.Empty).Trim(), control.Name, StringComparison.Ordinal))
+                    target = element;
+                else
+                    Release(element);
+            }
+            if (target is null) return null;
+
+            patternObject = target.GetCurrentPattern(ValuePatternId);
+            if (patternObject is not IUIAutomationValuePattern pattern || pattern.CurrentIsReadOnly != 0) return null;
+            var current = pattern.CurrentValue ?? string.Empty;
+            var value = replace || current.Length == 0 ? text : current + text;
+            pattern.SetValue(value);
+            try { target.SetFocus(); } catch { /* the value is set; focus only matters for Enter */ }
+            var after = pattern.CurrentValue ?? string.Empty;
+            return after == value ? after : null;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            Release(patternObject);
+            Release(target);
+            Release(found);
+            Release(either);
+            Release(isCombo);
+            Release(isEdit);
+            Release(cache);
+            Release(root);
+            Release(automation);
+        }
+    }
+
     // What a field holds. A model with no screenshot has no other way to see
     // what it typed. Password fields are never read.
     private static string? FieldValue(IUIAutomationElement element, string role)
