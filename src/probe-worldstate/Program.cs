@@ -1659,7 +1659,12 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
 
             string reply;
             var status = 200;
-            if (model == "hidden")
+            if (model == "sealed")
+                // Mercury 3: reasoning only in sealed form, no content, finish "stop".
+                reply = flag
+                    ? "{\"choices\":[{\"message\":{\"content\":\"412 233\"},\"finish_reason\":\"stop\"}]}"
+                    : "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"reasoning_details\":[{\"type\":\"reasoning.encrypted\",\"data\":\"mrt1_v1_x\"}]},\"finish_reason\":\"stop\"}]}";
+            else if (model == "hidden")
                 reply = effort ? hiddenAnswer : hiddenCutOff;
             else if (model == "hidden-strict" && req["reasoning_effort"] is not null)
             {
@@ -1714,6 +1719,7 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
     var h2 = await Call("hidden", 2048);        // sends room and low effort up front
     var hs1 = await Call("hidden-strict", 2048); // effort rejected -> room alone
     var hs2 = await Call("hidden-strict", 2048); // remembers the rejection
+    var sealedReply = await Call("sealed", 2048); // empty with sealed reasoning -> asked again, not given up
     listener.Stop();
 
     var room = 2048 + OpenAICompatEngine.HiddenThinkingAllowance;
@@ -1730,7 +1736,9 @@ if (args.Contains("--reasoning-self-test", StringComparer.OrdinalIgnoreCase))
         && h2.Text.Contains("\"wait\"") && h2.Requests.Count == 1 && h2.Requests[0].MaxTokens == room && h2.Requests[0].Effort
         && hs1.Text.Contains("\"wait\"") && hs1.Requests.Count == 3 && hs1.Requests[1].Effort
         && hs1.Requests[2] is { Effort: false } && hs1.Requests[2].MaxTokens == room
-        && hs2.Text.Contains("\"wait\"") && hs2.Requests.Count == 1 && hs2.Requests[0] is { Effort: false } && hs2.Requests[0].MaxTokens == room;
+        && hs2.Text.Contains("\"wait\"") && hs2.Requests.Count == 1 && hs2.Requests[0] is { Effort: false } && hs2.Requests[0].MaxTokens == room
+        && sealedReply.Text == "412 233" && sealedReply.Requests.Count == 2 && sealedReply.Requests[1].Flag
+        && sealedReply.Requests[1].MaxTokens >= sealedReply.Requests[0].MaxTokens;
 
     // Usage numbers: Gemini's from the 1.6.19 log, OpenAI's o-series, and a model that does not think.
     int Thinking(string usage) => OpenAICompatEngine.HiddenThinkingTokens(JsonDocument.Parse(usage).RootElement);

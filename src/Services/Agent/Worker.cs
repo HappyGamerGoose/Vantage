@@ -46,7 +46,8 @@ public sealed class Worker
     private int _parseFailStreak;
     private int _emptyResponseStreak;
     private const int MaxParseFailStreak = 3;
-    private const int MaxEmptyStreak = 2;
+    // Each empty reply has already been asked again once by the engine.
+    private const int MaxEmptyStreak = 3;
     private string _lastRawPlan = "";
     private string _lastActionOutcome = "(none yet)";
 

@@ -295,7 +295,7 @@ public sealed class OpenAICompatEngine : LMMEngine
     internal const int HiddenThinkingAllowance = 4096;
     internal const string HiddenThinkingEffort = "low";
 
-    private sealed record OpenAiReply(LmmResponse Response, bool HadReasoning, string? FinishReason);
+    private sealed record OpenAiReply(LmmResponse Response, bool HadReasoning, string? FinishReason, bool EncryptedReasoning = false);
 
     // Newer OpenAI-style models reject `max_tokens` and fixed temperatures.
     // Learned once per model, so later calls don't pay for the failed request.
@@ -418,13 +418,15 @@ public sealed class OpenAICompatEngine : LMMEngine
                 $"model={Model} content_empty={string.IsNullOrWhiteSpace(reply.Response.Text)} finish={reply.FinishReason}; disabling thinking for later calls");
         }
 
-        if (string.IsNullOrWhiteSpace(reply.Response.Text) && reply.HadReasoning)
+        if (string.IsNullOrWhiteSpace(reply.Response.Text) && (reply.HadReasoning || reply.EncryptedReasoning))
         {
-            // The reasoning phase ate the whole budget. Retry once, now with
-            // thinking disabled (when the provider allows it) and more room,
-            // instead of surfacing an empty reply that fails the whole step.
+            // The reasoning phase ate the whole budget, or ended without an
+            // answer: Mercury 3 twice returned only encrypted reasoning_details
+            // and stopped the run. Retry once, now with thinking disabled (when
+            // the provider allows it) and at least as much room as before.
             var retryFlag = !SuppressThinking.TryGetValue(key, out var allowed) || allowed;
-            var retryTokens = Math.Min(Math.Max(request.MaxTokens * 4, 1024), ReasoningRetryMaxTokensCeiling);
+            var firstTokens = hiddenThinker ? request.MaxTokens + HiddenThinkingAllowance : request.MaxTokens;
+            var retryTokens = Math.Max(firstTokens, Math.Min(Math.Max(request.MaxTokens * 4, 1024), ReasoningRetryMaxTokensCeiling));
             CommonUtils.LogDiagnostic("llm-reasoning-empty-retry",
                 $"model={Model} finish={reply.FinishReason} thinking_off={retryFlag} max_tokens={retryTokens}");
             reply = await SendAsync(retryTokens, retryFlag, wantLowEffort: HiddenThinking.ContainsKey(key));
@@ -518,11 +520,15 @@ public sealed class OpenAICompatEngine : LMMEngine
             var hadReasoning =
                 (msg.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rc.GetString()))
                 || (msg.TryGetProperty("reasoning", out var rs) && rs.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(rs.GetString()));
+            // Thinking returned only in sealed form, as Inception's Mercury does.
+            var encryptedReasoning = msg.TryGetProperty("reasoning_details", out var rd)
+                && rd.ValueKind == JsonValueKind.Array && rd.GetArrayLength() > 0;
 
             return new OpenAiReply(
                 new LmmResponse { Text = text, InputTokens = inTok, OutputTokens = outTok, CutOff = finish == "length", ThinkingTokens = hadReasoning ? 0 : thinkingTok },
                 hadReasoning,
-                finish);
+                finish,
+                encryptedReasoning);
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
