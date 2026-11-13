@@ -467,10 +467,10 @@ internal static class UiControlGrounding
         {
             var cx = control.CenterX / Math.Max(scale, 0.01);
             var cy = control.CenterY / Math.Max(scale, 0.01);
-            sb.Append("  [").Append(index).Append("] \"").Append(OneLine(control.Name, 60)).Append("\" ")
+            sb.Append("  [").Append(index).Append("] \"").Append(OneLine(SecretText.Redact(control.Name), 60)).Append("\" ")
               .Append(control.Role);
             if (!string.IsNullOrEmpty(control.Value) && control.Value != control.Name)
-                sb.Append(" = \"").Append(OneLine(control.Value, 60)).Append('"');
+                sb.Append(" = \"").Append(OneLine(SecretText.Redact(control.Value), 60)).Append('"');
             sb.Append(" @")
               .Append(Region(cy, monitorHeight, "top", "middle", "bottom")).Append('-')
               .AppendLine(Region(cx, monitorWidth, "left", "center", "right"));
@@ -605,7 +605,7 @@ internal static class TextOnlyPolicy
     /// <summary>The start of the front window's text, white space collapsed.</summary>
     public static string WindowTextBlock(string text, string windowTitle)
     {
-        var clean = System.Text.RegularExpressions.Regex.Replace(text.Replace('￼', ' '), @"\s+", " ").Trim();
+        var clean = SecretText.Redact(System.Text.RegularExpressions.Regex.Replace(text.Replace('￼', ' '), @"\s+", " ").Trim());
         if (clean.Length < PageTextReader.MinUsableLength) return string.Empty;
         var shown = clean.Length <= WindowTextChars ? clean : clean[..WindowTextChars] + " …";
         var more = clean.Length > WindowTextChars

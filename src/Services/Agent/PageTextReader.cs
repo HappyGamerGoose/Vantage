@@ -13,6 +13,34 @@ using Microsoft.UIAutomation;
 
 namespace Vantage.Services.Agent;
 
+/// <summary>
+/// Hides text that looks like a credential before it goes to a model. A
+/// text-only run sent the start of whatever window was in front, which was a
+/// page of the user's API keys, to the provider on every turn.
+/// </summary>
+internal static class SecretText
+{
+    public const string Mask = "[hidden key]";
+
+    private static readonly Regex KnownKey = new(
+        @"\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{16,}|AIza[0-9A-Za-z_\-]{30,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}" +
+        @"|xox[abprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16}|hf_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_\-]{20,}" +
+        @"|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})",
+        RegexOptions.Compiled);
+
+    // Any unbroken run of 32 or more letters, digits, '-' or '_' that mixes
+    // letters and digits: keys, tokens and account IDs, rarely ordinary text.
+    private static readonly Regex LongToken = new(
+        @"(?<![A-Za-z0-9_\-])(?=[A-Za-z0-9_\-]*[0-9])(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{32,}(?![A-Za-z0-9_\-])",
+        RegexOptions.Compiled);
+
+    public static string Redact(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return text ?? string.Empty;
+        return LongToken.Replace(KnownKey.Replace(text, Mask), Mask);
+    }
+}
+
 internal static class PageTextReader
 {
     public const int MinUsableLength = 20;

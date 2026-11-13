@@ -1259,7 +1259,22 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
     imageAgent.DropImages();
     var droppedOk = imageAgent.Messages[^1]["content"] is JsonArray parts && parts.Count == 1
         && parts[0]!["type"]!.GetValue<string>() == "text";
-    var textOnlyOk = coordinatesOk && windowTextOk && fieldsOk && droppedOk
+    // Keys on screen never reach a model; ordinary text and numbers do. These are made up.
+    var secretPage = "API Keys Cloudflare https://api.example.com/client/v4/accounts/0123456789abcdef0123456789abcdef " +
+        "token cfut_AbCdEfGh1234567890IjKlMnOp1234567890QrStUv12 gateway gw_Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2Rr1Qq0Pp " +
+        "sk-proj-abcDEF1234567890ghiJKL AIzaSyA1234567890abcdefghijklmnopqrst Population 214,211,951 Version 26H2 " +
+        "the-quick-brown-fox-jumps-over-the-lazy-dog-twice";
+    var redacted = SecretText.Redact(secretPage);
+    var secretsOk = !redacted.Contains("0123456789abcdef0123456789abcdef", StringComparison.Ordinal)
+        && !redacted.Contains("cfut_", StringComparison.Ordinal) && !redacted.Contains("gw_Zz9", StringComparison.Ordinal)
+        && !redacted.Contains("sk-proj", StringComparison.Ordinal) && !redacted.Contains("AIzaSy", StringComparison.Ordinal)
+        && redacted.Contains("Population 214,211,951 Version 26H2", StringComparison.Ordinal)
+        && redacted.Contains("the-quick-brown-fox-jumps-over-the-lazy-dog-twice", StringComparison.Ordinal)
+        && redacted.Contains("API Keys Cloudflare", StringComparison.Ordinal)
+        && !TextOnlyPolicy.WindowTextBlock(secretPage, "API Keys | Notion").Contains("cfut_", StringComparison.Ordinal)
+        && !UiControlGrounding.BuildPromptBlock(new[] { new UiControl("Key", "edit", true, false, 1, 1, 9, 9, "sk-proj-abcDEF1234567890ghiJKL") },
+            "Keys", 1920, 1080, 1.0).Contains("sk-proj", StringComparison.Ordinal);
+    var textOnlyOk = coordinatesOk && windowTextOk && fieldsOk && droppedOk && secretsOk
         && PROCEDURAL_MEMORY.TEXT_ONLY_RULES.Contains("# NO SCREENSHOTS IN THIS RUN", StringComparison.Ordinal)
         && TextOnlyPolicy.CoordinateRefusal.StartsWith("NOT DONE: nothing was clicked", StringComparison.Ordinal);
 
@@ -1417,7 +1432,7 @@ if (args.Contains("--agent-loop-self-test", StringComparer.OrdinalIgnoreCase))
         && EarlierConversation.Build(Array.Empty<(string, string?)>()).Length == 0;
 
     var loopOk = contradictOk && repeatOk && pagingOk && loopRuleOk && ledgerKeepsOk && pagedOk && savedOk && finishedOk && calculatorOk && notepadOk && calculatorStepsOk && echoOk && keyGapOk && notDoneOk && textOnlyOk && entitiesOk && todosOk && wholeNumbers && resumeOk && osOk && answerOk && bareOk && rotateOk && windowsOk && docsOk && outputOk && batchOk && earlierOk;
-    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} textOnly={textOnlyOk} (coordinates={coordinatesOk} windowText={windowTextOk} fields={fieldsOk} dropped={droppedOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
+    Console.WriteLine($"agent-loop self-test: contradict={contradictOk} repeat={repeatOk} (same={sameOk} alternated={alternated} varied={variedMost} expectations={expectationsCount} exempt={exemptMost}) paging={pagingOk} rule={loopRuleOk} ledgerKeeps={ledgerKeepsOk} (kept={keptValues} invented={inventedHeld} labelled={labelled} first={firstRead} second={secondRead}) paged={pagedOk} saved={savedOk} finished={finishedOk} calculator={calculatorOk} notepad={notepadOk} calcSteps={calculatorStepsOk} (sums={sumsOk} rounding={roundingOk} batch={batchCheckOk}) echo={echoOk} keyGap={keyGapOk} notDone={notDoneOk} textOnly={textOnlyOk} (coordinates={coordinatesOk} windowText={windowTextOk} fields={fieldsOk} dropped={droppedOk} secrets={secretsOk}) entities={entitiesOk} todos={todosOk} wholeNumbers={wholeNumbers} resume={resumeOk} os={osOk} answer={answerOk} bare={bareOk} rotate={rotateOk} windows={windowsOk} docs={docsOk} (missing={string.Join(',', missingActions)}) output={outputOk} batch={batchOk} earlier={earlierOk}");
     Environment.ExitCode = loopOk ? 0 : 1;
     return;
 

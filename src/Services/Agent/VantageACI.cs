@@ -332,7 +332,8 @@ public sealed class VantageACI
         }
         var resumed = searches.Any(search => _readProgress.ContainsKey(search.Trim().ToLowerInvariant()));
 
-        var text = await PageTextReader.ReadAsync(window, ReadTextBudget);
+        // Keys and tokens on screen are hidden before the model sees them.
+        var text = SecretText.Redact(await PageTextReader.ReadAsync(window, ReadTextBudget));
         LastReadUnavailable = text.Trim().Length < PageTextReader.MinUsableLength;
         LastReadExcerpts = PageTextReader.ExtractExcerpts(text, searches, _readProgress, out var moreMatches);
         if (LastReadUnavailable)
